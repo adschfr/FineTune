@@ -70,20 +70,20 @@ final class DeviceVolumeMonitor {
     #endif
 
     /// Volume listeners for each tracked output device
-    private nonisolated(unsafe) var volumeListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+    @ObservationIgnored private nonisolated(unsafe) var volumeListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
     /// Mute listeners for each tracked output device
-    private nonisolated(unsafe) var muteListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
-    private nonisolated(unsafe) var defaultDeviceListenerBlock: AudioObjectPropertyListenerBlock?
-    private nonisolated(unsafe) var systemDeviceListenerBlock: AudioObjectPropertyListenerBlock?
+    @ObservationIgnored private nonisolated(unsafe) var muteListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+    @ObservationIgnored private nonisolated(unsafe) var defaultDeviceListenerBlock: AudioObjectPropertyListenerBlock?
+    @ObservationIgnored private nonisolated(unsafe) var systemDeviceListenerBlock: AudioObjectPropertyListenerBlock?
 
     /// Volume listeners for each tracked input device
-    private nonisolated(unsafe) var inputVolumeListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+    @ObservationIgnored private nonisolated(unsafe) var inputVolumeListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
     /// Mute listeners for each tracked input device
-    private nonisolated(unsafe) var inputMuteListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
-    private nonisolated(unsafe) var defaultInputDeviceListenerBlock: AudioObjectPropertyListenerBlock?
+    @ObservationIgnored private nonisolated(unsafe) var inputMuteListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+    @ObservationIgnored private nonisolated(unsafe) var defaultInputDeviceListenerBlock: AudioObjectPropertyListenerBlock?
 
     /// Tracks which volume property address was successfully registered per device (for fallback removal)
-    private nonisolated(unsafe) var registeredVolumeAddresses: [AudioDeviceID: AudioObjectPropertyAddress] = [:]
+    @ObservationIgnored private nonisolated(unsafe) var registeredVolumeAddresses: [AudioDeviceID: AudioObjectPropertyAddress] = [:]
 
     /// Flag to control the recursive observation loop
     private var isObservingDeviceList = false
@@ -103,13 +103,13 @@ final class DeviceVolumeMonitor {
 
     private var volumeAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-        mScope: kAudioDevicePropertyScopeOutput,
+        mScope: kAudioObjectPropertyScopeOutput,
         mElement: kAudioObjectPropertyElementMain
     )
 
     private var muteAddress = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyMute,
-        mScope: kAudioDevicePropertyScopeOutput,
+        mScope: kAudioObjectPropertyScopeOutput,
         mElement: kAudioObjectPropertyElementMain
     )
 
@@ -121,13 +121,13 @@ final class DeviceVolumeMonitor {
 
     private var inputVolumeAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-        mScope: kAudioDevicePropertyScopeInput,
+        mScope: kAudioObjectPropertyScopeInput,
         mElement: kAudioObjectPropertyElementMain
     )
 
     private var inputMuteAddress = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyMute,
-        mScope: kAudioDevicePropertyScopeInput,
+        mScope: kAudioObjectPropertyScopeInput,
         mElement: kAudioObjectPropertyElementMain
     )
 
@@ -410,10 +410,7 @@ final class DeviceVolumeMonitor {
 
     private func refreshDefaultDevice() {
         do {
-            let newDeviceID: AudioDeviceID = try AudioObjectID.system.read(
-                kAudioHardwarePropertyDefaultOutputDevice,
-                defaultValue: AudioDeviceID.unknown
-            )
+            let newDeviceID = try AudioDeviceID.readDefaultOutputDevice()
 
             if newDeviceID.isValid {
                 defaultDeviceID = newDeviceID
@@ -453,10 +450,7 @@ final class DeviceVolumeMonitor {
 
     private func refreshSystemDevice() {
         do {
-            let newDeviceID: AudioDeviceID = try AudioObjectID.system.read(
-                kAudioHardwarePropertyDefaultSystemOutputDevice,
-                defaultValue: AudioDeviceID.unknown
-            )
+            let newDeviceID = try AudioDeviceID.readSystemOutputDevice()
 
             if newDeviceID.isValid {
                 systemDeviceID = newDeviceID
@@ -609,7 +603,7 @@ final class DeviceVolumeMonitor {
         // Fallback 1: kAudioDevicePropertyVolumeScalar element 0 (master)
         var fallbackAddr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: kAudioDevicePropertyScopeOutput,
+            mScope: kAudioObjectPropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
         let fallback1Status = AudioObjectAddPropertyListenerBlock(
@@ -628,7 +622,7 @@ final class DeviceVolumeMonitor {
         // Fallback 2: kAudioDevicePropertyVolumeScalar element 1 (left channel)
         var fallbackAddr2 = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: kAudioDevicePropertyScopeOutput,
+            mScope: kAudioObjectPropertyScopeOutput,
             mElement: 1
         )
         let fallback2Status = AudioObjectAddPropertyListenerBlock(
@@ -786,10 +780,7 @@ final class DeviceVolumeMonitor {
 
     private func refreshDefaultInputDevice() {
         do {
-            let newDeviceID: AudioDeviceID = try AudioObjectID.system.read(
-                kAudioHardwarePropertyDefaultInputDevice,
-                defaultValue: AudioDeviceID.unknown
-            )
+            let newDeviceID = try AudioDeviceID.readDefaultInputDevice()
 
             if newDeviceID.isValid {
                 defaultInputDeviceID = newDeviceID
@@ -1013,7 +1004,7 @@ final class DeviceVolumeMonitor {
         do {
             var addr = AudioObjectPropertyAddress(
                 mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-                mScope: kAudioDevicePropertyScopeOutput,
+                mScope: kAudioObjectPropertyScopeOutput,
                 mElement: kAudioObjectPropertyElementMain
             )
             for (deviceID, block) in volumeListeners {
@@ -1031,7 +1022,7 @@ final class DeviceVolumeMonitor {
         do {
             var addr = AudioObjectPropertyAddress(
                 mSelector: kAudioDevicePropertyMute,
-                mScope: kAudioDevicePropertyScopeOutput,
+                mScope: kAudioObjectPropertyScopeOutput,
                 mElement: kAudioObjectPropertyElementMain
             )
             for (deviceID, block) in muteListeners {
@@ -1043,7 +1034,7 @@ final class DeviceVolumeMonitor {
         do {
             var addr = AudioObjectPropertyAddress(
                 mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-                mScope: kAudioDevicePropertyScopeInput,
+                mScope: kAudioObjectPropertyScopeInput,
                 mElement: kAudioObjectPropertyElementMain
             )
             for (deviceID, block) in inputVolumeListeners {
@@ -1055,7 +1046,7 @@ final class DeviceVolumeMonitor {
         do {
             var addr = AudioObjectPropertyAddress(
                 mSelector: kAudioDevicePropertyMute,
-                mScope: kAudioDevicePropertyScopeInput,
+                mScope: kAudioObjectPropertyScopeInput,
                 mElement: kAudioObjectPropertyElementMain
             )
             for (deviceID, block) in inputMuteListeners {
