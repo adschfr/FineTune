@@ -25,7 +25,7 @@ final class DDCController {
     private var deviceUIDs: [AudioDeviceID: String] = [:]  // For persistence keying
     private var debounceTimers: [AudioDeviceID: DispatchWorkItem] = [:]
     private var probeWorkItem: DispatchWorkItem?
-    private nonisolated(unsafe) var displayChangeObserver: NSObjectProtocol?
+    @ObservationIgnored private nonisolated(unsafe) var displayChangeObserver: NSObjectProtocol?
 
     private let ddcQueue = DispatchQueue(label: "com.finetune.ddc", qos: .utility)
     private let settingsManager: SettingsManager

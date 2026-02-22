@@ -60,8 +60,8 @@ final class AudioProcessMonitor {
     }
 
     // Property listeners
-    private nonisolated(unsafe) var processListListenerBlock: AudioObjectPropertyListenerBlock?
-    private nonisolated(unsafe) var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
+    @ObservationIgnored private nonisolated(unsafe) var processListListenerBlock: AudioObjectPropertyListenerBlock?
+    @ObservationIgnored private nonisolated(unsafe) var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var monitoredProcesses: Set<AudioObjectID> = []
 
     private var processListAddress = AudioObjectPropertyAddress(

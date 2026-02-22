@@ -40,7 +40,7 @@ final class AudioDeviceMonitor {
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioDeviceMonitor")
 
-    private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
+    @ObservationIgnored private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
     private var deviceListAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDevices,
         mScope: kAudioObjectPropertyScopeGlobal,
