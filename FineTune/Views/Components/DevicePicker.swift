@@ -128,25 +128,10 @@ struct DevicePicker: View {
 
     // MARK: - Body
 
-    private var popoverContentVersion: Int {
-        var hasher = Hasher()
-        hasher.combine(currentMode)
-        hasher.combine(currentSelectedUIDs)
-        hasher.combine(isFollowingDefault)
-        hasher.combine(selectedDeviceUID)
-        hasher.combine(defaultDeviceUID)
-        hasher.combine(devices.count)
-        for device in devices {
-            hasher.combine(device.uid)
-            hasher.combine(device.name)
-        }
-        return hasher.finalize()
-    }
-
     var body: some View {
         triggerButton
             .background(
-                PopoverHost(isPresented: $isExpanded, contentVersion: popoverContentVersion) {
+                PopoverHost(isPresented: $isExpanded) {
                     dropdownContent
                 }
             )
@@ -167,7 +152,9 @@ struct DevicePicker: View {
 
     private var triggerButton: some View {
         Button {
-            isExpanded.toggle()
+            withAnimation(.snappy(duration: 0.2)) {
+                isExpanded.toggle()
+            }
         } label: {
             HStack {
                 HStack(spacing: DesignTokens.Spacing.xs) {
@@ -302,7 +289,9 @@ struct DevicePicker: View {
             case .device(let device):
                 onDeviceSelected(device.uid)
             }
-            isExpanded = false
+            withAnimation(.easeOut(duration: 0.15)) {
+                isExpanded = false
+            }
 
         case .multi:
             guard case .device(let device) = item else { return }

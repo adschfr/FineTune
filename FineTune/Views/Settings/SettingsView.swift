@@ -173,7 +173,7 @@ struct SettingsView: View {
                 SettingsButtonRow(
                     icon: "arrow.counterclockwise",
                     title: "Reset All Settings",
-                    description: "Clear all volumes, EQ, compressor, and device routings",
+                    description: "Clear all volumes, EQ, and device routings",
                     buttonLabel: "Reset",
                     isDestructive: true
                 ) {

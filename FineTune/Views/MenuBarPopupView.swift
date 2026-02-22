@@ -576,10 +576,6 @@ struct MenuBarPopupView: View {
                 onEQChange: { settings in
                     audioEngine.setEQSettings(settings, for: app)
                 },
-                compressorSettings: audioEngine.getCompressorSettings(for: app),
-                onCompressorChange: { settings in
-                    audioEngine.setCompressorSettings(settings, for: app)
-                },
                 isEQExpanded: expandedEQAppID == displayableApp.id,
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
@@ -630,10 +626,6 @@ struct MenuBarPopupView: View {
             onEQChange: { settings in
                 audioEngine.setEQSettingsForInactive(settings, identifier: identifier)
             },
-            compressorSettings: audioEngine.getCompressorSettingsForInactive(identifier: identifier),
-            onCompressorChange: { settings in
-                audioEngine.setCompressorSettingsForInactive(settings, identifier: identifier)
-            },
             isEQExpanded: expandedEQAppID == displayableApp.id,
             onEQToggle: {
                 toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
@@ -654,15 +646,8 @@ struct MenuBarPopupView: View {
             } else {
                 expandedEQAppID = appID
             }
-        }
-
-        // Avoid scrolling during the same layout transaction that inserts/removes
-        // the expandable row; this can trigger AppKit layout reentrancy warnings.
-        if isExpanding {
-            DispatchQueue.main.async {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    scrollProxy.scrollTo(appID, anchor: .top)
-                }
+            if isExpanding {
+                scrollProxy.scrollTo(appID, anchor: .top)
             }
         }
 

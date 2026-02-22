@@ -66,12 +66,11 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 8
+        var version: Int = 7
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
         var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
-        var appCompressorSettings: [String: CompressorSettings] = [:]  // bundleID → compressor settings
         var appSettings: AppSettings = AppSettings()  // App-wide settings
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
         var appDeviceSelectionMode: [String: DeviceSelectionMode] = [:]  // bundleID → selection mode
@@ -88,51 +87,6 @@ final class SettingsManager {
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
         var inputDevicePriority: [String] = []
-
-        enum CodingKeys: String, CodingKey {
-            case version
-            case appVolumes
-            case appDeviceRouting
-            case appMutes
-            case appEQSettings
-            case appCompressorSettings
-            case appSettings
-            case systemSoundsFollowsDefault
-            case appDeviceSelectionMode
-            case appSelectedDeviceUIDs
-            case lockedInputDeviceUID
-            case pinnedApps
-            case pinnedAppInfo
-            case ddcVolumes
-            case ddcMuteStates
-            case ddcSavedVolumes
-            case outputDevicePriority
-            case inputDevicePriority
-        }
-
-        init() {}
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 8
-            appVolumes = try container.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:]
-            appDeviceRouting = try container.decodeIfPresent([String: String].self, forKey: .appDeviceRouting) ?? [:]
-            appMutes = try container.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
-            appEQSettings = try container.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
-            appCompressorSettings = try container.decodeIfPresent([String: CompressorSettings].self, forKey: .appCompressorSettings) ?? [:]
-            appSettings = try container.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
-            systemSoundsFollowsDefault = try container.decodeIfPresent(Bool.self, forKey: .systemSoundsFollowsDefault) ?? true
-            appDeviceSelectionMode = try container.decodeIfPresent([String: DeviceSelectionMode].self, forKey: .appDeviceSelectionMode) ?? [:]
-            appSelectedDeviceUIDs = try container.decodeIfPresent([String: [String]].self, forKey: .appSelectedDeviceUIDs) ?? [:]
-            lockedInputDeviceUID = try container.decodeIfPresent(String.self, forKey: .lockedInputDeviceUID)
-            pinnedApps = try container.decodeIfPresent(Set<String>.self, forKey: .pinnedApps) ?? []
-            pinnedAppInfo = try container.decodeIfPresent([String: PinnedAppInfo].self, forKey: .pinnedAppInfo) ?? [:]
-            ddcVolumes = try container.decodeIfPresent([String: Int].self, forKey: .ddcVolumes) ?? [:]
-            ddcMuteStates = try container.decodeIfPresent([String: Bool].self, forKey: .ddcMuteStates) ?? [:]
-            ddcSavedVolumes = try container.decodeIfPresent([String: Int].self, forKey: .ddcSavedVolumes) ?? [:]
-            outputDevicePriority = try container.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
-            inputDevicePriority = try container.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
-        }
     }
 
     init(directory: URL? = nil) {
@@ -199,15 +153,6 @@ final class SettingsManager {
 
     func setEQSettings(_ eqSettings: EQSettings, for appIdentifier: String) {
         settings.appEQSettings[appIdentifier] = eqSettings
-        scheduleSave()
-    }
-
-    func getCompressorSettings(for appIdentifier: String) -> CompressorSettings {
-        (settings.appCompressorSettings[appIdentifier] ?? .default).normalized()
-    }
-
-    func setCompressorSettings(_ compressorSettings: CompressorSettings, for appIdentifier: String) {
-        settings.appCompressorSettings[appIdentifier] = compressorSettings.normalized()
         scheduleSave()
     }
 
@@ -371,7 +316,6 @@ final class SettingsManager {
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
         settings.appEQSettings.removeAll()
-        settings.appCompressorSettings.removeAll()
         settings.pinnedApps.removeAll()
         settings.pinnedAppInfo.removeAll()
         settings.appSettings = AppSettings()
@@ -396,7 +340,7 @@ final class SettingsManager {
         do {
             let data = try Data(contentsOf: settingsURL)
             settings = try JSONDecoder().decode(Settings.self, from: data)
-            logger.debug("Loaded settings with \(self.settings.appVolumes.count) volumes, \(self.settings.appDeviceRouting.count) device routings, \(self.settings.appMutes.count) mutes, \(self.settings.appEQSettings.count) EQ settings, \(self.settings.appCompressorSettings.count) compressor settings")
+            logger.debug("Loaded settings with \(self.settings.appVolumes.count) volumes, \(self.settings.appDeviceRouting.count) device routings, \(self.settings.appMutes.count) mutes, \(self.settings.appEQSettings.count) EQ settings")
         } catch {
             logger.error("Failed to load settings: \(error.localizedDescription)")
             // Backup corrupted file before resetting

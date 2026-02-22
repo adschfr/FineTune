@@ -32,7 +32,6 @@
 - **Multi-device output** — Route audio to multiple devices simultaneously
 - **Input device control** — Monitor and adjust microphone levels
 - **10-band EQ** — 20 presets across 5 categories
-- **Per-app compressor** — Independent dynamics control for each source
 - **Pinned apps** — Pre-configure apps before they play
 - **Audio routing** — Send apps to different outputs or follow system default
 - **Monitor speaker control** — Adjust volume on external displays via DDC

@@ -27,8 +27,6 @@ struct AppRow: View {
     let onPinToggle: () -> Void  // Toggle pin state
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
-    let compressorSettings: CompressorSettings
-    let onCompressorChange: (CompressorSettings) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
@@ -36,7 +34,6 @@ struct AppRow: View {
     @State private var isIconHovered = false
     @State private var isPinButtonHovered = false
     @State private var localEQSettings: EQSettings
-    @State private var localCompressorSettings: CompressorSettings
 
     /// Pin button color - visible when pinned or row is hovered
     private var pinButtonColor: Color {
@@ -74,8 +71,6 @@ struct AppRow: View {
         onPinToggle: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
-        compressorSettings: CompressorSettings = CompressorSettings(),
-        onCompressorChange: @escaping (CompressorSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {}
     ) {
@@ -101,13 +96,10 @@ struct AppRow: View {
         self.onPinToggle = onPinToggle
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
-        self.compressorSettings = compressorSettings
-        self.onCompressorChange = onCompressorChange
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         // Initialize local EQ state for reactive UI updates
         self._localEQSettings = State(initialValue: eqSettings)
-        self._localCompressorSettings = State(initialValue: compressorSettings)
     }
 
     var body: some View {
@@ -189,16 +181,12 @@ struct AppRow: View {
             // SwiftUI calculates natural height via conditional rendering
             EQPanelView(
                 settings: $localEQSettings,
-                compressorSettings: $localCompressorSettings,
                 onPresetSelected: { preset in
                     localEQSettings = preset.settings
                     onEQChange(preset.settings)
                 },
                 onSettingsChanged: { settings in
                     onEQChange(settings)
-                },
-                onCompressorSettingsChanged: { settings in
-                    onCompressorChange(settings)
                 }
             )
             .padding(.top, DesignTokens.Spacing.sm)
@@ -206,9 +194,6 @@ struct AppRow: View {
         .onChange(of: eqSettings) { _, newValue in
             // Sync from parent when external EQ settings change
             localEQSettings = newValue
-        }
-        .onChange(of: compressorSettings) { _, newValue in
-            localCompressorSettings = newValue
         }
     }
 }
@@ -240,8 +225,6 @@ struct AppRowWithLevelPolling: View {
     let onPinToggle: () -> Void  // Toggle pin state
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
-    let compressorSettings: CompressorSettings
-    let onCompressorChange: (CompressorSettings) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
@@ -272,8 +255,6 @@ struct AppRowWithLevelPolling: View {
         onPinToggle: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
-        compressorSettings: CompressorSettings = CompressorSettings(),
-        onCompressorChange: @escaping (CompressorSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {}
     ) {
@@ -300,8 +281,6 @@ struct AppRowWithLevelPolling: View {
         self.onPinToggle = onPinToggle
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
-        self.compressorSettings = compressorSettings
-        self.onCompressorChange = onCompressorChange
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
     }
@@ -330,8 +309,6 @@ struct AppRowWithLevelPolling: View {
             onPinToggle: onPinToggle,
             eqSettings: eqSettings,
             onEQChange: onEQChange,
-            compressorSettings: compressorSettings,
-            onCompressorChange: onCompressorChange,
             isEQExpanded: isEQExpanded,
             onEQToggle: onEQToggle
         )

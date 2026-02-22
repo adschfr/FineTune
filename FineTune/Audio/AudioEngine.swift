@@ -360,16 +360,6 @@ final class AudioEngine {
         settingsManager.setEQSettings(settings, for: identifier)
     }
 
-    /// Get compressor settings for an inactive app by persistence identifier.
-    func getCompressorSettingsForInactive(identifier: String) -> CompressorSettings {
-        settingsManager.getCompressorSettings(for: identifier)
-    }
-
-    /// Set compressor settings for an inactive app by persistence identifier.
-    func setCompressorSettingsForInactive(_ settings: CompressorSettings, identifier: String) {
-        settingsManager.setCompressorSettings(settings, for: identifier)
-    }
-
     /// Get device routing for an inactive app by persistence identifier.
     func getDeviceRoutingForInactive(identifier: String) -> String? {
         settingsManager.getDeviceRouting(for: identifier)
@@ -480,24 +470,14 @@ final class AudioEngine {
 
     /// Update EQ settings for an app
     func setEQSettings(_ settings: EQSettings, for app: AudioApp) {
+        guard let tap = taps[app.id] else { return }
+        tap.updateEQSettings(settings)
         settingsManager.setEQSettings(settings, for: app.persistenceIdentifier)
-        taps[app.id]?.updateEQSettings(settings)
     }
 
     /// Get EQ settings for an app
     func getEQSettings(for app: AudioApp) -> EQSettings {
         return settingsManager.getEQSettings(for: app.persistenceIdentifier)
-    }
-
-    /// Update compressor settings for an app
-    func setCompressorSettings(_ settings: CompressorSettings, for app: AudioApp) {
-        settingsManager.setCompressorSettings(settings, for: app.persistenceIdentifier)
-        taps[app.id]?.updateCompressorSettings(settings)
-    }
-
-    /// Get compressor settings for an app
-    func getCompressorSettings(for app: AudioApp) -> CompressorSettings {
-        settingsManager.getCompressorSettings(for: app.persistenceIdentifier)
     }
 
     /// Sets the output device for an app.
@@ -671,8 +651,6 @@ final class AudioEngine {
             // Load and apply persisted EQ settings
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
             tap.updateEQSettings(eqSettings)
-            let compressorSettings = settingsManager.getCompressorSettings(for: app.persistenceIdentifier)
-            tap.updateCompressorSettings(compressorSettings)
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
@@ -790,8 +768,6 @@ final class AudioEngine {
             // Load and apply persisted EQ settings
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
             tap.updateEQSettings(eqSettings)
-            let compressorSettings = settingsManager.getCompressorSettings(for: app.persistenceIdentifier)
-            tap.updateCompressorSettings(compressorSettings)
 
             logger.debug("Created tap for \(app.name)")
         } catch {
