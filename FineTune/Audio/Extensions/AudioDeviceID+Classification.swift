@@ -21,6 +21,10 @@ extension AudioDeviceID {
     func isVirtualDevice() -> Bool {
         readTransportType() == .virtual
     }
+
+    func isHidden() -> Bool {
+        (try? readBool(kAudioDevicePropertyIsHidden)) ?? false
+    }
 }
 
 // MARK: - Device Icon
@@ -37,6 +41,7 @@ extension AudioDeviceID {
         var iconURL: Unmanaged<CFURL>?
         let err = AudioObjectGetPropertyData(self, &address, 0, nil, &size, &iconURL)
 
+        // CoreAudio returns CF objects with +1 retain; takeRetainedValue transfers ownership to ARC
         guard err == noErr, let url = iconURL?.takeRetainedValue() as URL? else {
             return nil
         }
