@@ -39,6 +39,93 @@ enum BiquadMath {
         ]
     }
 
+    /// Compute low shelf biquad coefficients (RBJ cookbook)
+    /// Returns [b0, b1, b2, a1, a2] normalized by a0 for vDSP_biquad
+    static func lowShelfCoefficients(
+        frequency: Double,
+        gainDB: Float,
+        q: Double,
+        sampleRate: Double
+    ) -> [Double] {
+        let A = pow(10.0, Double(gainDB) / 40.0)
+        let omega = 2.0 * .pi * frequency / sampleRate
+        let sinW = sin(omega)
+        let cosW = cos(omega)
+        let alpha = sinW / (2.0 * q)
+        let twoSqrtAAlpha = 2.0 * sqrt(A) * alpha
+
+        let b0 = A * ((A + 1.0) - (A - 1.0) * cosW + twoSqrtAAlpha)
+        let b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosW)
+        let b2 = A * ((A + 1.0) - (A - 1.0) * cosW - twoSqrtAAlpha)
+        let a0 = (A + 1.0) + (A - 1.0) * cosW + twoSqrtAAlpha
+        let a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosW)
+        let a2 = (A + 1.0) + (A - 1.0) * cosW - twoSqrtAAlpha
+
+        return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0]
+    }
+
+    /// Compute high shelf biquad coefficients (RBJ cookbook)
+    /// Returns [b0, b1, b2, a1, a2] normalized by a0 for vDSP_biquad
+    static func highShelfCoefficients(
+        frequency: Double,
+        gainDB: Float,
+        q: Double,
+        sampleRate: Double
+    ) -> [Double] {
+        let A = pow(10.0, Double(gainDB) / 40.0)
+        let omega = 2.0 * .pi * frequency / sampleRate
+        let sinW = sin(omega)
+        let cosW = cos(omega)
+        let alpha = sinW / (2.0 * q)
+        let twoSqrtAAlpha = 2.0 * sqrt(A) * alpha
+
+        let b0 = A * ((A + 1.0) + (A - 1.0) * cosW + twoSqrtAAlpha)
+        let b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosW)
+        let b2 = A * ((A + 1.0) + (A - 1.0) * cosW - twoSqrtAAlpha)
+        let a0 = (A + 1.0) - (A - 1.0) * cosW + twoSqrtAAlpha
+        let a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cosW)
+        let a2 = (A + 1.0) - (A - 1.0) * cosW - twoSqrtAAlpha
+
+        return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0]
+    }
+
+    /// Compute coefficients for AutoEQ filters (peaking, lowShelf, highShelf).
+    /// Returns flat array of 5*N Doubles for vDSP_biquad_CreateSetup.
+    static func coefficientsForAutoEQFilters(
+        _ filters: [AutoEQFilter],
+        sampleRate: Double
+    ) -> [Double] {
+        var allCoeffs: [Double] = []
+        allCoeffs.reserveCapacity(filters.count * 5)
+
+        for filter in filters {
+            // Bypass filters at or above Nyquist
+            if filter.frequency >= sampleRate / 2.0 {
+                allCoeffs.append(contentsOf: [1.0, 0.0, 0.0, 0.0, 0.0])
+                continue
+            }
+
+            let coeffs: [Double]
+            switch filter.type {
+            case .peaking:
+                coeffs = peakingEQCoefficients(
+                    frequency: filter.frequency, gainDB: filter.gainDB,
+                    q: filter.q, sampleRate: sampleRate)
+            case .lowShelf:
+                coeffs = lowShelfCoefficients(
+                    frequency: filter.frequency, gainDB: filter.gainDB,
+                    q: filter.q, sampleRate: sampleRate)
+            case .highShelf:
+                coeffs = highShelfCoefficients(
+                    frequency: filter.frequency, gainDB: filter.gainDB,
+                    q: filter.q, sampleRate: sampleRate)
+            }
+            allCoeffs.append(contentsOf: coeffs)
+        }
+
+        return allCoeffs
+    }
+
     /// Compute coefficients for all 10 bands
     /// Returns 50 Doubles: [band0: b0,b1,b2,a1,a2, band1: ..., ...]
     static func coefficientsForAllBands(
