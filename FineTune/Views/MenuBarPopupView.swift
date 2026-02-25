@@ -1,5 +1,6 @@
 // FineTune/Views/MenuBarPopupView.swift
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MenuBarPopupView: View {
     @Bindable var audioEngine: AudioEngine
@@ -20,13 +21,18 @@ struct MenuBarPopupView: View {
 
     /// Track which app has its EQ panel expanded (only one at a time)
     /// Uses DisplayableApp.id (String) to work with both active and inactive apps
-    @State private var expandedEQAppID: String?
+    @State private var expandedRowID: String?
 
     /// Debounce EQ toggle to prevent rapid clicks during animation
     @State private var isEQAnimating = false
 
     /// Track popup visibility to pause VU meter polling when hidden
     @State private var isPopupVisible = true
+
+    /// Error message shown when AutoEQ profile import fails
+    @State private var autoEQImportError: String?
+    /// Task that auto-clears the import error after 3 seconds
+    @State private var importErrorClearTask: Task<Void, Never>?
 
     /// Track whether settings panel is open
     @State private var isSettingsOpen = false
@@ -136,6 +142,14 @@ struct MenuBarPopupView: View {
         .onChange(of: localAppSettings) { _, newValue in
             audioEngine.settingsManager.updateAppSettings(newValue)
         }
+        .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
+            // Collapse expanded device row on default device change
+            if let id = expandedRowID, id.hasPrefix("device-") {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    expandedRowID = nil
+                }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             isPopupVisible = true
         }
@@ -203,9 +217,9 @@ struct MenuBarPopupView: View {
     private func handleEscape() {
         if isSettingsOpen {
             toggleSettings()
-        } else if expandedEQAppID != nil {
+        } else if expandedRowID != nil {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                expandedEQAppID = nil
+                expandedRowID = nil
             }
         } else {
             NSApp.keyWindow?.resignKey()
@@ -378,8 +392,9 @@ struct MenuBarPopupView: View {
     private var devicesSection: some View {
         let devices = showingInputDevices ? sortedInputDevices : sortedDevices
         let threshold = deviceScrollThreshold
+        let hasExpandedDevice = !showingInputDevices && expandedRowID?.hasPrefix("device-") == true
 
-        if !isEditingDevicePriority && devices.count > threshold {
+        if !isEditingDevicePriority && !hasExpandedDevice && devices.count > threshold {
             ScrollView {
                 devicesContent
             }
@@ -453,6 +468,13 @@ struct MenuBarPopupView: View {
                 }
             } else {
                 ForEach(sortedDevices) { device in
+                    let deviceRowID = "device-\(device.uid)"
+                    let selection = audioEngine.getAutoEQSelection(for: device.uid)
+                    let profileName: String? = {
+                        guard let sel = selection else { return nil }
+                        return audioEngine.autoEQProfileManager.profile(for: sel.profileID)?.name
+                    }()
+
                     DeviceRow(
                         device: device,
                         isDefault: device.id == deviceVolumeMonitor.defaultDeviceID,
@@ -468,7 +490,35 @@ struct MenuBarPopupView: View {
                         onMuteToggle: {
                             let currentMute = deviceVolumeMonitor.muteStates[device.id] ?? false
                             deviceVolumeMonitor.setMute(for: device.id, to: !currentMute)
-                        }
+                        },
+                        autoEQProfileName: profileName,
+                        autoEQEnabled: selection?.isEnabled ?? false,
+                        onAutoEQToggle: {
+                            audioEngine.setAutoEQEnabled(for: device.uid, enabled: !(selection?.isEnabled ?? false))
+                        },
+                        isExpanded: expandedRowID == deviceRowID,
+                        onExpandToggle: {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                expandedRowID = expandedRowID == deviceRowID ? nil : deviceRowID
+                            }
+                        },
+                        autoEQProfileManager: audioEngine.autoEQProfileManager,
+                        autoEQSelection: selection,
+                        autoEQFavoriteIDs: audioEngine.settingsManager.favoriteAutoEQProfileIDs,
+                        onAutoEQSelect: { profile in
+                            audioEngine.setAutoEQProfile(for: device.uid, profileID: profile?.id)
+                        },
+                        onAutoEQImport: {
+                            importAutoEQFile(for: device.uid)
+                        },
+                        onAutoEQToggleFavorite: { id in
+                            if audioEngine.settingsManager.isAutoEQFavorite(id: id) {
+                                audioEngine.settingsManager.unfavoriteAutoEQProfile(id: id)
+                            } else {
+                                audioEngine.settingsManager.favoriteAutoEQProfile(id: id)
+                            }
+                        },
+                        autoEQImportError: autoEQImportError
                     )
                 }
             }
@@ -576,7 +626,7 @@ struct MenuBarPopupView: View {
                 onEQChange: { settings in
                     audioEngine.setEQSettings(settings, for: app)
                 },
-                isEQExpanded: expandedEQAppID == displayableApp.id,
+                isEQExpanded: expandedRowID == displayableApp.id,
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
                 }
@@ -626,7 +676,7 @@ struct MenuBarPopupView: View {
             onEQChange: { settings in
                 audioEngine.setEQSettingsForInactive(settings, identifier: identifier)
             },
-            isEQExpanded: expandedEQAppID == displayableApp.id,
+            isEQExpanded: expandedRowID == displayableApp.id,
             onEQToggle: {
                 toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
             }
@@ -639,12 +689,12 @@ struct MenuBarPopupView: View {
         guard !isEQAnimating else { return }
         isEQAnimating = true
 
-        let isExpanding = expandedEQAppID != appID
+        let isExpanding = expandedRowID != appID
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            if expandedEQAppID == appID {
-                expandedEQAppID = nil
+            if expandedRowID == appID {
+                expandedRowID = nil
             } else {
-                expandedEQAppID = appID
+                expandedRowID = appID
             }
             if isExpanding {
                 scrollProxy.scrollTo(appID, anchor: .top)
@@ -703,6 +753,33 @@ struct MenuBarPopupView: View {
     /// Recomputes sorted input devices using priority order
     private func updateSortedInputDevices() {
         sortedInputDevices = audioEngine.prioritySortedInputDevices
+    }
+
+    /// Opens a file panel to import a ParametricEQ.txt for a device
+    private func importAutoEQFile(for deviceUID: String) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType.plainText]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Select an AutoEQ ParametricEQ.txt file"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            let name = url.deletingPathExtension().lastPathComponent
+            Task { @MainActor in
+                if let profile = audioEngine.autoEQProfileManager.importProfile(from: url, name: name) {
+                    audioEngine.setAutoEQProfile(for: deviceUID, profileID: profile.id)
+                    autoEQImportError = nil
+                } else {
+                    autoEQImportError = "Could not read profile — check file format"
+                    importErrorClearTask?.cancel()
+                    importErrorClearTask = Task {
+                        try? await Task.sleep(for: .seconds(3))
+                        guard !Task.isCancelled else { return }
+                        withAnimation { autoEQImportError = nil }
+                    }
+                }
+            }
+        }
     }
 
     /// Activates an app, bringing it to foreground and restoring minimized windows
