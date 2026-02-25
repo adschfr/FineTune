@@ -12,6 +12,7 @@ final class AudioEngine {
     let deviceVolumeMonitor: DeviceVolumeMonitor
     let volumeState: VolumeState
     let settingsManager: SettingsManager
+    let autoEQProfileManager: AutoEQProfileManager
 
     #if !APP_STORE
     let ddcController: DDCController
@@ -166,9 +167,10 @@ final class AudioEngine {
         return nil
     }
 
-    init(settingsManager: SettingsManager? = nil) {
+    init(settingsManager: SettingsManager? = nil, autoEQProfileManager: AutoEQProfileManager? = nil) {
         let manager = settingsManager ?? SettingsManager()
         self.settingsManager = manager
+        self.autoEQProfileManager = autoEQProfileManager ?? AutoEQProfileManager()
         self.volumeState = VolumeState(settingsManager: manager)
 
         #if !APP_STORE
@@ -480,6 +482,53 @@ final class AudioEngine {
         return settingsManager.getEQSettings(for: app.persistenceIdentifier)
     }
 
+    // MARK: - Per-Device AutoEQ
+
+    func getAutoEQProfile(for deviceUID: String) -> AutoEQProfile? {
+        guard let selection = settingsManager.getAutoEQSelection(for: deviceUID) else { return nil }
+        return autoEQProfileManager.profile(for: selection.profileID)
+    }
+
+    func setAutoEQProfile(for deviceUID: String, profileID: String?) {
+        if let profileID {
+            settingsManager.setAutoEQSelection(for: deviceUID, to: AutoEQSelection(profileID: profileID, isEnabled: true))
+        } else {
+            settingsManager.setAutoEQSelection(for: deviceUID, to: nil)
+        }
+        applyAutoEQToTaps(for: deviceUID)
+    }
+
+    func setAutoEQEnabled(for deviceUID: String, enabled: Bool) {
+        guard var selection = settingsManager.getAutoEQSelection(for: deviceUID) else { return }
+        selection.isEnabled = enabled
+        settingsManager.setAutoEQSelection(for: deviceUID, to: selection)
+        applyAutoEQToTaps(for: deviceUID)
+    }
+
+    func getAutoEQSelection(for deviceUID: String) -> AutoEQSelection? {
+        settingsManager.getAutoEQSelection(for: deviceUID)
+    }
+
+    /// Apply AutoEQ profile to all taps currently routed to the given device.
+    private func applyAutoEQToTaps(for deviceUID: String) {
+        for tap in taps.values {
+            guard tap.currentDeviceUID == deviceUID else { continue }
+            applyAutoEQToTap(tap)
+        }
+    }
+
+    /// Apply the correct AutoEQ profile to a single tap based on its current device.
+    private func applyAutoEQToTap(_ tap: ProcessTapController) {
+        guard let deviceUID = tap.currentDeviceUID else { return }
+        guard let selection = settingsManager.getAutoEQSelection(for: deviceUID),
+              selection.isEnabled,
+              let profile = autoEQProfileManager.profile(for: selection.profileID) else {
+            tap.updateAutoEQProfile(nil)
+            return
+        }
+        tap.updateAutoEQProfile(profile)
+    }
+
     /// Sets the output device for an app.
     /// - Parameters:
     ///   - app: The app to route
@@ -521,6 +570,7 @@ final class AudioEngine {
                         tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                         tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                     }
+                    self.applyAutoEQToTap(tap)
                     self.logger.debug("Switched \(app.name) to device: \(targetUID)")
                 } catch {
                     self.logger.error("Failed to switch device for \(app.name): \(error.localizedDescription)")
@@ -651,6 +701,7 @@ final class AudioEngine {
             // Load and apply persisted EQ settings
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
             tap.updateEQSettings(eqSettings)
+            applyAutoEQToTap(tap)
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
@@ -768,6 +819,7 @@ final class AudioEngine {
             // Load and apply persisted EQ settings
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
             tap.updateEQSettings(eqSettings)
+            applyAutoEQToTap(tap)
 
             logger.debug("Created tap for \(app.name)")
         } catch {
@@ -841,6 +893,7 @@ final class AudioEngine {
                         try await tap.switchDevice(to: fallbackUID)
                         tap.volume = self.volumeState.getVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
+                        self.applyAutoEQToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) to fallback: \(error.localizedDescription)")
                     }
@@ -919,6 +972,7 @@ final class AudioEngine {
                             tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                             tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                         }
+                        self.applyAutoEQToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) back to \(deviceName): \(error.localizedDescription)")
                     }
@@ -1024,6 +1078,7 @@ final class AudioEngine {
                             tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                             tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                         }
+                        self.applyAutoEQToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(app.name) to new default: \(error.localizedDescription)")
                     }
