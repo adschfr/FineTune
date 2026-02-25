@@ -66,7 +66,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 7
+        var version: Int = 8
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -87,6 +87,10 @@ final class SettingsManager {
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
         var inputDevicePriority: [String] = []
+
+        // Per-device AutoEQ headphone correction
+        var deviceAutoEQ: [String: AutoEQSelection] = [:]  // deviceUID → selection
+        var favoriteAutoEQProfiles: Set<String> = []  // profile IDs
     }
 
     init(directory: URL? = nil) {
@@ -274,6 +278,35 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    // MARK: - Per-Device AutoEQ
+
+    func getAutoEQSelection(for deviceUID: String) -> AutoEQSelection? {
+        settings.deviceAutoEQ[deviceUID]
+    }
+
+    func setAutoEQSelection(for deviceUID: String, to selection: AutoEQSelection?) {
+        settings.deviceAutoEQ[deviceUID] = selection
+        scheduleSave()
+    }
+
+    func favoriteAutoEQProfile(id: String) {
+        settings.favoriteAutoEQProfiles.insert(id)
+        scheduleSave()
+    }
+
+    func unfavoriteAutoEQProfile(id: String) {
+        settings.favoriteAutoEQProfiles.remove(id)
+        scheduleSave()
+    }
+
+    func isAutoEQFavorite(id: String) -> Bool {
+        settings.favoriteAutoEQProfiles.contains(id)
+    }
+
+    var favoriteAutoEQProfileIDs: Set<String> {
+        settings.favoriteAutoEQProfiles
+    }
+
     // MARK: - App-Wide Settings
 
     var appSettings: AppSettings {
@@ -326,6 +359,8 @@ final class SettingsManager {
         settings.ddcSavedVolumes.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
+        settings.deviceAutoEQ.removeAll()
+        settings.favoriteAutoEQProfiles.removeAll()
 
         // Also unregister from launch at login
         try? SMAppService.mainApp.unregister()
