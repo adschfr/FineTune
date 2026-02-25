@@ -1,4 +1,4 @@
-// FineTune/Audio/BiquadProcessor.swift
+// FineTune/Audio/EQ/BiquadProcessor.swift
 import Foundation
 import Accelerate
 import Darwin.C  // OSMemoryBarrier

@@ -1,4 +1,4 @@
-// FineTune/Audio/AutoEQProfileManager.swift
+// FineTune/Audio/AutoEQ/AutoEQProfileManager.swift
 import Foundation
 import os
 

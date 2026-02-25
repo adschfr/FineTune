@@ -1,4 +1,4 @@
-// FineTune/Audio/AutoEQParser.swift
+// FineTune/Audio/AutoEQ/AutoEQParser.swift
 import Foundation
 import os
 

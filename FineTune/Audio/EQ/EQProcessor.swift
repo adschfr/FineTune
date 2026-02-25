@@ -1,4 +1,4 @@
-// FineTune/Audio/EQProcessor.swift
+// FineTune/Audio/EQ/EQProcessor.swift
 import Foundation
 import Accelerate
 

@@ -1,4 +1,4 @@
-// FineTune/Audio/CrossfadeState.swift
+// FineTune/Audio/Engine/CrossfadeState.swift
 import Foundation
 
 /// State machine phases for device switching crossfade.
