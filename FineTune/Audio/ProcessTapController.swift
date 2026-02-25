@@ -76,6 +76,7 @@ final class ProcessTapController {
     private nonisolated(unsafe) var rampCoefficient: Float = 0.0007
     private nonisolated(unsafe) var secondaryRampCoefficient: Float = 0.0007
     private nonisolated(unsafe) var eqProcessor: EQProcessor?
+    private nonisolated(unsafe) var autoEQProcessor: AutoEQProcessor?
 
     // Target device UIDs for synchronized multi-output (first is clock source)
     private var targetDeviceUIDs: [String]
@@ -142,6 +143,10 @@ final class ProcessTapController {
 
     func updateEQSettings(_ settings: EQSettings) {
         eqProcessor?.updateSettings(settings)
+    }
+
+    func updateAutoEQProfile(_ profile: AutoEQProfile?) {
+        autoEQProcessor?.updateProfile(profile)
     }
 
     // MARK: - Multi-Device Aggregate Configuration
@@ -245,6 +250,7 @@ final class ProcessTapController {
         logger.debug("Ramp coefficient: \(self.rampCoefficient)")
 
         eqProcessor = EQProcessor(sampleRate: sampleRate)
+        autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
 
         // Create IO proc with gain processing
         err = AudioDeviceCreateIOProcIDWithBlock(&primaryResources.deviceProcID, primaryResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
@@ -543,6 +549,7 @@ final class ProcessTapController {
             let rampTimeSeconds: Float = 0.030
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * rampTimeSeconds))
             eqProcessor?.updateSampleRate(deviceSampleRate)
+            autoEQProcessor?.updateSampleRate(deviceSampleRate)
         }
 
         _primaryCurrentVolume = _secondaryCurrentVolume
@@ -649,6 +656,7 @@ final class ProcessTapController {
         if let deviceSampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * 0.030))
             eqProcessor?.updateSampleRate(deviceSampleRate)
+            autoEQProcessor?.updateSampleRate(deviceSampleRate)
         }
     }
 
@@ -779,6 +787,14 @@ final class ProcessTapController {
                 eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 
+            // Per-device AutoEQ correction (after per-app EQ)
+            let autoEQ = autoEQProcessor
+            if let autoEQ, autoEQ.isEnabled, !crossfadeState.isActive {
+                let channels = Int(inputBuffer.mNumberChannels)
+                let frameCount = channels > 1 ? sampleCount / channels : sampleCount
+                autoEQ.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
+            }
+
             // Post-EQ soft limiting: catches any clipping from EQ boost or volume > 1.0.
             // Uses vDSP_maxmgv fast path — zero overhead when buffer is below threshold.
             SoftLimiter.processBuffer(outputSamples, sampleCount: sampleCount)
@@ -877,6 +893,14 @@ final class ProcessTapController {
                 let channels = Int(inputBuffer.mNumberChannels)
                 let frameCount = channels > 1 ? sampleCount / channels : sampleCount
                 eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
+            }
+
+            // Per-device AutoEQ correction (after per-app EQ)
+            let autoEQ = autoEQProcessor
+            if let autoEQ, autoEQ.isEnabled, !crossfadeState.isActive {
+                let channels = Int(inputBuffer.mNumberChannels)
+                let frameCount = channels > 1 ? sampleCount / channels : sampleCount
+                autoEQ.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 
             // Post-EQ soft limiting: catches any clipping from EQ boost or volume > 1.0.
