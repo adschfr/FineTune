@@ -60,12 +60,16 @@ enum AutoEQParser {
     // MARK: - Bundled JSON
 
     /// Load profiles from bundled JSON data.
+    /// Decodes each profile individually so one bad entry doesn't kill the entire catalog.
     static func parseJSON(data: Data) -> [AutoEQProfile] {
-        do {
-            return try JSONDecoder().decode([AutoEQProfile].self, from: data)
-        } catch {
-            logger.error("Failed to decode AutoEQ JSON: \(error.localizedDescription)")
+        guard let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            logger.error("Failed to decode AutoEQ JSON: not a JSON array")
             return []
+        }
+        let decoder = JSONDecoder()
+        return jsonArray.compactMap { element in
+            guard let elementData = try? JSONSerialization.data(withJSONObject: element) else { return nil }
+            return (try? decoder.decode(AutoEQProfile.self, from: elementData))?.validated()
         }
     }
 
