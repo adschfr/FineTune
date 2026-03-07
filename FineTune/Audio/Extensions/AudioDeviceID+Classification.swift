@@ -27,6 +27,61 @@ extension AudioDeviceID {
     }
 }
 
+// MARK: - AutoEQ Eligibility
+
+extension AudioDeviceID {
+    /// Returns `true` if this device is likely headphones and can benefit from AutoEQ correction.
+    /// HDMI, DisplayPort, AirPlay, virtual, and known speaker-only devices return `false`.
+    /// Built-in devices delegate to `builtInHasHeadphonesActive()` for headphone jack detection.
+    func supportsAutoEQ() -> Bool {
+        let transport = readTransportType()
+
+        switch transport {
+        case .hdmi, .displayPort, .airPlay, .virtual:
+            return false
+        case .builtIn:
+            return builtInHasHeadphonesActive()
+        default:
+            break
+        }
+
+        // Exclude known speaker-only devices by name
+        let name = (try? readDeviceName()) ?? ""
+        let excludedNames = ["HomePod", "Apple TV", "Studio Display", "Pro Display XDR"]
+        for excluded in excludedNames {
+            if name.localizedCaseInsensitiveContains(excluded) { return false }
+        }
+
+        // Bluetooth, USB, Thunderbolt, aggregate, unknown → likely headphones
+        return true
+    }
+
+    /// Checks if the built-in audio device currently has headphones plugged in
+    /// by reading the active data source name.
+    func builtInHasHeadphonesActive() -> Bool {
+        // Read the active data source ID
+        guard let sourceID: UInt32 = try? read(
+            kAudioDevicePropertyDataSource,
+            scope: .output,
+            defaultValue: 0
+        ), sourceID != 0 else {
+            // API failure — safer to not apply headphone correction to speakers
+            return false
+        }
+
+        // Resolve data source ID to a name string
+        guard let sourceName = readStringWithQualifier(
+            kAudioDevicePropertyDataSourceNameForIDCFString,
+            scope: .output,
+            qualifier: sourceID
+        ) else {
+            return false
+        }
+
+        return sourceName.localizedCaseInsensitiveContains("headphone")
+    }
+}
+
 // MARK: - Device Icon
 
 extension AudioDeviceID {
