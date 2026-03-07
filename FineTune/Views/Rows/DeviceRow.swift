@@ -17,8 +17,6 @@ struct DeviceRow: View {
     let autoEQProfileName: String?
     let autoEQEnabled: Bool
     let onAutoEQToggle: (() -> Void)?
-    let isExpanded: Bool
-    let onExpandToggle: (() -> Void)?
     let autoEQProfileManager: AutoEQProfileManager?
     let autoEQSelection: AutoEQSelection?
     let autoEQFavoriteIDs: Set<String>
@@ -48,8 +46,6 @@ struct DeviceRow: View {
         autoEQProfileName: String? = nil,
         autoEQEnabled: Bool = false,
         onAutoEQToggle: (() -> Void)? = nil,
-        isExpanded: Bool = false,
-        onExpandToggle: (() -> Void)? = nil,
         autoEQProfileManager: AutoEQProfileManager? = nil,
         autoEQSelection: AutoEQSelection? = nil,
         autoEQFavoriteIDs: Set<String> = [],
@@ -69,8 +65,6 @@ struct DeviceRow: View {
         self.autoEQProfileName = autoEQProfileName
         self.autoEQEnabled = autoEQEnabled
         self.onAutoEQToggle = onAutoEQToggle
-        self.isExpanded = isExpanded
-        self.onExpandToggle = onExpandToggle
         self.autoEQProfileManager = autoEQProfileManager
         self.autoEQSelection = autoEQSelection
         self.autoEQFavoriteIDs = autoEQFavoriteIDs
@@ -82,18 +76,8 @@ struct DeviceRow: View {
     }
 
     var body: some View {
-        if autoEQProfileManager != nil {
-            ExpandableGlassRow(isExpanded: isExpanded) {
-                deviceHeader
-            } expandedContent: {
-                expandedAutoEQContent
-                    .padding(.top, DesignTokens.Spacing.sm)
-                    .padding(.bottom, DesignTokens.Spacing.xs)
-            }
-        } else {
-            deviceHeader
-                .hoverableRow()
-        }
+        deviceHeader
+            .hoverableRow()
     }
 
     // MARK: - Device Header
@@ -117,18 +101,39 @@ struct DeviceRow: View {
             }
             .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
 
-            // Device name + optional profile subtitle
-            VStack(alignment: .leading, spacing: 1) {
-                Text(device.name)
-                    .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
-                    .lineLimit(1)
-                    .help(device.name)
-
-                if let profileName = autoEQProfileName, autoEQEnabled {
-                    Text(profileName)
-                        .font(.system(size: 9))
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+            // Device name + optional AutoEQ profile subtitle + AutoEQ picker
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(device.name)
+                        .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
                         .lineLimit(1)
+                        .help(device.name)
+
+                    if let profileName = autoEQProfileName, autoEQEnabled {
+                        Text(profileName)
+                            .font(.system(size: 9))
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                // AutoEQ picker inside the name area so slider length stays consistent
+                if device.supportsAutoEQ,
+                   let profileManager = autoEQProfileManager,
+                   let onSelect = onAutoEQSelect,
+                   let onImport = onAutoEQImport {
+                    AutoEQPicker(
+                        profileManager: profileManager,
+                        profileName: autoEQProfileName,
+                        selection: autoEQSelection,
+                        favoriteIDs: autoEQFavoriteIDs,
+                        onSelect: onSelect,
+                        onImport: onImport,
+                        onToggleFavorite: { id in onAutoEQToggleFavorite?(id) },
+                        importError: autoEQImportError
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -175,69 +180,12 @@ struct DeviceRow: View {
                     range: 0...100
                 )
             }
-
-            // AutoEQ expand button (headphones icon)
-            if autoEQProfileManager != nil, let onExpandToggle {
-                Button(action: onExpandToggle) {
-                    Image(systemName: "headphones")
-                        .font(.system(size: 11))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(autoEQProfileName != nil && autoEQEnabled
-                            ? DesignTokens.Colors.interactiveActive
-                            : DesignTokens.Colors.interactiveDefault)
-                        .frame(
-                            minWidth: DesignTokens.Dimensions.minTouchTarget,
-                            minHeight: DesignTokens.Dimensions.minTouchTarget
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(isExpanded ? "Close AutoEQ" : "AutoEQ correction")
-            }
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }
             sliderValue = Double(newValue)
-        }
-    }
-
-    // MARK: - AutoEQ Expanded Content
-
-    @ViewBuilder
-    private var expandedAutoEQContent: some View {
-        if let profileManager = autoEQProfileManager,
-           let onSelect = onAutoEQSelect,
-           let onImport = onAutoEQImport {
-            // Enable/disable toggle (only when a profile is selected)
-            if autoEQSelection != nil {
-                HStack {
-                    Toggle(isOn: Binding(
-                        get: { autoEQEnabled },
-                        set: { _ in onAutoEQToggle?() }
-                    )) {
-                        Text("Correction enabled")
-                            .font(.system(size: 11))
-                            .foregroundStyle(DesignTokens.Colors.textSecondary)
-                    }
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                }
-                .padding(.horizontal, DesignTokens.Spacing.xs)
-                .padding(.bottom, DesignTokens.Spacing.xs)
-            }
-
-            AutoEQSearchPanel(
-                profileManager: profileManager,
-                favoriteIDs: autoEQFavoriteIDs,
-                selectedProfileID: autoEQSelection?.profileID,
-                onSelect: onSelect,
-                onDismiss: { onExpandToggle?() },
-                onImport: onImport,
-                onToggleFavorite: { id in onAutoEQToggleFavorite?(id) },
-                importErrorMessage: autoEQImportError
-            )
         }
     }
 }
