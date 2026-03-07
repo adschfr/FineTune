@@ -4,44 +4,52 @@ import os
 
 /// Search result from `AutoEQProfileManager.search()`.
 struct AutoEQSearchResult {
-    let profiles: [AutoEQProfile]
+    let entries: [AutoEQCatalogEntry]
     let totalCount: Int
 }
 
-/// Manages the in-memory catalog of AutoEQ headphone correction profiles.
-/// File I/O is delegated to `AutoEQProfileLoader`.
+/// Manages the catalog of AutoEQ headphone correction profiles.
+/// Search operates on lightweight catalog entries; full profiles are resolved on demand.
 @Observable
 @MainActor
 final class AutoEQProfileManager {
+    /// Fully-loaded profiles (imported + previously fetched).
     private(set) var profiles: [String: AutoEQProfile] = [:]
+
+    private let fetcher: AutoEQFetcher
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "AutoEQProfileManager")
     private let loader: AutoEQProfileLoader
 
-    /// Pre-sorted profile list for fast search.
-    private var sortedProfiles: [AutoEQProfile] = []
+    /// Pre-sorted catalog entries for fast search.
+    private var sortedEntries: [AutoEQCatalogEntry] = []
 
-    /// Normalized names for fuzzy search (parallel array with sortedProfiles).
-    /// Lowercased with all non-alphanumeric characters stripped.
+    /// Normalized names for fuzzy search (parallel array with sortedEntries).
     private var normalizedNames: [String] = []
 
-    init(loader: AutoEQProfileLoader = AutoEQProfileLoader()) {
+    init(loader: AutoEQProfileLoader = AutoEQProfileLoader(), fetcher: AutoEQFetcher? = nil) {
         self.loader = loader
+        self.fetcher = fetcher ?? AutoEQFetcher()
 
         // Imported profiles are small — load synchronously
         let imported = loader.loadImportedProfiles()
         for profile in imported {
             profiles[profile.id] = profile
         }
-        rebuildSortedProfiles()
 
-        // Bundled JSON (~4MB) is loaded off the main thread to avoid blocking launch
+        // Load catalog from cache/GitHub
         Task { @MainActor in
-            let bundled = await loader.loadBundledProfiles()
-            for profile in bundled {
-                self.profiles[profile.id] = profile
-            }
-            self.rebuildSortedProfiles()
+            await self.fetcher.loadCatalog()
+            self.rebuildSearchIndex()
         }
+    }
+
+    // MARK: - Catalog State (forwarded from fetcher)
+
+    var catalogState: AutoEQFetcher.FetchState { fetcher.catalogState }
+    var catalogEntries: [AutoEQCatalogEntry] { fetcher.catalog }
+
+    func catalogEntry(for id: String) -> AutoEQCatalogEntry? {
+        fetcher.catalog.first(where: { $0.id == id })
     }
 
     // MARK: - Import / Delete
@@ -50,7 +58,7 @@ final class AutoEQProfileManager {
     func importProfile(from url: URL, name: String) -> AutoEQProfile? {
         guard let profile = loader.importProfile(from: url, name: name) else { return nil }
         profiles[profile.id] = profile
-        rebuildSortedProfiles()
+        rebuildSearchIndex()
         return profile
     }
 
@@ -58,30 +66,77 @@ final class AutoEQProfileManager {
     func deleteImportedProfile(id: String) {
         guard let profile = profiles[id], profile.source == .imported else { return }
         profiles.removeValue(forKey: id)
-        rebuildSortedProfiles()
         loader.deleteProfileFiles(id: id)
+        rebuildSearchIndex()
         logger.info("Deleted imported profile: \(profile.name)")
+    }
+
+    // MARK: - Profile Resolution
+
+    /// Resolve a profile by ID: memory → cache → network.
+    func resolveProfile(for id: String) async -> AutoEQProfile? {
+        // Already loaded (imported or previously fetched)
+        if let existing = profiles[id] { return existing }
+
+        // Find catalog entry for this ID
+        guard let entry = fetcher.catalog.first(where: { $0.id == id }) else { return nil }
+
+        do {
+            let profile = try await fetcher.fetchProfile(for: entry)
+            profiles[id] = profile
+            return profile
+        } catch {
+            logger.error("Failed to resolve profile \(id): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Resolve a profile from a catalog entry.
+    func resolveProfile(for entry: AutoEQCatalogEntry) async -> AutoEQProfile? {
+        if let existing = profiles[entry.id] { return existing }
+
+        do {
+            let profile = try await fetcher.fetchProfile(for: entry)
+            profiles[entry.id] = profile
+            return profile
+        } catch {
+            logger.error("Failed to fetch profile \(entry.name): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Look up a profile by ID (only returns already-loaded profiles).
+    func profile(for id: String) -> AutoEQProfile? {
+        profiles[id]
     }
 
     // MARK: - Search
 
-    private func rebuildSortedProfiles() {
-        sortedProfiles = profiles.values.sorted {
-            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+    /// Rebuild the search index from fetcher catalog + imported profiles.
+    private func rebuildSearchIndex() {
+        // Catalog entries from GitHub
+        var entries = fetcher.catalog
+
+        // Add imported profiles as pseudo-catalog entries
+        for profile in profiles.values where profile.source == .imported {
+            let entry = AutoEQCatalogEntry(
+                id: profile.id,
+                name: profile.name,
+                measuredBy: "Imported",
+                relativePath: ""
+            )
+            entries.append(entry)
         }
-        normalizedNames = sortedProfiles.map { Self.normalize($0.name) }
+
+        entries.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        sortedEntries = entries
+        normalizedNames = entries.map { Self.normalize($0.name) }
     }
 
-    /// Fuzzy search across profile names with relevance ranking.
-    ///
-    /// Scoring tiers:
-    /// - **Tier 1 (100-250):** Exact substring match (bonus for prefix/exact/shorter name)
-    /// - **Tier 2 (50-99):** Normalized substring match (spaces/punctuation stripped)
-    /// - **Tier 3 (1-49):** Token-based fuzzy match with Levenshtein edit distance
-    ///
-    /// Returns up to `limit` results sorted by relevance. Empty query returns nothing.
+    /// Fuzzy search across catalog entry names with relevance ranking.
     func search(query: String, limit: Int = 50) -> AutoEQSearchResult {
-        guard !query.isEmpty else { return AutoEQSearchResult(profiles: [], totalCount: 0) }
+        guard !query.isEmpty else { return AutoEQSearchResult(entries: [], totalCount: 0) }
 
         let loweredQuery = query.lowercased()
         let normalizedQuery = Self.normalize(query)
@@ -89,8 +144,8 @@ final class AutoEQProfileManager {
         var scored: [(index: Int, score: Int)] = []
         scored.reserveCapacity(200)
 
-        for i in 0..<sortedProfiles.count {
-            let loweredName = sortedProfiles[i].name.lowercased()
+        for i in 0..<sortedEntries.count {
+            let loweredName = sortedEntries[i].name.lowercased()
             let normalizedName = normalizedNames[i]
 
             let score = Self.matchScore(
@@ -105,21 +160,15 @@ final class AutoEQProfileManager {
             }
         }
 
-        // Sort by descending score, then alphabetically for ties
         scored.sort {
             if $0.score != $1.score { return $0.score > $1.score }
-            return sortedProfiles[$0.index].name < sortedProfiles[$1.index].name
+            return sortedEntries[$0.index].name < sortedEntries[$1.index].name
         }
 
         let totalCount = scored.count
-        let limitedResults = scored.prefix(limit).map { sortedProfiles[$0.index] }
+        let limitedResults = scored.prefix(limit).map { sortedEntries[$0.index] }
 
-        return AutoEQSearchResult(profiles: Array(limitedResults), totalCount: totalCount)
-    }
-
-    /// Look up a profile by ID.
-    func profile(for id: String) -> AutoEQProfile? {
-        profiles[id]
+        return AutoEQSearchResult(entries: Array(limitedResults), totalCount: totalCount)
     }
 
     // MARK: - Scoring
@@ -135,7 +184,6 @@ final class AutoEQProfileManager {
             var score = 100
             if loweredName.hasPrefix(loweredQuery) { score += 50 }
             if loweredName == loweredQuery { score += 100 }
-            // Prefer shorter names (closer match)
             score += max(0, 50 - loweredName.count)
             return score
         }
@@ -155,19 +203,16 @@ final class AutoEQProfileManager {
         var totalTokenScore = 0
         for token in queryTokens {
             let tokenScore = bestTokenMatch(token: token, in: loweredName)
-            if tokenScore == 0 { return 0 } // All tokens must match
+            if tokenScore == 0 { return 0 }
             totalTokenScore += tokenScore
         }
 
         return min(49, totalTokenScore / queryTokens.count)
     }
 
-    /// Find the best fuzzy match for a single token within a name.
     private static func bestTokenMatch(token: String, in name: String) -> Int {
-        // First check substring match
         if name.contains(token) { return 40 }
 
-        // Fuzzy: check edit distance against name tokens
         let nameTokens = name.split(whereSeparator: { $0.isWhitespace || $0 == "-" }).map(String.init)
         let maxAllowedDistance = token.count <= 4 ? 1 : 2
 
@@ -182,7 +227,6 @@ final class AutoEQProfileManager {
         return bestScore
     }
 
-    /// Levenshtein edit distance. O(n*m) but tokens are short (typically < 15 chars).
     private static func editDistance(_ a: String, _ b: String) -> Int {
         let aChars = Array(a)
         let bChars = Array(b)
@@ -191,7 +235,6 @@ final class AutoEQProfileManager {
 
         if m == 0 { return n }
         if n == 0 { return m }
-        // Early exit for trivially different lengths
         if abs(m - n) > 2 { return max(m, n) }
 
         var prev = Array(0...n)
@@ -213,8 +256,6 @@ final class AutoEQProfileManager {
 
     // MARK: - Normalization
 
-    /// Strip non-alphanumeric characters and lowercase.
-    /// "Sennheiser HD 600" → "sennheiserhd600"
     private static func normalize(_ string: String) -> String {
         var result = ""
         result.reserveCapacity(string.count)
