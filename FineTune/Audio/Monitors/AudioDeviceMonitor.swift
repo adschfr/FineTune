@@ -50,6 +50,9 @@ final class AudioDeviceMonitor {
     private var knownDeviceUIDs: Set<String> = []
     private var knownInputDeviceUIDs: Set<String> = []
 
+    /// Listeners for kAudioDevicePropertyDataSource changes on built-in devices (headphone jack detection)
+    @ObservationIgnored private var dataSourceListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+
     func start() {
         guard deviceListListenerBlock == nil else { return }
 
@@ -82,6 +85,7 @@ final class AudioDeviceMonitor {
             AudioObjectRemovePropertyListenerBlock(.system, &deviceListAddress, .main, block)
             deviceListListenerBlock = nil
         }
+        removeAllDataSourceListeners()
     }
 
     /// O(1) lookup by device UID (output devices)
@@ -129,7 +133,8 @@ final class AudioDeviceMonitor {
                         id: deviceID,
                         uid: uid,
                         name: name,
-                        icon: icon
+                        icon: icon,
+                        supportsAutoEQ: deviceID.supportsAutoEQ()
                     )
                     outputDeviceList.append(device)
                 }
@@ -151,7 +156,8 @@ final class AudioDeviceMonitor {
                         id: deviceID,
                         uid: uid,
                         name: name,
-                        icon: icon
+                        icon: icon,
+                        supportsAutoEQ: false
                     )
                     inputDeviceList.append(device)
                 }
@@ -169,8 +175,58 @@ final class AudioDeviceMonitor {
             inputDevicesByUID = Dictionary(uniqueKeysWithValues: inputDevices.map { ($0.uid, $0) })
             inputDevicesByID = Dictionary(uniqueKeysWithValues: inputDevices.map { ($0.id, $0) })
 
+            syncDataSourceListeners(outputDeviceIDs: outputDeviceList.map(\.id))
+
         } catch {
             logger.error("Failed to refresh device list: \(error.localizedDescription)")
+        }
+    }
+
+    /// Installs/removes kAudioDevicePropertyDataSource listeners on built-in output devices
+    /// so headphone jack plug/unplug triggers a refresh.
+    private func syncDataSourceListeners(outputDeviceIDs: [AudioDeviceID]) {
+        let builtInIDs = Set(outputDeviceIDs.filter { $0.readTransportType() == .builtIn })
+        let currentIDs = Set(dataSourceListeners.keys)
+
+        // Remove listeners for devices no longer present
+        for deviceID in currentIDs.subtracting(builtInIDs) {
+            removeDataSourceListener(for: deviceID)
+        }
+
+        // Add listeners for new built-in devices
+        for deviceID in builtInIDs.subtracting(currentIDs) {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDataSource,
+                mScope: kAudioObjectPropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    self?.handleDeviceListChanged()
+                }
+            }
+            let status = AudioObjectAddPropertyListenerBlock(deviceID, &address, .main, block)
+            if status == noErr {
+                dataSourceListeners[deviceID] = block
+            } else {
+                logger.warning("Failed to add data source listener for device \(deviceID): \(status)")
+            }
+        }
+    }
+
+    private func removeDataSourceListener(for deviceID: AudioDeviceID) {
+        guard let block = dataSourceListeners.removeValue(forKey: deviceID) else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDataSource,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
+    }
+
+    private func removeAllDataSourceListeners() {
+        for deviceID in dataSourceListeners.keys {
+            removeDataSourceListener(for: deviceID)
         }
     }
 
@@ -232,6 +288,15 @@ final class AudioDeviceMonitor {
                 mElement: kAudioObjectPropertyElementMain
             )
             AudioObjectRemovePropertyListenerBlock(.system, &addr, .main, block)
+        }
+        // Clean up data source listeners
+        for (deviceID, block) in dataSourceListeners {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDataSource,
+                mScope: kAudioObjectPropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            AudioObjectRemovePropertyListenerBlock(deviceID, &addr, .main, block)
         }
     }
 }
