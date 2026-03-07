@@ -518,15 +518,38 @@ final class AudioEngine {
     }
 
     /// Apply the correct AutoEQ profile to a single tap based on its current device.
+    /// Skips AutoEQ entirely for devices that don't support it (speakers, HDMI, etc.).
+    /// If the profile isn't loaded yet, triggers an async fetch and applies when ready.
     private func applyAutoEQToTap(_ tap: ProcessTapController) {
         guard let deviceUID = tap.currentDeviceUID else { return }
-        guard let selection = settingsManager.getAutoEQSelection(for: deviceUID),
-              selection.isEnabled,
-              let profile = autoEQProfileManager.profile(for: selection.profileID) else {
+
+        // Skip AutoEQ for non-headphone devices (or if device not found in monitor)
+        guard let device = deviceMonitor.device(for: deviceUID) else { return }
+        guard device.supportsAutoEQ else {
             tap.updateAutoEQProfile(nil)
             return
         }
-        tap.updateAutoEQProfile(profile)
+
+        guard let selection = settingsManager.getAutoEQSelection(for: deviceUID),
+              selection.isEnabled else {
+            tap.updateAutoEQProfile(nil)
+            return
+        }
+
+        // Try in-memory first (instant)
+        if let profile = autoEQProfileManager.profile(for: selection.profileID) {
+            tap.updateAutoEQProfile(profile)
+            return
+        }
+
+        // Profile not loaded yet — fetch asynchronously
+        tap.updateAutoEQProfile(nil)
+        Task { @MainActor in
+            guard let profile = await autoEQProfileManager.resolveProfile(for: selection.profileID) else { return }
+            // Verify tap still exists and is still routed to the same device
+            guard tap.currentDeviceUID == deviceUID else { return }
+            tap.updateAutoEQProfile(profile)
+        }
     }
 
     /// Sets the output device for an app.
