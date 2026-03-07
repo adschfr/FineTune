@@ -143,12 +143,7 @@ struct MenuBarPopupView: View {
             audioEngine.settingsManager.updateAppSettings(newValue)
         }
         .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
-            // Collapse expanded device row on default device change
-            if let id = expandedRowID, id.hasPrefix("device-") {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    expandedRowID = nil
-                }
-            }
+            updateSortedDevices()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             isPopupVisible = true
@@ -218,6 +213,7 @@ struct MenuBarPopupView: View {
         if isSettingsOpen {
             toggleSettings()
         } else if expandedRowID != nil {
+            // Collapse any expanded app EQ panel
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                 expandedRowID = nil
             }
@@ -392,9 +388,8 @@ struct MenuBarPopupView: View {
     private var devicesSection: some View {
         let devices = showingInputDevices ? sortedInputDevices : sortedDevices
         let threshold = deviceScrollThreshold
-        let hasExpandedDevice = !showingInputDevices && expandedRowID?.hasPrefix("device-") == true
 
-        if !isEditingDevicePriority && !hasExpandedDevice && devices.count > threshold {
+        if !isEditingDevicePriority && devices.count > threshold {
             ScrollView {
                 devicesContent
             }
@@ -468,7 +463,6 @@ struct MenuBarPopupView: View {
                 }
             } else {
                 ForEach(sortedDevices) { device in
-                    let deviceRowID = "device-\(device.uid)"
                     let selection = audioEngine.getAutoEQSelection(for: device.uid)
                     let profileName: String? = {
                         guard let sel = selection else { return nil }
@@ -495,12 +489,6 @@ struct MenuBarPopupView: View {
                         autoEQEnabled: selection?.isEnabled ?? false,
                         onAutoEQToggle: {
                             audioEngine.setAutoEQEnabled(for: device.uid, enabled: !(selection?.isEnabled ?? false))
-                        },
-                        isExpanded: expandedRowID == deviceRowID,
-                        onExpandToggle: {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                expandedRowID = expandedRowID == deviceRowID ? nil : deviceRowID
-                            }
                         },
                         autoEQProfileManager: audioEngine.autoEQProfileManager,
                         autoEQSelection: selection,
@@ -757,6 +745,9 @@ struct MenuBarPopupView: View {
 
     /// Opens a file panel to import a ParametricEQ.txt for a device
     private func importAutoEQFile(for deviceUID: String) {
+        // Dismiss the main popup so the file picker isn't obscured
+        NSApp.keyWindow?.resignKey()
+
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType.plainText]
         panel.allowsMultipleSelection = false
