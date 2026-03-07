@@ -19,11 +19,14 @@ struct AutoEQSearchPanel: View {
     @State private var starHoveredID: String?
     @State private var debounceTask: Task<Void, Never>?
     @State private var highlightedIndex: Int?
-    @State private var cachedSearchResult = AutoEQSearchResult(profiles: [], totalCount: 0)
+    @State private var cachedSearchResult = AutoEQSearchResult(entries: [], totalCount: 0)
+    @State private var loadingProfileID: String?
+    @State private var fetchError: String?
     @FocusState private var isSearchFocused: Bool
 
-    private let maxVisibleItems = 8
+    private let maxVisibleItems = 6
     private let itemHeight: CGFloat = 28
+    private var listHeight: CGFloat { CGFloat(maxVisibleItems) * itemHeight }
 
     // MARK: - Navigable Items
 
@@ -60,13 +63,13 @@ struct AutoEQSearchPanel: View {
         }
 
         if !debouncedQuery.isEmpty {
-            for profile in results {
-                if profile.id == selectedProfileID { continue }
-                items.append(.searchResult(profile.id))
+            for entry in results {
+                if entry.id == selectedProfileID { continue }
+                items.append(.searchResult(entry.id))
             }
         } else {
-            for profile in resolvedFavorites {
-                items.append(.favorite(profile.id))
+            for entry in resolvedFavorites {
+                items.append(.favorite(entry.id))
             }
         }
 
@@ -75,29 +78,27 @@ struct AutoEQSearchPanel: View {
 
     // MARK: - Computed Results
 
-    private var results: [AutoEQProfile] {
-        let all = cachedSearchResult.profiles
-        // Partition: favorites first, then non-favorites
-        let (favs, rest) = all.reduce(into: ([AutoEQProfile](), [AutoEQProfile]())) { acc, p in
-            if favoriteIDs.contains(p.id) { acc.0.append(p) } else { acc.1.append(p) }
+    private var results: [AutoEQCatalogEntry] {
+        let all = cachedSearchResult.entries
+        let (favs, rest) = all.reduce(into: ([AutoEQCatalogEntry](), [AutoEQCatalogEntry]())) { acc, e in
+            if favoriteIDs.contains(e.id) { acc.0.append(e) } else { acc.1.append(e) }
         }
         return favs + rest
     }
 
-    /// Resolved favorite profiles for empty-search display.
-    /// Excludes the currently selected profile to avoid duplication with the "currently selected" row.
-    private var resolvedFavorites: [AutoEQProfile] {
-        favoriteIDs
-            .compactMap { profileManager.profile(for: $0) }
+    /// Resolved favorite entries for empty-search display.
+    private var resolvedFavorites: [AutoEQCatalogEntry] {
+        let catalog = profileManager.catalogEntries
+        return favoriteIDs
+            .compactMap { id in catalog.first(where: { $0.id == id }) }
             .filter { $0.id != selectedProfileID }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// Number of favorites at the start of `results` (for rendering the divider).
     private var favoritePrefixCount: Int {
         var count = 0
-        for profile in results {
-            if favoriteIDs.contains(profile.id) { count += 1 } else { break }
+        for entry in results {
+            if favoriteIDs.contains(entry.id) { count += 1 } else { break }
         }
         return count
     }
@@ -139,9 +140,13 @@ struct AutoEQSearchPanel: View {
                 onSelect(nil)
                 onDismiss()
             } label: {
-                HStack {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "xmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(selectedProfileID == nil ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
+
                     Text("No correction")
-                        .font(.system(size: 11))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(selectedProfileID == nil ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
 
                     Spacer()
@@ -177,14 +182,23 @@ struct AutoEQSearchPanel: View {
             }
 
             // Results / Favorites / Empty state
-            if debouncedQuery.isEmpty {
-                let favorites = resolvedFavorites
-                if favorites.isEmpty {
-                    Text("Type to search 6,000+ headphones")
+            if profileManager.catalogState == .loading && profileManager.catalogEntries.isEmpty {
+                // Catalog loading for the first time
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading headphone catalog...")
                         .font(.system(size: 11))
                         .foregroundStyle(DesignTokens.Colors.textTertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, DesignTokens.Spacing.lg)
+                }
+                .frame(maxWidth: .infinity, minHeight: listHeight)
+            } else if debouncedQuery.isEmpty {
+                let favorites = resolvedFavorites
+                if favorites.isEmpty {
+                    Text("Type to search headphones")
+                        .font(.system(size: 11))
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                        .frame(maxWidth: .infinity, minHeight: listHeight)
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView {
@@ -197,15 +211,15 @@ struct AutoEQSearchPanel: View {
                                     .padding(.horizontal, DesignTokens.Spacing.sm)
                                     .padding(.top, DesignTokens.Spacing.xs)
 
-                                ForEach(favorites) { profile in
-                                    profileRow(profile, itemIDPrefix: "fav_")
-                                        .id(profile.id)
+                                ForEach(favorites) { entry in
+                                    catalogEntryRow(entry, itemIDPrefix: "fav_")
+                                        .id(entry.id)
                                 }
                             }
                             .padding(.horizontal, DesignTokens.Spacing.xs)
                             .padding(.vertical, DesignTokens.Spacing.xs)
                         }
-                        .frame(maxHeight: CGFloat(maxVisibleItems) * itemHeight)
+                        .frame(height: listHeight)
                         .onChange(of: highlightedIndex) { _, _ in
                             scrollToHighlighted(proxy: proxy)
                         }
@@ -215,34 +229,47 @@ struct AutoEQSearchPanel: View {
                 Text("No profiles found")
                     .font(.system(size: 11))
                     .foregroundStyle(DesignTokens.Colors.textTertiary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, DesignTokens.Spacing.lg)
+                    .frame(maxWidth: .infinity, minHeight: listHeight)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 2) {
                             let favCount = favoritePrefixCount
-                            ForEach(Array(results.enumerated()), id: \.element.id) { index, profile in
+                            ForEach(Array(results.enumerated()), id: \.element.id) { index, entry in
                                 if index == favCount && favCount > 0 {
                                     Divider()
                                         .padding(.horizontal, DesignTokens.Spacing.sm)
                                         .padding(.vertical, 2)
                                 }
-                                profileRow(profile, itemIDPrefix: "result_")
-                                    .id(profile.id)
+                                catalogEntryRow(entry, itemIDPrefix: "result_")
+                                    .id(entry.id)
                             }
                         }
                         .padding(.horizontal, DesignTokens.Spacing.xs)
                         .padding(.vertical, DesignTokens.Spacing.xs)
                     }
-                    .frame(maxHeight: CGFloat(maxVisibleItems) * itemHeight)
+                    .frame(height: listHeight)
                     .onChange(of: highlightedIndex) { _, _ in
                         scrollToHighlighted(proxy: proxy)
                     }
                 }
 
-                // Result count indicator
                 resultCountLabel
+            }
+
+            // Catalog error message
+            if case .error(let message) = profileManager.catalogState,
+               profileManager.catalogEntries.isEmpty {
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 10))
+                    Text(message)
+                        .font(.system(size: 10))
+                }
+                .foregroundStyle(.red.opacity(0.9))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, DesignTokens.Spacing.sm)
+                .padding(.bottom, DesignTokens.Spacing.xs)
             }
 
             Divider()
@@ -274,8 +301,8 @@ struct AutoEQSearchPanel: View {
             .padding(.horizontal, DesignTokens.Spacing.xs)
             .padding(.bottom, DesignTokens.Spacing.xs)
 
-            // Import error message (auto-dismissed by parent after 3 seconds)
-            if let errorMessage = importErrorMessage {
+            // Error messages
+            if let errorMessage = fetchError ?? importErrorMessage {
                 Text(errorMessage)
                     .font(.system(size: 10))
                     .foregroundStyle(.red.opacity(0.9))
@@ -285,6 +312,7 @@ struct AutoEQSearchPanel: View {
                     .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: fetchError)
         .animation(.easeInOut(duration: 0.2), value: importErrorMessage)
         .background {
             RoundedRectangle(cornerRadius: 10)
@@ -326,7 +354,7 @@ struct AutoEQSearchPanel: View {
     @ViewBuilder
     private var resultCountLabel: some View {
         let total = cachedSearchResult.totalCount
-        let shown = cachedSearchResult.profiles.count
+        let shown = cachedSearchResult.entries.count
         if total > shown {
             Text("Showing \(shown) of \(total) results")
                 .font(.system(size: 9))
@@ -342,7 +370,7 @@ struct AutoEQSearchPanel: View {
         }
     }
 
-    // MARK: - Profile Row
+    // MARK: - Profile Row (for already-loaded profiles like the selected one)
 
     @ViewBuilder
     private func profileRow(_ profile: AutoEQProfile, itemIDPrefix: String) -> some View {
@@ -364,29 +392,16 @@ struct AutoEQSearchPanel: View {
                     Text("Imported")
                         .font(.system(size: 9))
                         .foregroundStyle(DesignTokens.Colors.textTertiary)
+                } else if let measuredBy = profile.measuredBy {
+                    Text(measuredBy)
+                        .font(.system(size: 9))
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
                 }
             }
 
             Spacer()
 
-            // Star button — visible when row hovered, highlighted, or already favorited
-            if isFavorited || isRowHovered || isRowHighlighted {
-                Button {
-                    onToggleFavorite(profile.id)
-                } label: {
-                    Image(systemName: isFavorited ? "star.fill" : "star")
-                        .font(.system(size: 10))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(starColor(isFavorited: isFavorited, isStarHovered: isStarHovered))
-                        .frame(width: 20, height: 20)
-                        .contentShape(Rectangle())
-                        .scaleEffect(isStarHovered ? 1.1 : 1.0)
-                }
-                .buttonStyle(.plain)
-                .onHover { starHoveredID = $0 ? profile.id : nil }
-                .animation(DesignTokens.Animation.hover, value: isStarHovered)
-                .accessibilityLabel(isFavorited ? "Remove \(profile.name) from favorites" : "Add \(profile.name) to favorites")
-            }
+            starButton(id: profile.id, isFavorited: isFavorited, isVisible: isRowHovered || isRowHighlighted, isStarHovered: isStarHovered)
 
             if isSelected {
                 Image(systemName: "checkmark")
@@ -415,6 +430,111 @@ struct AutoEQSearchPanel: View {
         .accessibilityHint("Apply this correction profile")
     }
 
+    // MARK: - Catalog Entry Row (lightweight, fetches on tap)
+
+    @ViewBuilder
+    private func catalogEntryRow(_ entry: AutoEQCatalogEntry, itemIDPrefix: String) -> some View {
+        let isSelected = entry.id == selectedProfileID
+        let isFavorited = favoriteIDs.contains(entry.id)
+        let itemID = "\(itemIDPrefix)\(entry.id)"
+        let isRowHovered = hoveredID == entry.id
+        let isStarHovered = starHoveredID == entry.id
+        let isRowHighlighted = isHighlighted(itemID)
+        let isLoading = loadingProfileID == entry.id
+
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.name)
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
+                    .lineLimit(1)
+
+                Text(entry.measuredBy)
+                    .font(.system(size: 9))
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+            }
+
+            Spacer()
+
+            if isLoading {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                starButton(id: entry.id, isFavorited: isFavorited, isVisible: isRowHovered || isRowHighlighted, isStarHovered: isStarHovered)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .frame(height: itemHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(rowHighlight(for: itemID, isHovered: isRowHovered))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectCatalogEntry(entry)
+        }
+        .whenHovered { isHovered in
+            hoveredID = isHovered ? entry.id : nil
+            if isHovered { highlightedIndex = nil }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(entry.name)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityHint("Apply this correction profile")
+    }
+
+    // MARK: - Star Button
+
+    @ViewBuilder
+    private func starButton(id: String, isFavorited: Bool, isVisible: Bool, isStarHovered: Bool) -> some View {
+        if isFavorited || isVisible {
+            Button {
+                onToggleFavorite(id)
+            } label: {
+                Image(systemName: isFavorited ? "star.fill" : "star")
+                    .font(.system(size: 10))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(starColor(isFavorited: isFavorited, isStarHovered: isStarHovered))
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+                    .scaleEffect(isStarHovered ? 1.1 : 1.0)
+            }
+            .buttonStyle(.plain)
+            .onHover { starHoveredID = $0 ? id : nil }
+            .animation(DesignTokens.Animation.hover, value: isStarHovered)
+            .accessibilityLabel(isFavorited ? "Remove from favorites" : "Add to favorites")
+        }
+    }
+
+    // MARK: - Async Selection
+
+    private func selectCatalogEntry(_ entry: AutoEQCatalogEntry) {
+        guard loadingProfileID == nil else { return }
+        loadingProfileID = entry.id
+        fetchError = nil
+
+        Task { @MainActor in
+            if let profile = await profileManager.resolveProfile(for: entry) {
+                onSelect(profile)
+                onDismiss()
+            } else {
+                fetchError = "Failed to load \(entry.name)"
+                // Auto-dismiss error after 3 seconds
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    if fetchError != nil { fetchError = nil }
+                }
+            }
+            loadingProfileID = nil
+        }
+    }
+
     // MARK: - Keyboard Navigation
 
     private func moveHighlight(direction: Int) {
@@ -438,12 +558,14 @@ struct AutoEQSearchPanel: View {
 
         let item = items[index]
         if let profileID = item.profileID {
+            // Check if already loaded
             if let profile = profileManager.profile(for: profileID) {
                 onSelect(profile)
                 onDismiss()
+            } else if let entry = profileManager.catalogEntries.first(where: { $0.id == profileID }) {
+                selectCatalogEntry(entry)
             }
         } else {
-            // noCorrection
             onSelect(nil)
             onDismiss()
         }
@@ -481,5 +603,4 @@ struct AutoEQSearchPanel: View {
             return DesignTokens.Colors.interactiveDefault
         }
     }
-
 }
