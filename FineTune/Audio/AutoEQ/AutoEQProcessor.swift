@@ -44,7 +44,10 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
         }
 
         let filters = profile.filters
-        let coefficients = BiquadMath.coefficientsForAutoEQFilters(filters, sampleRate: sampleRate)
+        let coefficients = BiquadMath.coefficientsForAutoEQFilters(
+            filters, sampleRate: sampleRate,
+            profileOptimizedRate: profile.optimizedSampleRate
+        )
 
         guard let newSetup = coefficients.withUnsafeBufferPointer({ ptr in
             vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(filters.count))
@@ -71,7 +74,10 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
 
     override func recomputeCoefficients() -> (coefficients: [Double], sectionCount: Int)? {
         guard let profile = _currentProfile, !profile.filters.isEmpty else { return nil }
-        let coefficients = BiquadMath.coefficientsForAutoEQFilters(profile.filters, sampleRate: sampleRate)
+        let coefficients = BiquadMath.coefficientsForAutoEQFilters(
+            profile.filters, sampleRate: sampleRate,
+            profileOptimizedRate: profile.optimizedSampleRate
+        )
         return (coefficients, profile.filters.count)
     }
 

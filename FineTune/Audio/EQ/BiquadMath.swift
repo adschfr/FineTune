@@ -89,18 +89,49 @@ enum BiquadMath {
         return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0]
     }
 
+    /// Correct a filter frequency optimized at `sourceRate` for use at `targetRate`.
+    /// Uses inverse bilinear transform (digital→analog) then forward (analog→digital).
+    static func preWarpFrequency(
+        _ freq: Double,
+        from sourceRate: Double,
+        to targetRate: Double
+    ) -> Double {
+        // Map from source digital domain to analog (undo source bilinear transform)
+        let fAnalog = (sourceRate / .pi) * tan(.pi * freq / sourceRate)
+        // Map from analog to target digital domain (apply target bilinear transform)
+        return (targetRate / .pi) * atan(.pi * fAnalog / targetRate)
+    }
+
     /// Compute coefficients for AutoEQ filters (peaking, lowShelf, highShelf).
     /// Returns flat array of 5*N Doubles for vDSP_biquad_CreateSetup.
+    ///
+    /// - Parameters:
+    ///   - filters: Filter parameters from an AutoEQ profile.
+    ///   - sampleRate: Device's actual sample rate (Hz).
+    ///   - profileOptimizedRate: Sample rate the profile was optimized for (Hz).
+    ///     When different from `sampleRate`, filter frequencies are pre-warped to
+    ///     compensate for the bilinear transform's frequency warping.
     static func coefficientsForAutoEQFilters(
         _ filters: [AutoEQFilter],
-        sampleRate: Double
+        sampleRate: Double,
+        profileOptimizedRate: Double = 48000
     ) -> [Double] {
         var allCoeffs: [Double] = []
         allCoeffs.reserveCapacity(filters.count * 5)
 
+        let needsPreWarp = abs(profileOptimizedRate - sampleRate) > 1.0
+
         for filter in filters {
-            // Bypass filters at or above Nyquist
-            if filter.frequency >= sampleRate / 2.0 {
+            var frequency = filter.frequency
+
+            // Pre-warp frequency if profile was optimized for a different sample rate
+            if needsPreWarp {
+                frequency = preWarpFrequency(frequency, from: profileOptimizedRate, to: sampleRate)
+            }
+
+            // Bypass invalid or above-Nyquist filters (pre-warp can produce
+            // negative frequencies when the source filter is above its own Nyquist)
+            if frequency <= 0 || frequency >= sampleRate / 2.0 {
                 allCoeffs.append(contentsOf: [1.0, 0.0, 0.0, 0.0, 0.0])
                 continue
             }
@@ -109,15 +140,15 @@ enum BiquadMath {
             switch filter.type {
             case .peaking:
                 coeffs = peakingEQCoefficients(
-                    frequency: filter.frequency, gainDB: filter.gainDB,
+                    frequency: frequency, gainDB: filter.gainDB,
                     q: filter.q, sampleRate: sampleRate)
             case .lowShelf:
                 coeffs = lowShelfCoefficients(
-                    frequency: filter.frequency, gainDB: filter.gainDB,
+                    frequency: frequency, gainDB: filter.gainDB,
                     q: filter.q, sampleRate: sampleRate)
             case .highShelf:
                 coeffs = highShelfCoefficients(
-                    frequency: filter.frequency, gainDB: filter.gainDB,
+                    frequency: frequency, gainDB: filter.gainDB,
                     q: filter.q, sampleRate: sampleRate)
             }
             allCoeffs.append(contentsOf: coeffs)
