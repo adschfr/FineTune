@@ -2,7 +2,7 @@
 import Foundation
 import os
 
-/// Parses EqualizerAPO ParametricEQ.txt files and bundled JSON profiles.
+/// Parses EqualizerAPO ParametricEQ.txt files into AutoEQ profiles.
 enum AutoEQParser {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AutoEQParser")
 
@@ -11,7 +11,7 @@ enum AutoEQParser {
     /// Parse an EqualizerAPO ParametricEQ.txt string into an AutoEQProfile.
     /// Returns nil if zero valid filters are found.
     /// - Parameters:
-    ///   - id: Explicit ID to use. If nil, generates one (slug for bundled, UUID for imported).
+    ///   - id: Explicit ID to use. If nil, generates one (slug for fetched, UUID for imported).
     static func parse(text: String, name: String, source: AutoEQSource, id: String? = nil) -> AutoEQProfile? {
         var preampDB: Float = 0
         var filters: [AutoEQFilter] = []
@@ -41,7 +41,7 @@ enum AutoEQParser {
             resolvedID = id
         } else {
             switch source {
-            case .bundled:
+            case .bundled, .fetched:
                 resolvedID = slugify(name)
             case .imported:
                 resolvedID = UUID().uuidString
@@ -55,22 +55,6 @@ enum AutoEQParser {
             preampDB: preampDB,
             filters: filters
         )
-    }
-
-    // MARK: - Bundled JSON
-
-    /// Load profiles from bundled JSON data.
-    /// Decodes each profile individually so one bad entry doesn't kill the entire catalog.
-    static func parseJSON(data: Data) -> [AutoEQProfile] {
-        guard let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            logger.error("Failed to decode AutoEQ JSON: not a JSON array")
-            return []
-        }
-        let decoder = JSONDecoder()
-        return jsonArray.compactMap { element in
-            guard let elementData = try? JSONSerialization.data(withJSONObject: element) else { return nil }
-            return (try? decoder.decode(AutoEQProfile.self, from: elementData))?.validated()
-        }
     }
 
     // MARK: - Private Helpers
