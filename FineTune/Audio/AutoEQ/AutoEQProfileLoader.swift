@@ -2,8 +2,7 @@
 import Foundation
 import os
 
-/// Handles all file I/O for AutoEQ profiles: loading bundled JSON
-/// and managing imported profile files on disk.
+/// Handles file I/O for AutoEQ profiles: managing imported profile files on disk.
 final class AutoEQProfileLoader {
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "AutoEQProfileLoader")
 
@@ -11,33 +10,6 @@ final class AutoEQProfileLoader {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("FineTune")
             .appendingPathComponent("AutoEQ")
-    }
-
-    // MARK: - Bundled Profiles
-
-    /// Loads bundled profiles asynchronously. Parses JSON on a background thread.
-    func loadBundledProfiles() async -> [AutoEQProfile] {
-        guard let url = Bundle.main.url(forResource: "AutoEQ-Profiles", withExtension: "json") else {
-            logger.info("No bundled AutoEQ profiles found")
-            return []
-        }
-
-        let parsed: [AutoEQProfile]? = await Task.detached {
-            do {
-                let data = try Data(contentsOf: url)
-                return AutoEQParser.parseJSON(data: data)
-            } catch {
-                return nil
-            }
-        }.value
-
-        guard let bundled = parsed else {
-            logger.error("Failed to load bundled AutoEQ profiles")
-            return []
-        }
-
-        logger.info("Loaded \(bundled.count) bundled AutoEQ profiles")
-        return bundled
     }
 
     // MARK: - Imported Profiles
