@@ -679,6 +679,9 @@ final class ProcessTapController {
 
         let (newTapDesc, tapID) = try createProcessTap(preferredDeviceUID: outputUIDs.first)
         newResources.tapDescription = newTapDesc
+        // SAFETY: _forceSilence must be true before reaching here (set by performDestructiveDeviceSwitch).
+        // The old IO proc is still running until primaryResources.destroy() below, but _forceSilence
+        // causes processAudio() to return early, so these writes won't race with processMappedBuffers().
         let preferred = preferredStereoChannels(for: outputUIDs.first)
         _primaryPreferredStereoLeftChannel = preferred.left
         _primaryPreferredStereoRightChannel = preferred.right
@@ -877,6 +880,12 @@ final class ProcessTapController {
 
             if let eq = eq, eq.isEnabled, eqCanProcessStereoInterleaved, !crossfadeState.isActive {
                 eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
+            }
+
+            // Per-device AutoEQ correction (after per-app EQ)
+            let autoEQ = autoEQProcessor
+            if let autoEQ, autoEQ.isEnabled, eqCanProcessStereoInterleaved, !crossfadeState.isActive {
+                autoEQ.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 
             let writtenSampleCount = frameCount * outputChannels
