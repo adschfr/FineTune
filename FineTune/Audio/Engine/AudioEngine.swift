@@ -9,6 +9,7 @@ import UserNotifications
 final class AudioEngine {
     let processMonitor = AudioProcessMonitor()
     let deviceMonitor = AudioDeviceMonitor()
+    let bluetoothDeviceMonitor = BluetoothDeviceMonitor()
     let deviceVolumeMonitor: DeviceVolumeMonitor
     let volumeState: VolumeState
     let settingsManager: SettingsManager
@@ -184,6 +185,7 @@ final class AudioEngine {
         Task { @MainActor in
             processMonitor.start()
             deviceMonitor.start()
+            bluetoothDeviceMonitor.start()
 
             #if !APP_STORE
             ddc.onProbeCompleted = { [weak self] in
@@ -228,10 +230,12 @@ final class AudioEngine {
 
             deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
                 self?.handleDeviceDisconnected(deviceUID, name: deviceName)
+                self?.bluetoothDeviceMonitor.refresh()
             }
 
             deviceMonitor.onDeviceConnected = { [weak self] deviceUID, deviceName in
                 self?.handleDeviceConnected(deviceUID, name: deviceName)
+                self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
             }
 
             deviceMonitor.onInputDeviceDisconnected = { [weak self] deviceUID, deviceName in
