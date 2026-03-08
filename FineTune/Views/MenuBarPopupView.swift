@@ -43,6 +43,12 @@ struct MenuBarPopupView: View {
     /// Local copy of app settings for binding
     @State private var localAppSettings: AppSettings = AppSettings()
 
+    /// Memoized paired Bluetooth devices
+    @State private var pairedDevices: [PairedBluetoothDevice] = []
+
+    /// Whether Bluetooth hardware is powered on
+    @State private var isBluetoothOn = false
+
     /// Whether device priority edit mode is active
     @State private var isEditingDevicePriority = false
 
@@ -126,14 +132,20 @@ struct MenuBarPopupView: View {
         .onAppear {
             updateSortedDevices()
             updateSortedInputDevices()
+            pairedDevices = audioEngine.bluetoothDeviceMonitor.pairedDevices
+            isBluetoothOn = audioEngine.bluetoothDeviceMonitor.isBluetoothOn
             localAppSettings = audioEngine.settingsManager.appSettings
         }
         .onChange(of: audioEngine.outputDevices) { _, _ in
-            exitEditModeSaving()
+            if isEditingDevicePriority && !wasEditingInputDevices {
+                mergeDeviceChanges(from: audioEngine.outputDevices)
+            }
             updateSortedDevices()
         }
         .onChange(of: audioEngine.inputDevices) { _, _ in
-            exitEditModeSaving()
+            if isEditingDevicePriority && wasEditingInputDevices {
+                mergeDeviceChanges(from: audioEngine.inputDevices)
+            }
             updateSortedInputDevices()
         }
         .onChange(of: showingInputDevices) { _, _ in
@@ -142,11 +154,18 @@ struct MenuBarPopupView: View {
         .onChange(of: localAppSettings) { _, newValue in
             audioEngine.settingsManager.updateAppSettings(newValue)
         }
+        .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
+            pairedDevices = newValue
+        }
+        .onChange(of: audioEngine.bluetoothDeviceMonitor.isBluetoothOn) { _, newValue in
+            isBluetoothOn = newValue
+        }
         .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
             updateSortedDevices()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             isPopupVisible = true
+            audioEngine.bluetoothDeviceMonitor.refresh()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
             isPopupVisible = false
@@ -442,6 +461,36 @@ struct MenuBarPopupView: View {
                         return true
                     }
                 }
+
+                // Paired Bluetooth devices (output tab only)
+                if !showingInputDevices {
+                    if !isBluetoothOn {
+                        Text("Turn on Bluetooth to connect devices")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, DesignTokens.Spacing.xs)
+                    } else {
+                        // Filter out any device already in the output list (handles
+                        // IOBluetooth/CoreAudio timing desync where both report the device).
+                        let connectedNames = Set(editableDeviceOrder.map(\.name))
+                        let filteredPaired = pairedDevices.filter { !connectedNames.contains($0.name) }
+                        if !filteredPaired.isEmpty {
+                            SectionHeader(title: "Paired")
+                                .padding(.top, DesignTokens.Spacing.xs)
+
+                            ForEach(filteredPaired) { device in
+                                PairedDeviceRow(
+                                    device: device,
+                                    isConnecting: audioEngine.bluetoothDeviceMonitor.connectingIDs.contains(device.id),
+                                    errorMessage: audioEngine.bluetoothDeviceMonitor.connectionErrors[device.id],
+                                    onConnect: {
+                                        audioEngine.bluetoothDeviceMonitor.connect(device: device)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
             } else if showingInputDevices {
                 ForEach(sortedInputDevices) { device in
                     InputDeviceRow(
@@ -509,6 +558,7 @@ struct MenuBarPopupView: View {
                         autoEQImportError: autoEQImportError
                     )
                 }
+
             }
         }
     }
@@ -729,6 +779,30 @@ struct MenuBarPopupView: View {
         guard isEditingDevicePriority else { return }
         persistEditableOrder()
         isEditingDevicePriority = false
+    }
+
+    /// Merges device list changes into `editableDeviceOrder` while preserving the user's reordering.
+    /// Existing devices are refreshed (CoreAudio may reassign AudioDeviceIDs), removed devices are
+    /// dropped, and new devices are appended at the end.
+    private func mergeDeviceChanges(from latest: [AudioDevice]) {
+        let latestByUID = Dictionary(latest.map { ($0.uid, $0) }, uniquingKeysWith: { _, new in new })
+
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            // Remove devices that disappeared
+            editableDeviceOrder.removeAll { latestByUID[$0.uid] == nil }
+
+            // Refresh existing devices in case AudioDeviceID changed
+            for i in editableDeviceOrder.indices {
+                if let updated = latestByUID[editableDeviceOrder[i].uid] {
+                    editableDeviceOrder[i] = updated
+                }
+            }
+
+            // Append newly appeared devices
+            let existingUIDs = Set(editableDeviceOrder.map(\.uid))
+            let newDevices = latest.filter { !existingUIDs.contains($0.uid) }
+            editableDeviceOrder.append(contentsOf: newDevices)
+        }
     }
 
     // MARK: - Helpers
