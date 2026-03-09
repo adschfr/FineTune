@@ -3,6 +3,12 @@ import AppKit
 import AudioToolbox
 import os
 
+/// Lightweight value for detecting process list changes without comparing icons/names.
+private struct AppFingerprint: Hashable {
+    let pid: pid_t
+    let objectID: AudioObjectID
+}
+
 @Observable
 @MainActor
 final class AudioProcessMonitor {
@@ -63,6 +69,7 @@ final class AudioProcessMonitor {
     private var processListListenerBlock: AudioObjectPropertyListenerBlock?
     private var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var monitoredProcesses: Set<AudioObjectID> = []
+    private var periodicRefreshTask: Task<Void, Never>?
 
     private var processListAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyProcessObjectList,
@@ -129,7 +136,6 @@ final class AudioProcessMonitor {
         // Set up listener first
         processListListenerBlock = { [weak self] numberAddresses, addresses in
             Task { @MainActor [weak self] in
-                self?.logger.debug("[DIAG] kAudioHardwarePropertyProcessObjectList fired")
                 self?.refresh()
             }
         }
@@ -147,10 +153,17 @@ final class AudioProcessMonitor {
 
         // Initial refresh
         refresh()
+
+        // Periodic refresh as safety net — CoreAudio property listeners can miss
+        // notifications during rapid process lifecycle changes (quit + relaunch).
+        startPeriodicRefresh()
     }
 
     func stop() {
         logger.debug("Stopping audio process monitor")
+
+        periodicRefreshTask?.cancel()
+        periodicRefreshTask = nil
 
         // Remove process list listener
         if let block = processListListenerBlock {
@@ -160,6 +173,17 @@ final class AudioProcessMonitor {
 
         // Remove all per-process listeners
         removeAllProcessListeners()
+    }
+
+    private func startPeriodicRefresh() {
+        periodicRefreshTask?.cancel()
+        periodicRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled, let self else { return }
+                self.refresh()
+            }
+        }
     }
 
     private func refresh() {
@@ -206,8 +230,16 @@ final class AudioProcessMonitor {
             // Update per-process listeners
             updateProcessListeners(for: processIDs)
 
-            activeApps = apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            onAppsChanged?(activeApps)
+            let sorted = apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+            // Only fire callback if the app list actually changed (avoids churn from periodic refresh)
+            let oldSet = Set(activeApps.map { AppFingerprint(pid: $0.id, objectID: $0.objectID) })
+            let newSet = Set(sorted.map { AppFingerprint(pid: $0.id, objectID: $0.objectID) })
+
+            activeApps = sorted
+            if oldSet != newSet {
+                onAppsChanged?(activeApps)
+            }
 
         } catch {
             logger.error("Failed to refresh process list: \(error.localizedDescription)")

@@ -24,6 +24,9 @@ final class AudioEngine {
     private var appDeviceRouting: [pid_t: String] = [:]  // pid → deviceUID (always explicit)
     private var followsDefault: Set<pid_t> = []  // Apps that follow system default
     private var pendingCleanup: [pid_t: Task<Void, Never>] = [:]  // Grace period for stale tap cleanup
+    private var staleCleanupTask: Task<Void, Never>?  // Debounced cleanup scheduling
+    private var healthMonitorTask: Task<Void, Never>?  // Periodic tap health monitor
+    private var tapRecoveryCooldownUntil: [pid_t: Date] = [:]  // Prevents tap recreation thrashing
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
 
     // MARK: - Input Device Lock State
@@ -223,9 +226,9 @@ final class AudioEngine {
                 }
             }
 
-            processMonitor.onAppsChanged = { [weak self] _ in
-                self?.cleanupStaleTaps()
+            processMonitor.onAppsChanged = { [weak self] apps in
                 self?.applyPersistedSettings()
+                self?.scheduleStaleCleanup()
             }
 
             deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
@@ -425,6 +428,7 @@ final class AudioEngine {
         processMonitor.start()
         deviceMonitor.start()
         applyPersistedSettings()
+        startHealthMonitor()
 
         // Restore locked input device if feature is enabled
         if settingsManager.appSettings.lockInputDevice {
@@ -435,6 +439,7 @@ final class AudioEngine {
     }
 
     func stop() {
+        stopHealthMonitor()
         processMonitor.stop()
         deviceMonitor.stop()
         for tap in taps.values {
@@ -712,6 +717,7 @@ final class AudioEngine {
     /// Creates a tap with the specified device UIDs
     private func ensureTapWithDevices(for app: AudioApp, deviceUIDs: [String]) {
         guard !deviceUIDs.isEmpty else { return }
+        guard taps[app.id] == nil else { return }
 
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs)
         let tap = ProcessTapController(
@@ -746,6 +752,16 @@ final class AudioEngine {
 
     func applyPersistedSettings() {
         for app in apps {
+            // Check for stale taps BEFORE the appliedPIDs guard.
+            // When an app restarts quickly (PID reuse or same objectID), the cleanup
+            // may be cancelled, leaving a stale tap. Detect and recreate it here.
+            if let existingTap = taps[app.id], shouldRecreateTap(existingTap: existingTap, for: app) {
+                logger.info("Detected stale tap for \(app.name) (objectID \(existingTap.app.objectID) → \(app.objectID)), recreating")
+                taps.removeValue(forKey: app.id)
+                existingTap.invalidate()
+                appliedPIDs.remove(app.id)
+            }
+
             guard !appliedPIDs.contains(app.id) else { continue }
 
             // Load saved device selection mode (single vs multi)
@@ -769,6 +785,8 @@ final class AudioEngine {
 
                         // Mark as applied if tap created successfully
                         guard taps[app.id] != nil else { continue }
+                        // Set primary device routing so the UI row renders
+                        appDeviceRouting[app.id] = availableUIDs[0]
                         appliedPIDs.insert(app.id)
 
                         // Apply volume and mute
@@ -1197,7 +1215,7 @@ final class AudioEngine {
             guard pendingCleanup[pid] == nil else { continue }  // Already pending
 
             pendingCleanup[pid] = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .seconds(30))
                 guard !Task.isCancelled else { return }
 
                 // Double-check still stale
@@ -1224,6 +1242,130 @@ final class AudioEngine {
         appliedPIDs = appliedPIDs.intersection(pidsToKeep)
         followsDefault = followsDefault.intersection(pidsToKeep)
         volumeState.cleanup(keeping: pidsToKeep)
+    }
+
+    /// Debounced stale tap cleanup — coalesces rapid app-list changes into a single cleanup pass.
+    private func scheduleStaleCleanup() {
+        staleCleanupTask?.cancel()
+        staleCleanupTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            self.cleanupStaleTaps()
+        }
+    }
+
+    /// Returns true when an existing tap's CoreAudio objectID no longer matches the current app entry.
+    /// This happens when an app restarts — the PID may be reused but CoreAudio assigns a new objectID.
+    private func shouldRecreateTap(existingTap: ProcessTapController, for app: AudioApp) -> Bool {
+        existingTap.app.objectID != app.objectID
+    }
+
+    // MARK: - Tap Health Monitor
+
+    /// Starts a periodic health check that recreates unresponsive taps.
+    /// Checks every 2 seconds; after 3 consecutive misses (~6s), the tap is presumed dead.
+    private func startHealthMonitor() {
+        guard healthMonitorTask == nil else { return }
+        healthMonitorTask = Task { @MainActor [weak self] in
+            var consecutiveMisses: [pid_t: Int] = [:]
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled, let self else { return }
+
+                let now = Date()
+
+                for (pid, tap) in self.taps {
+                    // Skip muted apps — no callbacks while muted isn't a health signal
+                    guard !tap.isMuted else { continue }
+
+                    // Skip PIDs in recovery cooldown to prevent recreation thrashing
+                    if let cooldownEnd = self.tapRecoveryCooldownUntil[pid], now < cooldownEnd {
+                        continue
+                    }
+
+                    // Check for objectID changes (app restarted with new CoreAudio object)
+                    if let currentApp = self.apps.first(where: { $0.id == pid }),
+                       self.shouldRecreateTap(existingTap: tap, for: currentApp) {
+                        self.logger.info("ObjectID changed for \(currentApp.name) (health monitor), recreating tap")
+                        consecutiveMisses[pid] = 0
+                        self.recreateTap(for: pid)
+                        continue
+                    }
+
+                    guard tap.isHealthCheckEligible(minActiveSeconds: 5.0) else { continue }
+
+                    // Only health-check apps that are actively streaming (isRunning=true).
+                    // Paused apps have no callbacks, which is normal — not a health signal.
+                    let isActivelyStreaming = self.processMonitor.activeApps.contains { $0.id == pid }
+                    guard isActivelyStreaming else {
+                        consecutiveMisses[pid] = 0
+                        continue
+                    }
+
+                    if tap.hasRecentAudioCallback(within: 3.0) {
+                        consecutiveMisses[pid] = 0
+                    } else {
+                        let misses = (consecutiveMisses[pid] ?? 0) + 1
+                        consecutiveMisses[pid] = misses
+
+                        if misses >= 3 {
+                            self.logger.warning("Tap for PID \(pid) unresponsive (\(misses) misses), recreating")
+                            consecutiveMisses[pid] = 0
+                            self.recreateTap(for: pid)
+                        }
+                    }
+                }
+
+                // Prune entries for PIDs no longer tracked
+                consecutiveMisses = consecutiveMisses.filter { self.taps[$0.key] != nil }
+                self.tapRecoveryCooldownUntil = self.tapRecoveryCooldownUntil.filter { self.taps[$0.key] != nil }
+            }
+        }
+    }
+
+    private func stopHealthMonitor() {
+        healthMonitorTask?.cancel()
+        healthMonitorTask = nil
+    }
+
+    /// Tears down and recreates a tap for a given PID, preserving routing and settings.
+    private func recreateTap(for pid: pid_t) {
+        guard let oldTap = taps.removeValue(forKey: pid) else { return }
+        let deviceUIDs = oldTap.currentDeviceUIDs
+        oldTap.invalidate()
+
+        // Set cooldown to prevent thrashing
+        tapRecoveryCooldownUntil[pid] = Date().addingTimeInterval(20)
+
+        // Find the current AudioApp entry for this PID
+        guard let app = apps.first(where: { $0.id == pid }) else {
+            logger.debug("No active app for PID \(pid), skipping tap recreation")
+            appliedPIDs.remove(pid)
+            return
+        }
+
+        // Allow re-initialization
+        appliedPIDs.remove(pid)
+
+        // Re-route to the same device(s), preserving multi-device routing
+        if deviceUIDs.count > 1 {
+            ensureTapWithDevices(for: app, deviceUIDs: deviceUIDs)
+            if taps[app.id] != nil {
+                appDeviceRouting[app.id] = deviceUIDs[0]
+            }
+        } else if let deviceUID = deviceUIDs.first {
+            ensureTapExists(for: app, deviceUID: deviceUID)
+        }
+
+        // Mark as applied to avoid redundant re-processing in applyPersistedSettings
+        if taps[pid] != nil {
+            appliedPIDs.insert(pid)
+        }
+
+        // Restore mute state
+        if let muted = volumeState.loadSavedMute(for: pid, identifier: app.persistenceIdentifier), muted {
+            taps[pid]?.isMuted = true
+        }
     }
 
     // MARK: - Input Device Lock
