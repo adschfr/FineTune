@@ -6,7 +6,6 @@ import os
 /// Lightweight value for detecting process list changes without comparing icons/names.
 private struct AppFingerprint: Hashable {
     let pid: pid_t
-    let objectID: AudioObjectID
 }
 
 @Observable
@@ -233,8 +232,8 @@ final class AudioProcessMonitor {
             let sorted = apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
             // Only fire callback if the app list actually changed (avoids churn from periodic refresh)
-            let oldSet = Set(activeApps.map { AppFingerprint(pid: $0.id, objectID: $0.objectID) })
-            let newSet = Set(sorted.map { AppFingerprint(pid: $0.id, objectID: $0.objectID) })
+            let oldSet = Set(activeApps.map { AppFingerprint(pid: $0.id) })
+            let newSet = Set(sorted.map { AppFingerprint(pid: $0.id) })
 
             activeApps = sorted
             if oldSet != newSet {

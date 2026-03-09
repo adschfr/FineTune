@@ -752,16 +752,6 @@ final class AudioEngine {
 
     func applyPersistedSettings() {
         for app in apps {
-            // Check for stale taps BEFORE the appliedPIDs guard.
-            // When an app restarts quickly (PID reuse or same objectID), the cleanup
-            // may be cancelled, leaving a stale tap. Detect and recreate it here.
-            if let existingTap = taps[app.id], shouldRecreateTap(existingTap: existingTap, for: app) {
-                logger.info("Detected stale tap for \(app.name) (objectID \(existingTap.app.objectID) → \(app.objectID)), recreating")
-                taps.removeValue(forKey: app.id)
-                existingTap.invalidate()
-                appliedPIDs.remove(app.id)
-            }
-
             guard !appliedPIDs.contains(app.id) else { continue }
 
             // Load saved device selection mode (single vs multi)
@@ -1186,7 +1176,7 @@ final class AudioEngine {
         return outputUIDs.contains(defaultUID) ? defaultUID : nil
     }
 
-    func cleanupStaleTaps() {
+    private func cleanupStaleTaps() {
         let activePIDs = Set(apps.map { $0.id })
         let stalePIDs = Set(taps.keys).subtracting(activePIDs)
 
@@ -1254,12 +1244,6 @@ final class AudioEngine {
         }
     }
 
-    /// Returns true when an existing tap's CoreAudio objectID no longer matches the current app entry.
-    /// This happens when an app restarts — the PID may be reused but CoreAudio assigns a new objectID.
-    private func shouldRecreateTap(existingTap: ProcessTapController, for app: AudioApp) -> Bool {
-        existingTap.app.objectID != app.objectID
-    }
-
     // MARK: - Tap Health Monitor
 
     /// Starts a periodic health check that recreates unresponsive taps.
@@ -1280,15 +1264,6 @@ final class AudioEngine {
 
                     // Skip PIDs in recovery cooldown to prevent recreation thrashing
                     if let cooldownEnd = self.tapRecoveryCooldownUntil[pid], now < cooldownEnd {
-                        continue
-                    }
-
-                    // Check for objectID changes (app restarted with new CoreAudio object)
-                    if let currentApp = self.apps.first(where: { $0.id == pid }),
-                       self.shouldRecreateTap(existingTap: tap, for: currentApp) {
-                        self.logger.info("ObjectID changed for \(currentApp.name) (health monitor), recreating tap")
-                        consecutiveMisses[pid] = 0
-                        self.recreateTap(for: pid)
                         continue
                     }
 
