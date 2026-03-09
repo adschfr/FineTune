@@ -286,7 +286,7 @@ final class ProcessTapController {
 
         if let deviceUID = preferredDeviceUID {
             if let outputStream = outputStreamIndex(for: deviceUID) {
-                let streamTap = CATapDescription(processes: [app.objectID], deviceUID: deviceUID, stream: outputStream)
+                let streamTap = CATapDescription(processes: app.processObjectIDs, deviceUID: deviceUID, stream: outputStream)
                 streamTap.uuid = UUID()
                 streamTap.muteBehavior = .mutedWhenTapped
 
@@ -305,7 +305,7 @@ final class ProcessTapController {
             }
         }
 
-        let mixdownTap = CATapDescription(stereoMixdownOfProcesses: [app.objectID])
+        let mixdownTap = CATapDescription(stereoMixdownOfProcesses: app.processObjectIDs)
         mixdownTap.uuid = UUID()
         mixdownTap.muteBehavior = .mutedWhenTapped
 
