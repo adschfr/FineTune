@@ -25,7 +25,7 @@ final class DDCController {
     private var deviceUIDs: [AudioDeviceID: String] = [:]  // For persistence keying
     private var debounceTimers: [AudioDeviceID: DispatchWorkItem] = [:]
     private var probeWorkItem: DispatchWorkItem?
-    @ObservationIgnored private nonisolated(unsafe) var displayChangeObserver: NSObjectProtocol?
+    private var displayChangeObserver: NSObjectProtocol?
 
     private let ddcQueue = DispatchQueue(label: "com.finetune.ddc", qos: .utility)
     private let settingsManager: SettingsManager
@@ -36,12 +36,6 @@ final class DDCController {
 
     init(settingsManager: SettingsManager) {
         self.settingsManager = settingsManager
-    }
-
-    nonisolated deinit {
-        if let obs = displayChangeObserver {
-            NotificationCenter.default.removeObserver(obs)
-        }
     }
 
     // MARK: - Lifecycle
@@ -237,27 +231,30 @@ final class DDCController {
             }
 
             // 5. Publish results on main thread
+            let matchedSnapshot = matched
+            let matchedUIDsSnapshot = matchedUIDs
+            let volumesSnapshot = volumes
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.services = matched
-                self.deviceUIDs = matchedUIDs
-                self.ddcBackedDevices = Set(matched.keys)
+                self.services = matchedSnapshot
+                self.deviceUIDs = matchedUIDsSnapshot
+                self.ddcBackedDevices = Set(matchedSnapshot.keys)
 
                 // Use persisted volumes if available, otherwise use read values
-                for (deviceID, uid) in matchedUIDs {
+                for (deviceID, uid) in matchedUIDsSnapshot {
                     if let savedVolume = self.settingsManager.getDDCVolume(for: uid) {
                         self.cachedVolumes[deviceID] = savedVolume
                         // Restore saved volume to the display
-                        let service = matched[deviceID]
+                        let service = matchedSnapshot[deviceID]
                         self.ddcQueue.async {
                             try? service?.setAudioVolume(savedVolume)
                         }
-                    } else if let readVolume = volumes[deviceID] {
+                    } else if let readVolume = volumesSnapshot[deviceID] {
                         self.cachedVolumes[deviceID] = readVolume
                     }
                 }
 
-                self.logger.info("DDC probe complete: \(matched.count) display(s) matched")
+                self.logger.info("DDC probe complete: \(matchedSnapshot.count) display(s) matched")
                 self.probeCompleted = true
                 self.onProbeCompleted?()
             }
@@ -360,16 +357,19 @@ final class DDCController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.probeWorkItem?.cancel()
-            let item = DispatchWorkItem { [weak self] in
-                Task { @MainActor in
-                    self?.logger.debug("Display configuration changed, re-probing DDC (after delay)")
-                    self?.probe()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.probeWorkItem?.cancel()
+                let item = DispatchWorkItem { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.logger.debug("Display configuration changed, re-probing DDC (after delay)")
+                        self.probe()
+                    }
                 }
+                self.probeWorkItem = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: item)
             }
-            self.probeWorkItem = item
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: item)
         }
     }
 }
