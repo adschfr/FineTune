@@ -38,6 +38,12 @@ final class AudioDeviceMonitor {
     /// Called when an input device appears (passes UID and name)
     var onInputDeviceConnected: ((_ uid: String, _ name: String) -> Void)?
 
+    /// Returns current output device priority order (highest priority first) for deterministic callback ordering
+    var outputPriorityOrder: (() -> [String])?
+
+    /// Returns current input device priority order (highest priority first) for deterministic callback ordering
+    var inputPriorityOrder: (() -> [String])?
+
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioDeviceMonitor")
 
     private var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
@@ -230,6 +236,19 @@ final class AudioDeviceMonitor {
         }
     }
 
+    /// Sorts UIDs by priority order: UIDs in the priority list come first (in priority order),
+    /// followed by any remaining UIDs sorted alphabetically for determinism.
+    private func sortByPriority(uids: Set<String>, priorityOrder: [String]) -> [String] {
+        guard uids.count > 1 else { return Array(uids) }
+        var sorted: [String] = []
+        for uid in priorityOrder where uids.contains(uid) {
+            sorted.append(uid)
+        }
+        let remaining = uids.subtracting(sorted).sorted()
+        sorted.append(contentsOf: remaining)
+        return sorted
+    }
+
     private func handleDeviceListChanged() {
         let previousOutputUIDs = knownDeviceUIDs
         let previousInputUIDs = knownInputDeviceUIDs
@@ -255,7 +274,8 @@ final class AudioDeviceMonitor {
             onDeviceDisconnected?(uid, name)
         }
         let connectedOutputUIDs = currentOutputUIDs.subtracting(previousOutputUIDs)
-        for uid in connectedOutputUIDs {
+        let sortedConnectedOutput = sortByPriority(uids: connectedOutputUIDs, priorityOrder: outputPriorityOrder?() ?? [])
+        for uid in sortedConnectedOutput {
             if let device = devicesByUID[uid] {
                 logger.info("Output device connected: \(device.name) (\(uid))")
                 onDeviceConnected?(uid, device.name)
@@ -271,7 +291,8 @@ final class AudioDeviceMonitor {
             onInputDeviceDisconnected?(uid, name)
         }
         let connectedInputUIDs = currentInputUIDs.subtracting(previousInputUIDs)
-        for uid in connectedInputUIDs {
+        let sortedConnectedInput = sortByPriority(uids: connectedInputUIDs, priorityOrder: inputPriorityOrder?() ?? [])
+        for uid in sortedConnectedInput {
             if let device = inputDevicesByUID[uid] {
                 logger.info("Input device connected: \(device.name) (\(uid))")
                 onInputDeviceConnected?(uid, device.name)
