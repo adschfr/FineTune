@@ -71,9 +71,11 @@ struct FineTuneApp: App {
 
     @ViewBuilder
     private var menuBarContent: some View {
+        // Safe: AudioEngine always creates a concrete DeviceVolumeMonitor in production.
+        // The protocol abstraction exists for testability of AudioEngine, not this view.
         MenuBarPopupView(
             audioEngine: audioEngine,
-            deviceVolumeMonitor: audioEngine.deviceVolumeMonitor,
+            deviceVolumeMonitor: audioEngine.deviceVolumeMonitor as! DeviceVolumeMonitor,
             updateManager: updateManager,
             launchIconStyle: launchIconStyle
         )
