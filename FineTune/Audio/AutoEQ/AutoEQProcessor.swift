@@ -34,7 +34,8 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(.main))
         _currentProfile = profile
 
-        guard let profile = profile, !profile.filters.isEmpty else {
+        let validated = profile?.validated()
+        guard let validated, !validated.filters.isEmpty else {
             // Disable: atomic writes
             setEnabled(false)
             _filterCount = 0
@@ -43,10 +44,10 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
             return
         }
 
-        let filters = profile.filters
+        let filters = validated.filters
         let coefficients = BiquadMath.coefficientsForAutoEQFilters(
             filters, sampleRate: sampleRate,
-            profileOptimizedRate: profile.optimizedSampleRate
+            profileOptimizedRate: validated.optimizedSampleRate
         )
 
         guard let newSetup = coefficients.withUnsafeBufferPointer({ ptr in
@@ -58,7 +59,7 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
         }
 
         // Preamp: convert dB to linear gain
-        let preampLinear = powf(10.0, profile.preampDB / 20.0)
+        let preampLinear = powf(10.0, validated.preampDB / 20.0)
 
         // Atomic state update + setup swap
         _preampGain = preampLinear
@@ -73,7 +74,7 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
     // MARK: - BiquadProcessor Overrides
 
     override func recomputeCoefficients() -> (coefficients: [Double], sectionCount: Int)? {
-        guard let profile = _currentProfile, !profile.filters.isEmpty else { return nil }
+        guard let profile = _currentProfile?.validated(), !profile.filters.isEmpty else { return nil }
         let coefficients = BiquadMath.coefficientsForAutoEQFilters(
             profile.filters, sampleRate: sampleRate,
             profileOptimizedRate: profile.optimizedSampleRate
