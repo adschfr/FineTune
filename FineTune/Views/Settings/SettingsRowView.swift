@@ -6,7 +6,7 @@ struct SettingsRowView<Control: View>: View {
     let icon: String
     let title: String
     let description: String?
-    @ViewBuilder let control: () -> Control
+    @ViewBuilder let control: Control
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.md) {
@@ -34,7 +34,7 @@ struct SettingsRowView<Control: View>: View {
             Spacer(minLength: DesignTokens.Spacing.sm)
 
             // Control
-            control()
+            control
         }
         .hoverableRow()
     }

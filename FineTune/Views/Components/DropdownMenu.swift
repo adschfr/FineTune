@@ -118,7 +118,7 @@ private struct DropdownContentView<Item: Identifiable, ItemContent: View>: View 
     @ViewBuilder let itemContent: (Item, Bool) -> ItemContent
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+        ScrollView(.vertical) {
             LazyVStack(spacing: itemSpacing) {
                 ForEach(items) { item in
                     DropdownMenuItem(
@@ -135,6 +135,7 @@ private struct DropdownContentView<Item: Identifiable, ItemContent: View>: View 
             .padding(.horizontal, 5)
             .scrollTargetLayout()
         }
+        .scrollIndicators(.hidden)
         .scrollPosition(id: .constant(selectedItem?.id), anchor: .center)
         .frame(width: width, height: menuHeight)
         .background(
@@ -165,7 +166,7 @@ private struct DropdownMenuItem<Item: Identifiable, ItemContent: View>: View whe
         } label: {
             itemContent(item, isSelected)
                 .font(.system(size: 11))
-                .foregroundColor(.primary)
+                .foregroundStyle(.primary)
                 .padding(.horizontal, 8)
                 .frame(height: itemHeight)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -297,7 +298,7 @@ private struct GroupedDropdownContentView<Section: Identifiable & Hashable, Item
     @ViewBuilder let itemContent: (Item, Bool) -> ItemContent
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+        ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 2) {
                 ForEach(sections) { section in
                     // Section header
@@ -323,6 +324,7 @@ private struct GroupedDropdownContentView<Section: Identifiable & Hashable, Item
             }
             .padding(5)
         }
+        .scrollIndicators(.hidden)
         .frame(width: width)
         .frame(maxHeight: maxHeight)
         .background(

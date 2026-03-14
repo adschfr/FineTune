@@ -19,7 +19,8 @@ struct EQSliderView: View {
     private let verticalPadding: CGFloat = 8
 
     private func formatGain(_ gain: Float) -> String {
-        gain >= 0 ? String(format: "+%.0fdB", gain) : String(format: "%.0fdB", gain)
+        let rounded = Int(gain.rounded())
+        return rounded >= 0 ? "+\(rounded)dB" : "\(rounded)dB"
     }
 
     var body: some View {

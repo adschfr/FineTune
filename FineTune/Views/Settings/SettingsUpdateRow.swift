@@ -12,7 +12,7 @@ struct SettingsUpdateRow: View {
         if let date = lastCheckDate {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .abbreviated
-            return "Version \(version) · Last checked \(formatter.localizedString(for: date, relativeTo: Date()))"
+            return "Version \(version) · Last checked \(formatter.localizedString(for: date, relativeTo: .now))"
         }
         return "Version \(version) · Never checked"
     }
@@ -67,7 +67,7 @@ struct SettingsUpdateRow: View {
     VStack(spacing: DesignTokens.Spacing.sm) {
         SettingsUpdateRow(
             automaticallyChecks: .constant(true),
-            lastCheckDate: Date().addingTimeInterval(-120),
+            lastCheckDate: .now.addingTimeInterval(-120),
             onCheckNow: { print("Check now") }
         )
 

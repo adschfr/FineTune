@@ -190,7 +190,7 @@ struct SettingsView: View {
 
     private var aboutFooter: some View {
         let startYear = 2026
-        let currentYear = Calendar.current.component(.year, from: Date())
+        let currentYear = Calendar.current.component(.year, from: .now)
         let yearText = startYear == currentYear ? "\(startYear)" : "\(startYear)-\(currentYear)"
 
         return HStack(spacing: DesignTokens.Spacing.xs) {

@@ -187,20 +187,20 @@ struct MenuBarPopupView: View {
 
     /// Edit priority button — pencil ↔ checkmark, styled to match settingsButton
     private var editPriorityButton: some View {
-        Button {
+        Button(isEditingDevicePriority ? "Done reordering" : "Reorder devices",
+               systemImage: isEditingDevicePriority ? "checkmark" : "pencil") {
             toggleDevicePriorityEdit()
-        } label: {
-            Image(systemName: isEditingDevicePriority ? "checkmark" : "pencil")
-                .font(.system(size: 12, weight: isEditingDevicePriority ? .bold : .regular))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(DesignTokens.Colors.interactiveDefault)
-                .frame(
-                    minWidth: DesignTokens.Dimensions.minTouchTarget,
-                    minHeight: DesignTokens.Dimensions.minTouchTarget
-                )
-                .contentShape(Rectangle())
         }
+        .labelStyle(.iconOnly)
         .buttonStyle(.plain)
+        .font(.system(size: 12, weight: isEditingDevicePriority ? .bold : .regular))
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+        .frame(
+            minWidth: DesignTokens.Dimensions.minTouchTarget,
+            minHeight: DesignTokens.Dimensions.minTouchTarget
+        )
+        .contentShape(Rectangle())
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditingDevicePriority)
         .help(isEditingDevicePriority ? "Done reordering" : "Reorder devices")
     }
@@ -209,21 +209,21 @@ struct MenuBarPopupView: View {
 
     /// Settings button with gear ↔ X morphing animation
     private var settingsButton: some View {
-        Button {
+        Button(isSettingsOpen ? "Close Settings" : "Settings",
+               systemImage: isSettingsOpen ? "xmark" : "gearshape.fill") {
             toggleSettings()
-        } label: {
-            Image(systemName: isSettingsOpen ? "xmark" : "gearshape.fill")
-                .font(.system(size: 12, weight: isSettingsOpen ? .bold : .regular))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(DesignTokens.Colors.interactiveDefault)
-                .rotationEffect(.degrees(isSettingsOpen ? 90 : 0))
-                .frame(
-                    minWidth: DesignTokens.Dimensions.minTouchTarget,
-                    minHeight: DesignTokens.Dimensions.minTouchTarget
-                )
-                .contentShape(Rectangle())
         }
+        .labelStyle(.iconOnly)
         .buttonStyle(.plain)
+        .font(.system(size: 12, weight: isSettingsOpen ? .bold : .regular))
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+        .rotationEffect(.degrees(isSettingsOpen ? 90 : 0))
+        .frame(
+            minWidth: DesignTokens.Dimensions.minTouchTarget,
+            minHeight: DesignTokens.Dimensions.minTouchTarget
+        )
+        .contentShape(Rectangle())
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isSettingsOpen)
     }
 
@@ -250,7 +250,8 @@ struct MenuBarPopupView: View {
             isSettingsOpen.toggle()
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        Task {
+            try? await Task.sleep(for: .seconds(0.4))
             isSettingsAnimating = false
         }
     }
@@ -739,7 +740,8 @@ struct MenuBarPopupView: View {
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        Task {
+            try? await Task.sleep(for: .seconds(0.4))
             isEQAnimating = false
         }
     }

@@ -5,19 +5,19 @@ import SwiftUI
 /// The glass container grows/shrinks smoothly during expansion using SwiftUI's natural height calculation
 struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
     let isExpanded: Bool
-    @ViewBuilder let header: () -> Header
-    @ViewBuilder let expandedContent: () -> ExpandedContent
+    @ViewBuilder let header: Header
+    @ViewBuilder let expandedContent: ExpandedContent
 
     @State private var isHovered = false
 
     var body: some View {
         VStack(spacing: 0) {
             // Header content - always visible
-            header()
+            header
 
             // Expandable content - conditional rendering lets SwiftUI calculate natural height
             if isExpanded {
-                expandedContent()
+                expandedContent
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),

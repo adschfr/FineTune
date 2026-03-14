@@ -74,6 +74,8 @@ struct EditablePercentage: View {
         .frame(width: DesignTokens.Dimensions.percentageWidth, alignment: .trailing)
         .contentShape(Rectangle())
         .onTapGesture { if !isEditing { startEditing() } }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("Edit volume percentage")
         .onHover { hovering in
             isHovered = hovering
             if hovering {
@@ -104,13 +106,13 @@ struct EditablePercentage: View {
         )
 
         // Delay focus to next runloop to ensure TextField is rendered
-        DispatchQueue.main.async {
+        Task { @MainActor in
             isFocused = true
         }
     }
 
     private func commit() {
-        let cleaned = inputText.replacingOccurrences(of: "%", with: "")
+        let cleaned = inputText.replacing("%", with: "")
                                .trimmingCharacters(in: .whitespaces)
 
         if let value = Int(cleaned), range.contains(value) {

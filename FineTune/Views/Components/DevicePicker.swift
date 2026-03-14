@@ -210,7 +210,7 @@ struct DevicePicker: View {
             }
 
             // Device list
-            ScrollView(.vertical, showsIndicators: false) {
+            ScrollView(.vertical) {
                 LazyVStack(spacing: itemSpacing) {
                     ForEach(menuItems) { item in
                         deviceRow(for: item)
@@ -219,6 +219,7 @@ struct DevicePicker: View {
                 .padding(.vertical, 6)
                 .padding(.horizontal, 5)
             }
+            .scrollIndicators(.hidden)
             .frame(maxHeight: 220)
         }
         .frame(width: popoverWidth)
@@ -336,7 +337,7 @@ private struct DevicePickerRow: View {
                 }
             }
             .font(.system(size: 11))
-            .foregroundColor(isDisabled ? DesignTokens.Colors.textQuaternary : .primary)
+            .foregroundStyle(isDisabled ? DesignTokens.Colors.textQuaternary : .primary)
             .padding(.horizontal, 8)
             .frame(height: 26)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -119,14 +119,13 @@ struct AutoEQSearchPanel: View {
                     .accessibilityLabel("Search headphones")
 
                 if !searchText.isEmpty {
-                    Button {
+                    Button("Clear search", systemImage: "xmark.circle.fill") {
                         searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(DesignTokens.Colors.textTertiary)
                     }
+                    .labelStyle(.iconOnly)
                     .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
                 }
             }
             .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -420,6 +419,7 @@ struct AutoEQSearchPanel: View {
             onSelect(profile)
             onDismiss()
         }
+        .accessibilityAddTraits(.isButton)
         .whenHovered { isHovered in
             hoveredID = isHovered ? profile.id : nil
             if isHovered { highlightedIndex = nil }
@@ -479,6 +479,7 @@ struct AutoEQSearchPanel: View {
         .onTapGesture {
             selectCatalogEntry(entry)
         }
+        .accessibilityAddTraits(.isButton)
         .whenHovered { isHovered in
             hoveredID = isHovered ? entry.id : nil
             if isHovered { highlightedIndex = nil }

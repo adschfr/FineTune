@@ -68,7 +68,8 @@ struct DeviceEditRow: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(device.uid, forType: .string)
                 copied = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
                     copied = false
                 }
             } label: {
@@ -153,6 +154,8 @@ private struct EditablePriority: View {
         .frame(width: 16, alignment: .center)
         .contentShape(Rectangle())
         .onTapGesture { if !isEditing { startEditing() } }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("Edit priority position")
         .onHover { hovering in
             isHovered = hovering
             if hovering {
@@ -181,7 +184,7 @@ private struct EditablePriority: View {
             }
         )
 
-        DispatchQueue.main.async {
+        Task { @MainActor in
             isFocused = true
         }
     }
