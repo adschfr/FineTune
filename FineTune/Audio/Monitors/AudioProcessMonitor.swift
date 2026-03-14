@@ -11,7 +11,7 @@ private struct AppFingerprint: Hashable {
 
 @Observable
 @MainActor
-final class AudioProcessMonitor {
+final class AudioProcessMonitor: AudioProcessMonitoring {
     private(set) var activeApps: [AudioApp] = []
     var onAppsChanged: (([AudioApp]) -> Void)?
 

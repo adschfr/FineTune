@@ -5,7 +5,7 @@ import os
 
 @Observable
 @MainActor
-final class DeviceVolumeMonitor {
+final class DeviceVolumeMonitor: DeviceVolumeProviding {
     // MARK: - Output Device State
 
     /// Volumes for all tracked output devices (keyed by AudioDeviceID)

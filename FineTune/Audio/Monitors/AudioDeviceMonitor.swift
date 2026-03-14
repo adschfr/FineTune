@@ -5,7 +5,7 @@ import os
 
 @Observable
 @MainActor
-final class AudioDeviceMonitor {
+final class AudioDeviceMonitor: AudioDeviceProviding {
     // MARK: - Output Devices
 
     private(set) var outputDevices: [AudioDevice] = []
