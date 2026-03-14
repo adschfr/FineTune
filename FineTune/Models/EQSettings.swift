@@ -17,13 +17,29 @@ struct EQSettings: Codable, Equatable {
     var isEnabled: Bool
 
     init(bandGains: [Float] = Array(repeating: 0, count: 10), isEnabled: Bool = true) {
-        self.bandGains = bandGains
+        self.bandGains = Self.normalizeBands(bandGains)
         self.isEnabled = isEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decoded = try container.decodeIfPresent([Float].self, forKey: .bandGains)
+            ?? Array(repeating: 0, count: Self.bandCount)
+        self.bandGains = Self.normalizeBands(decoded)
+        self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+    }
+
+    /// Normalize band gains array to exactly `bandCount` elements,
+    /// padding with 0 or truncating as needed.
+    private static func normalizeBands(_ gains: [Float]) -> [Float] {
+        if gains.count == bandCount { return gains }
+        if gains.count > bandCount { return Array(gains.prefix(bandCount)) }
+        return gains + Array(repeating: Float(0), count: bandCount - gains.count)
     }
 
     /// Returns gains clamped to valid range
     var clampedGains: [Float] {
-        bandGains.map { max(Self.minGainDB, min(Self.maxGainDB, $0)) }
+        bandGains.map { $0.isFinite ? max(Self.minGainDB, min(Self.maxGainDB, $0)) : 0 }
     }
 
     /// Flat EQ preset

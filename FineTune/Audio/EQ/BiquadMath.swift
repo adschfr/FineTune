@@ -163,7 +163,10 @@ enum BiquadMath {
         gains: [Float],
         sampleRate: Double
     ) -> [Double] {
-        precondition(gains.count == EQSettings.bandCount)
+        guard gains.count == EQSettings.bandCount else {
+            // Return unity (passthrough) coefficients for all bands
+            return (0..<EQSettings.bandCount).flatMap { _ in [1.0, 0.0, 0.0, 0.0, 0.0] }
+        }
 
         var allCoeffs: [Double] = []
         allCoeffs.reserveCapacity(50)
