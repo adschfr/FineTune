@@ -41,6 +41,6 @@ enum CrossfadeConfig {
     }
 
     static func totalSamples(at sampleRate: Double) -> Int64 {
-        Int64(sampleRate * duration)
+        max(1, Int64(sampleRate * duration))
     }
 }
