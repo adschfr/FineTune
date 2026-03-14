@@ -2,13 +2,29 @@
 import Foundation
 import os
 
+/// Protocol for the AudioEngine surface that URLHandler depends on.
+/// Extracted for testability (allows mock injection).
+@MainActor
+protocol URLHandlerEngine {
+    var apps: [AudioApp] { get }
+    var settingsManager: SettingsManager { get }
+    func setVolume(for app: AudioApp, to volume: Float)
+    func getVolume(for app: AudioApp) -> Float
+    func setMute(for app: AudioApp, to muted: Bool)
+    func getMute(for app: AudioApp) -> Bool
+    func setDevice(for app: AudioApp, deviceUID: String?)
+    func setVolumeForInactive(identifier: String, to volume: Float)
+    func setMuteForInactive(identifier: String, to muted: Bool)
+    func getMuteForInactive(identifier: String) -> Bool
+}
+
 /// Handles URL scheme actions for FineTune (finetune://...)
 @MainActor
 final class URLHandler {
-    private let audioEngine: AudioEngine
+    private let audioEngine: any URLHandlerEngine
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "URLHandler")
-    
-    init(audioEngine: AudioEngine) {
+
+    init(audioEngine: any URLHandlerEngine) {
         self.audioEngine = audioEngine
     }
     
