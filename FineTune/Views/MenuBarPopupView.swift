@@ -151,8 +151,11 @@ struct MenuBarPopupView: View {
         .onChange(of: showingInputDevices) { _, _ in
             exitEditModeSaving()
         }
-        .onChange(of: localAppSettings) { _, newValue in
+        .onChange(of: localAppSettings) { oldValue, newValue in
             audioEngine.settingsManager.updateAppSettings(newValue)
+            if !oldValue.lockInputDevice && newValue.lockInputDevice {
+                audioEngine.handleInputLockEnabled()
+            }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
             pairedDevices = newValue
@@ -526,7 +529,7 @@ struct MenuBarPopupView: View {
                         isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
                         hasVolumeControl: audioEngine.hasVolumeControl(for: device.id),
                         onSetDefault: {
-                            deviceVolumeMonitor.setDefaultDevice(device.id)
+                            audioEngine.setDefaultOutputDevice(device.id)
                         },
                         onVolumeChange: { volume in
                             deviceVolumeMonitor.setVolume(for: device.id, to: volume)
@@ -556,7 +559,11 @@ struct MenuBarPopupView: View {
                                 audioEngine.settingsManager.favoriteAutoEQProfile(id: id)
                             }
                         },
-                        autoEQImportError: autoEQImportError
+                        autoEQImportError: autoEQImportError,
+                        autoEQPreampEnabled: audioEngine.autoEQPreampEnabled,
+                        onAutoEQPreampToggle: {
+                            audioEngine.setAutoEQPreampEnabled(!audioEngine.autoEQPreampEnabled)
+                        }
                     )
                 }
 
@@ -766,13 +773,19 @@ struct MenuBarPopupView: View {
         }
     }
 
-    /// Persists the editable order to the correct priority list.
+    /// Persists the editable order to the correct priority list, preserving disconnected device positions.
     private func persistEditableOrder() {
-        let uids = editableDeviceOrder.map(\.uid)
+        let connectedOrder = editableDeviceOrder.map(\.uid)
         if wasEditingInputDevices {
-            audioEngine.settingsManager.setInputDevicePriorityOrder(uids)
+            audioEngine.settingsManager.mergeInputDevicePriorityOrder(
+                oldPriority: audioEngine.settingsManager.inputDevicePriorityOrder,
+                connectedOrder: connectedOrder
+            )
         } else {
-            audioEngine.settingsManager.setDevicePriorityOrder(uids)
+            audioEngine.settingsManager.mergeDevicePriorityOrder(
+                oldPriority: audioEngine.settingsManager.devicePriorityOrder,
+                connectedOrder: connectedOrder
+            )
         }
     }
 
@@ -785,9 +798,12 @@ struct MenuBarPopupView: View {
 
     /// Merges device list changes into `editableDeviceOrder` while preserving the user's reordering.
     /// Existing devices are refreshed (CoreAudio may reassign AudioDeviceIDs), removed devices are
-    /// dropped, and new devices are appended at the end.
+    /// dropped, and reconnecting devices are inserted at their saved priority position.
     private func mergeDeviceChanges(from latest: [AudioDevice]) {
         let latestByUID = Dictionary(latest.map { ($0.uid, $0) }, uniquingKeysWith: { _, new in new })
+        let priorityOrder = wasEditingInputDevices
+            ? audioEngine.settingsManager.inputDevicePriorityOrder
+            : audioEngine.settingsManager.devicePriorityOrder
 
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             // Remove devices that disappeared
@@ -800,11 +816,48 @@ struct MenuBarPopupView: View {
                 }
             }
 
-            // Append newly appeared devices
+            // Insert reconnecting devices at their saved priority position
             let existingUIDs = Set(editableDeviceOrder.map(\.uid))
             let newDevices = latest.filter { !existingUIDs.contains($0.uid) }
-            editableDeviceOrder.append(contentsOf: newDevices)
+            for device in newDevices {
+                let index = Self.priorityInsertionIndex(
+                    for: device.uid,
+                    in: editableDeviceOrder.map(\.uid),
+                    priorityOrder: priorityOrder
+                )
+                editableDeviceOrder.insert(device, at: index)
+            }
         }
+    }
+
+    /// Finds the best insertion index for a reconnecting device based on saved priority order.
+    ///
+    /// Walks `priorityOrder` to find the UIDs that come before and after `uid`, then
+    /// places the device between them in `currentOrder`. Falls back to appending at the end
+    /// if the device isn't in the priority list or no neighbors are present.
+    ///
+    /// - Parameters:
+    ///   - uid: The device UID to insert.
+    ///   - currentOrder: The current list of device UIDs.
+    ///   - priorityOrder: The saved full priority list.
+    /// - Returns: The index at which to insert the device.
+    static func priorityInsertionIndex(for uid: String, in currentOrder: [String], priorityOrder: [String]) -> Int {
+        guard let priorityIndex = priorityOrder.firstIndex(of: uid) else {
+            // Brand new device not in priority list — append at end
+            return currentOrder.count
+        }
+
+        // Find the closest priority neighbor that exists in currentOrder and comes AFTER uid in priority.
+        // Insert before that neighbor so uid takes its correct position.
+        for i in (priorityIndex + 1)..<priorityOrder.count {
+            let successor = priorityOrder[i]
+            if let currentIndex = currentOrder.firstIndex(of: successor) {
+                return currentIndex
+            }
+        }
+
+        // No successor found — insert at end
+        return currentOrder.count
     }
 
     // MARK: - Helpers

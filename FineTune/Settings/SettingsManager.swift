@@ -75,7 +75,8 @@ final class SettingsManager {
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
         var appDeviceSelectionMode: [String: DeviceSelectionMode] = [:]  // bundleID → selection mode
         var appSelectedDeviceUIDs: [String: [String]] = [:]  // bundleID → array of device UIDs for multi mode
-        var lockedInputDeviceUID: String? = nil  // User's preferred input device (for input lock feature)
+        var lockedInputDeviceUID: String? = nil  // Current locked input device (updated on fallback)
+        var preferredInputDeviceUID: String? = nil  // User's intended input device (survives disconnect)
         var pinnedApps: Set<String> = []  // Persistence identifiers of pinned apps
         var pinnedAppInfo: [String: PinnedAppInfo] = [:]  // Persistence identifier → app metadata
 
@@ -91,6 +92,7 @@ final class SettingsManager {
         // Per-device AutoEQ headphone correction
         var deviceAutoEQ: [String: AutoEQSelection] = [:]  // deviceUID → selection
         var favoriteAutoEQProfiles: Set<String> = []  // profile IDs
+        var autoEQPreampEnabled: Bool = true  // Use profile preamp vs bypass (rely on limiter)
 
         init() {}
 
@@ -114,6 +116,7 @@ final class SettingsManager {
             appDeviceSelectionMode = try c.decodeIfPresent([String: DeviceSelectionMode].self, forKey: .appDeviceSelectionMode) ?? [:]
             appSelectedDeviceUIDs = try c.decodeIfPresent([String: [String]].self, forKey: .appSelectedDeviceUIDs) ?? [:]
             lockedInputDeviceUID = try c.decodeIfPresent(String.self, forKey: .lockedInputDeviceUID)
+            preferredInputDeviceUID = try c.decodeIfPresent(String.self, forKey: .preferredInputDeviceUID)
             pinnedApps = try c.decodeIfPresent(Set<String>.self, forKey: .pinnedApps) ?? []
             pinnedAppInfo = try c.decodeIfPresent([String: PinnedAppInfo].self, forKey: .pinnedAppInfo) ?? [:]
             ddcVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcVolumes) ?? [:]
@@ -123,6 +126,7 @@ final class SettingsManager {
             inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
             deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
             favoriteAutoEQProfiles = try c.decodeIfPresent(Set<String>.self, forKey: .favoriteAutoEQProfiles) ?? []
+            autoEQPreampEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoEQPreampEnabled) ?? true
         }
     }
 
@@ -227,6 +231,15 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    var preferredInputDeviceUID: String? {
+        settings.preferredInputDeviceUID
+    }
+
+    func setPreferredInputDeviceUID(_ uid: String?) {
+        settings.preferredInputDeviceUID = uid
+        scheduleSave()
+    }
+
     // MARK: - Pinned Apps
 
     func pinApp(_ identifier: String, info: PinnedAppInfo) {
@@ -311,6 +324,124 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    /// Merges reordered connected devices into the full priority list, preserving
+    /// disconnected device positions via an anchor algorithm.
+    ///
+    /// Each disconnected UID is anchored to the last connected UID that preceded it
+    /// in `oldPriority`. When rebuilding, disconnected UIDs are inserted after their
+    /// anchor (or at the start if no anchor exists).
+    ///
+    /// - Parameters:
+    ///   - oldPriority: The full saved priority list (connected + disconnected UIDs).
+    ///   - connectedOrder: The user's reordered list of currently-connected UIDs.
+    /// - Returns: Merged priority list preserving disconnected positions relative to connected anchors.
+    func mergeDevicePriorityOrder(oldPriority: [String], connectedOrder: [String]) {
+        settings.outputDevicePriority = Self.mergePriorityOrder(oldPriority: oldPriority, connectedOrder: connectedOrder)
+        scheduleSave()
+    }
+
+    /// Input device variant of `mergeDevicePriorityOrder`.
+    func mergeInputDevicePriorityOrder(oldPriority: [String], connectedOrder: [String]) {
+        settings.inputDevicePriority = Self.mergePriorityOrder(oldPriority: oldPriority, connectedOrder: connectedOrder)
+        scheduleSave()
+    }
+
+    /// Pure function: merges reordered connected UIDs back into the full priority list.
+    ///
+    /// Algorithm:
+    /// 1. Walk `oldPriority` and assign each disconnected UID an "anchor" — the last
+    ///    connected UID that preceded it.  UIDs with no preceding connected UID use
+    ///    `nil` anchor (inserted at the front).
+    /// 2. Build result from `connectedOrder`, inserting disconnected groups after
+    ///    their anchor.
+    /// 3. Append any connected UIDs not in `oldPriority` at the end (brand new devices).
+    static func mergePriorityOrder(oldPriority: [String], connectedOrder: [String]) -> [String] {
+        let connectedSet = Set(connectedOrder)
+
+        // Step 1: Build anchor map — disconnected UID → last connected UID before it (or nil)
+        // Also collect ordering of disconnected UIDs per anchor to preserve relative order
+        var anchoredGroups: [String?: [String]] = [:]  // anchor → [disconnected UIDs]
+        var currentAnchor: String? = nil
+
+        for uid in oldPriority {
+            if connectedSet.contains(uid) {
+                currentAnchor = uid
+            } else {
+                anchoredGroups[currentAnchor, default: []].append(uid)
+            }
+        }
+
+        // Step 2: Build result — insert disconnected groups after their anchors
+        var result: [String] = []
+
+        // First, insert any disconnected UIDs anchored to nil (they were before all connected devices)
+        if let prefixGroup = anchoredGroups[nil] {
+            result.append(contentsOf: prefixGroup)
+        }
+
+        for uid in connectedOrder {
+            result.append(uid)
+            if let group = anchoredGroups[uid] {
+                result.append(contentsOf: group)
+            }
+        }
+
+        return result
+    }
+
+    /// Removes per-app settings for apps that are no longer active, not pinned,
+    /// and have only default values. Preserves device routing (explicit user intent).
+    ///
+    /// - Parameter activeIdentifiers: Persistence identifiers of currently active apps.
+    func pruneStaleSettings(keeping activeIdentifiers: Set<String>) {
+        let allIdentifiers = Set(settings.appVolumes.keys)
+            .union(settings.appMutes.keys)
+            .union(settings.appEQSettings.keys)
+            .union(settings.appDeviceSelectionMode.keys)
+            .union(settings.appSelectedDeviceUIDs.keys)
+
+        var pruned = 0
+        for identifier in allIdentifiers {
+            // Keep active apps
+            if activeIdentifiers.contains(identifier) { continue }
+            // Keep pinned apps
+            if settings.pinnedApps.contains(identifier) { continue }
+            // Keep apps with explicit device routing (user intent)
+            if settings.appDeviceRouting[identifier] != nil { continue }
+
+            // Check if all remaining settings are default values
+            let volume = settings.appVolumes[identifier]
+            let mute = settings.appMutes[identifier]
+            let eq = settings.appEQSettings[identifier]
+            let selectionMode = settings.appDeviceSelectionMode[identifier]
+            let selectedUIDs = settings.appSelectedDeviceUIDs[identifier]
+
+            let isDefaultVolume = volume == nil || volume == 1.0
+            let isDefaultMute = mute == nil || mute == false
+            let isDefaultEQ = eq == nil || eq == .flat
+            let isDefaultSelectionMode = selectionMode == nil
+            let isDefaultSelectedUIDs = selectedUIDs == nil || selectedUIDs?.isEmpty == true
+
+            guard isDefaultVolume && isDefaultMute && isDefaultEQ
+                    && isDefaultSelectionMode && isDefaultSelectedUIDs else {
+                continue
+            }
+
+            // All values are defaults — safe to prune
+            settings.appVolumes.removeValue(forKey: identifier)
+            settings.appMutes.removeValue(forKey: identifier)
+            settings.appEQSettings.removeValue(forKey: identifier)
+            settings.appDeviceSelectionMode.removeValue(forKey: identifier)
+            settings.appSelectedDeviceUIDs.removeValue(forKey: identifier)
+            pruned += 1
+        }
+
+        if pruned > 0 {
+            logger.info("Pruned \(pruned) stale app settings entries")
+            scheduleSave()
+        }
+    }
+
     // MARK: - Per-Device AutoEQ
 
     func getAutoEQSelection(for deviceUID: String) -> AutoEQSelection? {
@@ -338,6 +469,14 @@ final class SettingsManager {
 
     var favoriteAutoEQProfileIDs: Set<String> {
         settings.favoriteAutoEQProfiles
+    }
+
+    var autoEQPreampEnabled: Bool {
+        get { settings.autoEQPreampEnabled }
+        set {
+            settings.autoEQPreampEnabled = newValue
+            scheduleSave()
+        }
     }
 
     // MARK: - App-Wide Settings
@@ -387,6 +526,7 @@ final class SettingsManager {
         settings.appSettings = AppSettings()
         settings.systemSoundsFollowsDefault = true
         settings.lockedInputDeviceUID = nil
+        settings.preferredInputDeviceUID = nil
         settings.ddcVolumes.removeAll()
         settings.ddcMuteStates.removeAll()
         settings.ddcSavedVolumes.removeAll()
