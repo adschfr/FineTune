@@ -19,8 +19,21 @@ protocol ProcessTapControlling: AnyObject {
     func invalidate()
     func updateEQSettings(_ settings: EQSettings)
     func updateAutoEQProfile(_ profile: AutoEQProfile?)
-    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?) async throws
-    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?) async throws
+    func setAutoEQPreampEnabled(_ enabled: Bool)
+    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
+    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool
+}
+
+extension ProcessTapControlling {
+    /// Convenience: defaults sourceDeviceDead to false.
+    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?) async throws {
+        try await switchDevice(to: newDeviceUID, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false)
+    }
+
+    /// Convenience: defaults sourceDeviceDead to false.
+    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?) async throws {
+        try await updateDevices(to: newDeviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false)
+    }
 }
