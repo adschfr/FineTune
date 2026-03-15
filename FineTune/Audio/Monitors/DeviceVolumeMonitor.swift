@@ -91,6 +91,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     private var pendingBluetoothOutputConfirmTasks: [AudioDeviceID: Task<Void, Never>] = [:]
     private var pendingBluetoothInputConfirmTasks: [AudioDeviceID: Task<Void, Never>] = [:]
 
+    /// Debounced volume log tasks — log settled value at .info after 300ms instead of every change at .debug
+    private var pendingVolumeLogTasks: [AudioDeviceID: Task<Void, Never>] = [:]
+
     private var defaultDeviceAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -276,6 +279,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         }
 
         cancelAllBluetoothConfirmationTasks()
+        cancelAllVolumeLogTasks()
 
         volumes.removeAll()
         muteStates.removeAll()
@@ -444,15 +448,19 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         if let newUID = defaultDeviceUID, newUID != oldUID {
             onDefaultDeviceChanged?(newUID)
 
-            // If system sounds follows default, update it too
-            if isSystemFollowingDefault && defaultDeviceID.isValid {
-                setSystemDevice(defaultDeviceID)
-                // Verify the operation succeeded
-                refreshSystemDevice()
-                if systemDeviceUID != defaultDeviceUID {
-                    logger.warning("Failed to sync system sounds to new default device")
-                } else {
-                    logger.debug("System sounds followed default to new device")
+            // If system sounds follows default, update it too.
+            // Re-read default first — the callback above may have overridden it
+            // (e.g., AudioEngine enforcing priority-based routing).
+            if isSystemFollowingDefault {
+                refreshDefaultDevice()
+                if defaultDeviceID.isValid {
+                    setSystemDevice(defaultDeviceID)
+                    refreshSystemDevice()
+                    if systemDeviceUID != defaultDeviceUID {
+                        logger.warning("Failed to sync system sounds to new default device")
+                    } else {
+                        logger.debug("System sounds followed default to new device")
+                    }
                 }
             }
         }
@@ -654,16 +662,20 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     }
 
     private func removeVolumeListener(for deviceID: AudioDeviceID) {
-        guard let block = volumeListeners[deviceID] else { return }
+        guard let block = volumeListeners.removeValue(forKey: deviceID) else { return }
 
+        let status: OSStatus
         if let registeredAddr = registeredVolumeAddresses.removeValue(forKey: deviceID) {
             var addr = registeredAddr
-            AudioObjectRemovePropertyListenerBlock(deviceID, &addr, .main, block)
+            status = AudioObjectRemovePropertyListenerBlock(deviceID, &addr, .main, block)
         } else {
             var address = volumeAddress
-            AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
+            status = AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
         }
-        volumeListeners.removeValue(forKey: deviceID)
+        // Tolerate kAudioHardwareBadObjectError (-66680): device already destroyed
+        if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
+            logger.warning("Failed to remove volume listener for device \(deviceID): \(status)")
+        }
     }
 
     private func handleVolumeChanged(for deviceID: AudioDeviceID) {
@@ -676,9 +688,23 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         #endif
 
         let newVolume = deviceID.readOutputVolumeScalar()
+
+        // Deduplicate: HAL often fires L/R channel notifications for the same volume value.
+        // Both values come from the same CoreAudio API (not computed), so == is safe for Float32.
+        if let currentVolume = volumes[deviceID], currentVolume == newVolume { return }
+
         volumes[deviceID] = newVolume
         onVolumeChanged?(deviceID, newVolume)
-        logger.debug("Volume changed for device \(deviceID): \(newVolume)")
+
+        // Debounced logging: log the settled value at .info after 300ms instead of every tick
+        pendingVolumeLogTasks[deviceID]?.cancel()
+        pendingVolumeLogTasks[deviceID] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self else { return }
+            self.pendingVolumeLogTasks.removeValue(forKey: deviceID)
+            let settled = self.volumes[deviceID] ?? newVolume
+            self.logger.info("Volume settled for device \(deviceID): \(settled)")
+        }
     }
 
     private func addMuteListener(for deviceID: AudioDeviceID) {
@@ -708,11 +734,13 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     }
 
     private func removeMuteListener(for deviceID: AudioDeviceID) {
-        guard let block = muteListeners[deviceID] else { return }
+        guard let block = muteListeners.removeValue(forKey: deviceID) else { return }
 
         var address = muteAddress
-        AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
-        muteListeners.removeValue(forKey: deviceID)
+        let status = AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
+        if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
+            logger.warning("Failed to remove mute listener for device \(deviceID): \(status)")
+        }
     }
 
     private func handleMuteChanged(for deviceID: AudioDeviceID) {
@@ -728,6 +756,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     /// default volume (1.0) for 50-200ms after the device appears.
     private func readAllStates() {
         for device in deviceMonitor.outputDevices {
+            // Skip devices that HAL reports as dead (mid-disconnect)
+            guard device.id.isDeviceAlive() else { continue }
+
             #if !APP_STORE
             // For DDC-backed devices, use cached DDC volume instead of CoreAudio
             if let ddcController, ddcController.isDDCBacked(device.id) {
@@ -866,16 +897,22 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     }
 
     private func removeInputVolumeListener(for deviceID: AudioDeviceID) {
-        guard let block = inputVolumeListeners[deviceID] else { return }
+        guard let block = inputVolumeListeners.removeValue(forKey: deviceID) else { return }
 
         var address = inputVolumeAddress
-        AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
-        inputVolumeListeners.removeValue(forKey: deviceID)
+        let status = AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
+        if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
+            logger.warning("Failed to remove input volume listener for device \(deviceID): \(status)")
+        }
     }
 
     private func handleInputVolumeChanged(for deviceID: AudioDeviceID) {
         guard deviceID.isValid else { return }
         let newVolume = deviceID.readInputVolumeScalar()
+
+        // Deduplicate: same logic as output volume
+        if let currentVolume = inputVolumes[deviceID], currentVolume == newVolume { return }
+
         inputVolumes[deviceID] = newVolume
         onInputVolumeChanged?(deviceID, newVolume)
         logger.debug("Input volume changed for device \(deviceID): \(newVolume)")
@@ -908,11 +945,13 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     }
 
     private func removeInputMuteListener(for deviceID: AudioDeviceID) {
-        guard let block = inputMuteListeners[deviceID] else { return }
+        guard let block = inputMuteListeners.removeValue(forKey: deviceID) else { return }
 
         var address = inputMuteAddress
-        AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
-        inputMuteListeners.removeValue(forKey: deviceID)
+        let status = AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
+        if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
+            logger.warning("Failed to remove input mute listener for device \(deviceID): \(status)")
+        }
     }
 
     private func handleInputMuteChanged(for deviceID: AudioDeviceID) {
@@ -926,6 +965,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     /// Reads the current volume and mute state for all tracked input devices
     private func readAllInputStates() {
         for device in deviceMonitor.inputDevices {
+            // Skip devices that HAL reports as dead (mid-disconnect)
+            guard device.id.isDeviceAlive() else { continue }
+
             let volume = device.id.readInputVolumeScalar()
             inputVolumes[device.id] = volume
 
@@ -1011,6 +1053,12 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         pendingBluetoothOutputConfirmTasks.removeAll()
         for (_, task) in pendingBluetoothInputConfirmTasks { task.cancel() }
         pendingBluetoothInputConfirmTasks.removeAll()
+    }
+
+    /// Cancels all pending volume log debounce tasks (called from stop()).
+    private func cancelAllVolumeLogTasks() {
+        for (_, task) in pendingVolumeLogTasks { task.cancel() }
+        pendingVolumeLogTasks.removeAll()
     }
 
 }

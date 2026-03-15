@@ -331,7 +331,11 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
             mElement: kAudioObjectPropertyElementMain
         )
 
-        AudioObjectRemovePropertyListenerBlock(objectID, &address, .main, block)
+        let status = AudioObjectRemovePropertyListenerBlock(objectID, &address, .main, block)
+        // Tolerate kAudioHardwareBadObjectError (-66680): process object already destroyed
+        if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
+            logger.warning("Failed to remove isRunning listener for \(objectID): \(status)")
+        }
     }
 
     private func removeAllProcessListeners() {
