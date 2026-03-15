@@ -24,6 +24,8 @@ struct DeviceRow: View {
     let onAutoEQImport: (() -> Void)?
     let onAutoEQToggleFavorite: ((String) -> Void)?
     let autoEQImportError: String?
+    let autoEQPreampEnabled: Bool
+    let onAutoEQPreampToggle: (() -> Void)?
 
     @State private var sliderValue: Double
     @State private var isEditing = false
@@ -52,7 +54,9 @@ struct DeviceRow: View {
         onAutoEQSelect: ((AutoEQProfile?) -> Void)? = nil,
         onAutoEQImport: (() -> Void)? = nil,
         onAutoEQToggleFavorite: ((String) -> Void)? = nil,
-        autoEQImportError: String? = nil
+        autoEQImportError: String? = nil,
+        autoEQPreampEnabled: Bool = true,
+        onAutoEQPreampToggle: (() -> Void)? = nil
     ) {
         self.device = device
         self.isDefault = isDefault
@@ -72,6 +76,8 @@ struct DeviceRow: View {
         self.onAutoEQImport = onAutoEQImport
         self.onAutoEQToggleFavorite = onAutoEQToggleFavorite
         self.autoEQImportError = autoEQImportError
+        self.autoEQPreampEnabled = autoEQPreampEnabled
+        self.onAutoEQPreampToggle = onAutoEQPreampToggle
         self._sliderValue = State(initialValue: Double(volume))
     }
 
@@ -132,7 +138,9 @@ struct DeviceRow: View {
                         onSelect: onSelect,
                         onImport: onImport,
                         onToggleFavorite: { id in onAutoEQToggleFavorite?(id) },
-                        importError: autoEQImportError
+                        importError: autoEQImportError,
+                        preampEnabled: autoEQPreampEnabled,
+                        onPreampToggle: onAutoEQPreampToggle
                     )
                 }
             }

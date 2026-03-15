@@ -12,6 +12,8 @@ struct AutoEQPicker: View {
     let onImport: () -> Void
     let onToggleFavorite: (String) -> Void
     let importError: String?
+    var preampEnabled: Bool = true
+    var onPreampToggle: (() -> Void)?
 
     @State private var isExpanded = false
     @State private var isButtonHovered = false
@@ -92,7 +94,9 @@ struct AutoEQPicker: View {
                     onImport()
                 },
                 onToggleFavorite: onToggleFavorite,
-                importErrorMessage: importError
+                importErrorMessage: importError,
+                preampEnabled: preampEnabled,
+                onPreampToggle: onPreampToggle
             )
         }
         .frame(width: popoverWidth)

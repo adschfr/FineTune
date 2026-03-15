@@ -12,6 +12,12 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
     /// Currently applied profile (needed for sample rate recalculation)
     private var _currentProfile: AutoEQProfile?
 
+    /// Read-only access to current profile
+    var currentProfile: AutoEQProfile? { _currentProfile }
+
+    /// Whether to apply the profile's preamp (false = bypass preamp, rely on limiter)
+    private var _preampEnabled: Bool = true
+
     /// Preamp gain in linear scale (RT-safe atomic read in process)
     private nonisolated(unsafe) var _preampGain: Float = 1.0
 
@@ -41,6 +47,7 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
             _filterCount = 0
             _preampGain = 1.0
             swapSetup(nil)
+            logger.info("AutoEQ disabled — \(profile == nil ? "nil profile" : "no valid filters after validation")")
             return
         }
 
@@ -58,8 +65,8 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
             return
         }
 
-        // Preamp: convert dB to linear gain
-        let preampLinear = powf(10.0, validated.preampDB / 20.0)
+        // Preamp: convert dB to linear gain (bypassed when preamp disabled — limiter handles peaks)
+        let preampLinear = _preampEnabled ? powf(10.0, validated.preampDB / 20.0) : 1.0
 
         // Atomic state update + setup swap
         _preampGain = preampLinear
@@ -67,8 +74,25 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
         swapSetup(newSetup)
         setEnabled(true)
 
+        let preampStatus = self._preampEnabled ? "active" : "bypassed"
+        logger.info("AutoEQ applied: \"\(validated.name)\" — \(filters.count) filters, preamp \(validated.preampDB, format: .fixed(precision: 1)) dB (\(preampStatus)), gain \(preampLinear, format: .fixed(precision: 3))x, rate \(self.sampleRate, format: .fixed(precision: 0)) Hz")
+
         // Note: Do NOT reset delay buffers here - the filter naturally adapts to new
         // coefficients using existing state, producing smooth transitions without clicks.
+    }
+
+    // MARK: - Preamp Mode
+
+    /// Toggle profile preamp on/off. When off, relies on downstream limiter for peak control.
+    func setPreampEnabled(_ enabled: Bool) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard enabled != _preampEnabled else { return }
+        _preampEnabled = enabled
+        logger.info("AutoEQ preamp \(enabled ? "enabled" : "bypassed (limiter-only)")")
+        // Re-apply current profile to update the preamp gain atomically
+        if let profile = _currentProfile {
+            updateProfile(profile)
+        }
     }
 
     // MARK: - BiquadProcessor Overrides
