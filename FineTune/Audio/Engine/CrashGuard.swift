@@ -38,6 +38,8 @@ private func crashSignalHandler(_ sig: Int32) {
     raise(sig)
 }
 
+private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "CrashGuard")
+
 // MARK: - Public API
 
 /// Tracks live aggregate device IDs and destroys them on crash signals
@@ -63,12 +65,19 @@ enum CrashGuard {
     /// Call immediately after successful `AudioHardwareCreateAggregateDevice`.
     static func trackDevice(_ deviceID: AudioObjectID) {
         os_unfair_lock_lock(&gDeviceLock)
-        defer { os_unfair_lock_unlock(&gDeviceLock) }
-        guard let slots = gDeviceSlots else { return }
+        guard let slots = gDeviceSlots else {
+            os_unfair_lock_unlock(&gDeviceLock)
+            return
+        }
         let idx = Int(gDeviceCount)
-        guard idx < gMaxDeviceSlots else { return }
+        guard idx < gMaxDeviceSlots else {
+            os_unfair_lock_unlock(&gDeviceLock)
+            logger.error("Slot limit (\(gMaxDeviceSlots)) reached — device \(deviceID) not tracked for crash cleanup")
+            return
+        }
         slots[idx] = deviceID
         gDeviceCount += 1
+        os_unfair_lock_unlock(&gDeviceLock)
     }
 
     /// Removes an aggregate device from crash-safe tracking.
