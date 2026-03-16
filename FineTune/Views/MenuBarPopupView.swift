@@ -49,7 +49,7 @@ struct MenuBarPopupView: View {
     /// Whether Bluetooth hardware is powered on
     @State private var isBluetoothOn = false
 
-    /// Whether device priority edit mode is active
+    /// Whether edit mode is active (affects both device priority and app visibility)
     @State private var isEditingDevicePriority = false
 
     /// Tracks which tab was active when edit mode started (for correct save on exit)
@@ -234,6 +234,8 @@ struct MenuBarPopupView: View {
     private func handleEscape() {
         if isSettingsOpen {
             toggleSettings()
+        } else if isEditingDevicePriority {
+            toggleDevicePriorityEdit()
         } else if expandedRowID != nil {
             // Collapse any expanded app EQ panel
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -269,12 +271,8 @@ struct MenuBarPopupView: View {
         Divider()
             .padding(.vertical, DesignTokens.Spacing.xs)
 
-        // Apps section (active + pinned inactive)
-        if audioEngine.displayableApps.isEmpty {
-            emptyStateView
-        } else {
-            appsSection
-        }
+        // Apps section (active + pinned inactive + hidden in edit mode)
+        appsSection
 
         Divider()
             .padding(.vertical, DesignTokens.Spacing.xs)
@@ -582,6 +580,13 @@ struct MenuBarPopupView: View {
                 Text("No apps playing audio")
                     .font(.callout)
                     .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+                let ignoredCount = audioEngine.settingsManager.getIgnoredAppInfo().count
+                if ignoredCount > 0 {
+                    Text("\(ignoredCount) ignored · edit to manage")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                }
             }
             Spacer()
         }
@@ -590,21 +595,90 @@ struct MenuBarPopupView: View {
 
     @ViewBuilder
     private var appsSection: some View {
-        SectionHeader(title: "Apps")
-            .padding(.bottom, DesignTokens.Spacing.xs)
-
-        // ScrollViewReader needed for EQ expand scroll-to behavior
-        ScrollViewReader { scrollProxy in
-            if audioEngine.displayableApps.count > appScrollThreshold {
-                ScrollView {
-                    appsContent(scrollProxy: scrollProxy)
-                }
-                .scrollIndicators(.never)
-                .frame(height: appScrollHeight)
-            } else {
-                appsContent(scrollProxy: scrollProxy)
+        HStack {
+            SectionHeader(title: "Apps")
+            Spacer()
+            let ignoredCount = audioEngine.settingsManager.getIgnoredAppInfo().count
+            if ignoredCount > 0 && !isEditingDevicePriority {
+                Text("\(ignoredCount) ignored")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
             }
         }
+        .padding(.bottom, DesignTokens.Spacing.xs)
+
+        if isEditingDevicePriority {
+            appEditModeContent
+        } else if audioEngine.displayableApps.isEmpty {
+            emptyStateView
+        } else {
+            ScrollViewReader { scrollProxy in
+                if audioEngine.displayableApps.count > appScrollThreshold {
+                    ScrollView {
+                        appsContent(scrollProxy: scrollProxy)
+                    }
+                    .scrollIndicators(.never)
+                    .frame(height: appScrollHeight)
+                } else {
+                    appsContent(scrollProxy: scrollProxy)
+                }
+            }
+        }
+    }
+
+    /// Edit mode content for apps: simplified rows with eye toggle + hidden section at bottom.
+    @ViewBuilder
+    private var appEditModeContent: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            // Visible apps (active + pinned inactive)
+            ForEach(audioEngine.displayableApps) { displayableApp in
+                switch displayableApp {
+                case .active(let app):
+                    AppEditRow(
+                        icon: app.icon,
+                        name: app.name,
+                        isIgnored: false,
+                        onToggleVisibility: { audioEngine.ignoreApp(app) }
+                    )
+                case .pinnedInactive(let info):
+                    AppEditRow(
+                        icon: displayableApp.icon,
+                        name: info.displayName,
+                        isIgnored: false,
+                        onToggleVisibility: {
+                            let hiddenInfo = IgnoredAppInfo(
+                                persistenceIdentifier: info.persistenceIdentifier,
+                                displayName: info.displayName,
+                                bundleID: info.bundleID
+                            )
+                            audioEngine.settingsManager.ignoreApp(info.persistenceIdentifier, info: hiddenInfo)
+                        }
+                    )
+                }
+            }
+
+            // Ignored apps section
+            let ignoredApps = audioEngine.settingsManager.getIgnoredAppInfo()
+                .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+            if !ignoredApps.isEmpty {
+                Divider()
+                    .padding(.vertical, DesignTokens.Spacing.xs)
+
+                Text("Ignored")
+                    .sectionHeaderStyle()
+                    .padding(.bottom, DesignTokens.Spacing.xs)
+
+                ForEach(ignoredApps, id: \.persistenceIdentifier) { info in
+                    AppEditRow(
+                        icon: DisplayableApp.loadIcon(bundleID: info.bundleID),
+                        name: info.displayName,
+                        isIgnored: true,
+                        onToggleVisibility: { audioEngine.unignoreApp(info.persistenceIdentifier) }
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func appsContent(scrollProxy: ScrollViewProxy) -> some View {

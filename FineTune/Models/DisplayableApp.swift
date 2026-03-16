@@ -51,19 +51,16 @@ enum DisplayableApp: Identifiable {
         case .active(let app):
             return app.icon
         case .pinnedInactive(let info):
-            return Self.loadIcon(for: info)
+            return Self.loadIcon(bundleID: info.bundleID)
         }
     }
 
-    /// Loads the app icon from the bundle, or returns a placeholder if not found.
-    private static func loadIcon(for info: PinnedAppInfo) -> NSImage {
-        // Try to load from bundle ID
-        if let bundleID = info.bundleID,
+    /// Loads the app icon from a bundle ID, or returns a generic placeholder.
+    static func loadIcon(bundleID: String?) -> NSImage {
+        if let bundleID,
            let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
             return NSWorkspace.shared.icon(forFile: appURL.path)
         }
-
-        // Fallback: generic app placeholder
         return NSWorkspace.shared.icon(for: .applicationBundle)
     }
 }
