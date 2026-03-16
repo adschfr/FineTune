@@ -10,6 +10,8 @@ struct MenuBarPopupView: View {
     /// Icon style that was applied at app launch (for restart-required detection)
     let launchIconStyle: MenuBarIconStyle
 
+    let permission: AudioRecordingPermission
+
     /// Memoized sorted output devices - only recomputed when device list or default changes
     @State private var sortedDevices: [AudioDevice] = []
 
@@ -607,7 +609,9 @@ struct MenuBarPopupView: View {
         }
         .padding(.bottom, DesignTokens.Spacing.xs)
 
-        if isEditingDevicePriority {
+        if permission.status != .authorized {
+            PermissionBannerView(permission: permission)
+        } else if isEditingDevicePriority {
             appEditModeContent
         } else if audioEngine.displayableApps.isEmpty {
             emptyStateView

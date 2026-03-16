@@ -8,7 +8,7 @@ import os
 private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "App")
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var audioEngine: AudioEngine?
     
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -20,6 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for url in urls {
             urlHandler.handleURL(url)
         }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner])
     }
 }
 
@@ -77,7 +85,8 @@ struct FineTuneApp: App {
             audioEngine: audioEngine,
             deviceVolumeMonitor: audioEngine.deviceVolumeMonitor as! DeviceVolumeMonitor,
             updateManager: updateManager,
-            launchIconStyle: launchIconStyle
+            launchIconStyle: launchIconStyle,
+            permission: audioEngine.permission
         )
     }
 
@@ -89,11 +98,16 @@ struct FineTuneApp: App {
 
         let settings = SettingsManager()
         let profileManager = AutoEQProfileManager()
-        let engine = AudioEngine(settingsManager: settings, autoEQProfileManager: profileManager)
+        let permission = AudioRecordingPermission()
+        let engine = AudioEngine(permission: permission, settingsManager: settings, autoEQProfileManager: profileManager)
         _audioEngine = State(initialValue: engine)
 
         // Pass engine to AppDelegate
         _appDelegate.wrappedValue.audioEngine = engine
+
+        if permission.status == .unknown {
+            permission.request()
+        }
 
         // Capture icon style at launch - requires restart to change
         let iconStyle = settings.appSettings.menuBarIconStyle
@@ -110,6 +124,9 @@ struct FineTuneApp: App {
 
         // DeviceVolumeMonitor is now created and started inside AudioEngine
         // This ensures proper initialization order: deviceMonitor.start() -> deviceVolumeMonitor.start()
+
+        // Set delegate before requesting authorization so willPresent is called
+        UNUserNotificationCenter.current().delegate = _appDelegate.wrappedValue
 
         // Request notification authorization (for device disconnect alerts)
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, error in

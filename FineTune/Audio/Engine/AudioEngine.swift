@@ -14,6 +14,7 @@ final class AudioEngine {
     let volumeState: VolumeState
     let settingsManager: SettingsManager
     let autoEQProfileManager: AutoEQProfileManager
+    let permission: AudioRecordingPermission
 
     #if !APP_STORE
     let ddcController: DDCController
@@ -171,6 +172,7 @@ final class AudioEngine {
 
 
     init(
+        permission: AudioRecordingPermission? = nil,
         settingsManager: SettingsManager? = nil,
         autoEQProfileManager: AutoEQProfileManager? = nil,
         deviceProvider: (any AudioDeviceProviding)? = nil,
@@ -180,6 +182,7 @@ final class AudioEngine {
         isAlive: ((AudioDeviceID) -> Bool)? = nil,
         startMonitorsAutomatically: Bool = true
     ) {
+        self.permission = permission ?? AudioRecordingPermission()
         let manager = settingsManager ?? SettingsManager()
         self.settingsManager = manager
         self.autoEQProfileManager = autoEQProfileManager ?? AutoEQProfileManager()
@@ -258,7 +261,9 @@ final class AudioEngine {
 
         if startMonitorsAutomatically {
             Task { @MainActor in
-                self.processMonitor.start()
+                if self.permission.status == .authorized {
+                    self.processMonitor.start()
+                }
                 self.deviceMonitor.start()
                 self.bluetoothDeviceMonitor.start()
 
@@ -278,6 +283,29 @@ final class AudioEngine {
                 self.lastConfirmedDefaultUID = self.deviceVolumeMonitor.defaultDeviceUID
                 if manager.appSettings.lockInputDevice {
                     self.restoreLockedInputDevice()
+                }
+            }
+        }
+
+        // Start process monitor when permission is granted
+        if startMonitorsAutomatically && permission?.status != .authorized {
+            observePermissionGranted()
+        }
+    }
+
+    private func observePermissionGranted() {
+        withObservationTracking {
+            _ = self.permission.status
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.permission.status == .authorized {
+                    self.processMonitor.start()
+                    self.applyPersistedSettings()
+                    self.startHealthMonitor()
+                    self.logger.info("Audio capture authorized — process monitor started")
+                } else {
+                    self.observePermissionGranted()
                 }
             }
         }
@@ -537,10 +565,14 @@ final class AudioEngine {
 
     func start() {
         // Monitors have internal guards against double-starting
-        processMonitor.start()
+        if permission.status == .authorized {
+            processMonitor.start()
+        }
         deviceMonitor.start()
         applyPersistedSettings()
-        startHealthMonitor()
+        if permission.status == .authorized {
+            startHealthMonitor()
+        }
 
         // Restore locked input device if feature is enabled
         if settingsManager.appSettings.lockInputDevice {
@@ -863,6 +895,7 @@ final class AudioEngine {
     private func ensureTapWithDevices(for app: AudioApp, deviceUIDs: [String]) {
         guard !deviceUIDs.isEmpty else { return }
         guard taps[app.id] == nil else { return }
+        guard permission.status == .authorized else { return }
 
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs)
         do {
@@ -892,6 +925,7 @@ final class AudioEngine {
     }
 
     func applyPersistedSettings() {
+        guard permission.status == .authorized else { return }
         for app in apps {
             guard !appliedPIDs.contains(app.id) else { continue }
             guard !settingsManager.isIgnored(app.persistenceIdentifier) else { continue }
@@ -1009,6 +1043,7 @@ final class AudioEngine {
 
     private func ensureTapExists(for app: AudioApp, deviceUID: String) {
         guard taps[app.id] == nil else { return }
+        guard permission.status == .authorized else { return }
 
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID])
         do {
