@@ -129,12 +129,14 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
             var inputDeviceList: [AudioDevice] = []
 
             for deviceID in deviceIDs {
-                guard !deviceID.isAggregateDevice() else { continue }
-
                 guard let uid = try? deviceID.readDeviceUID(),
                       let name = try? deviceID.readDeviceName() else {
                     continue
                 }
+
+                // Allow user-created aggregate devices (e.g. Multi-Output Device from Audio MIDI Setup)
+                // but skip FineTune's own internal aggregates used for process taps
+                if deviceID.isAggregateDevice() && name.hasPrefix("FineTune-") { continue }
 
                 // Output devices - filter virtual devices (avoid clutter from Teams Audio, BlackHole, etc.)
                 if deviceID.hasOutputStreams() && !deviceID.isVirtualDevice() {
