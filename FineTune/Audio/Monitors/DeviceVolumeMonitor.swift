@@ -292,6 +292,11 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         defaultInputDeviceUID = nil
     }
 
+    /// Threshold clamp: sub-1% scalar (~-40 dB) → true silence, matching industry practice
+    private func clampedVolume(_ volume: Float) -> Float {
+        volume < 0.01 ? 0 : volume
+    }
+
     /// Sets the volume for a specific device
     func setVolume(for deviceID: AudioDeviceID, to volume: Float) {
         guard deviceID.isValid else {
@@ -299,15 +304,16 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             return
         }
 
-        let success = deviceID.setOutputVolumeScalar(volume)
+        let clamped = clampedVolume(volume)
+        let success = deviceID.setOutputVolumeScalar(clamped)
         if success {
-            volumes[deviceID] = volume
+            volumes[deviceID] = clamped
         } else {
             #if !APP_STORE
             if let ddcController, ddcController.isDDCBacked(deviceID) {
-                let ddcVolume = Int(round(volume * 100))
+                let ddcVolume = Int(round(clamped * 100))
                 ddcController.setVolume(for: deviceID, to: ddcVolume)
-                volumes[deviceID] = volume
+                volumes[deviceID] = clamped
             } else {
                 logger.warning("Failed to set volume on device \(deviceID)")
             }
@@ -687,7 +693,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         if let ddcController, ddcController.isDDCBacked(deviceID) { return }
         #endif
 
-        let newVolume = deviceID.readOutputVolumeScalar()
+        let newVolume = clampedVolume(deviceID.readOutputVolumeScalar())
 
         // Deduplicate: HAL often fires L/R channel notifications for the same volume value.
         // Both values come from the same CoreAudio API (not computed), so == is safe for Float32.
@@ -772,7 +778,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             }
             #endif
 
-            let volume = device.id.readOutputVolumeScalar()
+            let volume = clampedVolume(device.id.readOutputVolumeScalar())
             volumes[device.id] = volume
 
             let muted = device.id.readMuteState()
@@ -1013,7 +1019,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             defer { self?.pendingBluetoothOutputConfirmTasks.removeValue(forKey: deviceID) }
             try? await Task.sleep(for: .milliseconds(300))
             guard let self, !Task.isCancelled, self.volumes.keys.contains(deviceID) else { return }
-            let confirmedVolume = deviceID.readOutputVolumeScalar()
+            let confirmedVolume = self.clampedVolume(deviceID.readOutputVolumeScalar())
             let confirmedMute = deviceID.readMuteState()
             self.volumes[deviceID] = confirmedVolume
             self.muteStates[deviceID] = confirmedMute

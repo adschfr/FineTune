@@ -13,7 +13,9 @@ enum VolumeMapping {
     static func sliderToGain(_ slider: Double, maxBoost: Float = 2.0) -> Float {
         if slider <= 0.5 {
             // 0-50% slider → 0-100% gain (linear attenuation)
-            return Float(slider * 2)
+            let gain = Float(slider * 2)
+            // Industry-standard threshold clamp: sub-1% gain (~-40 dB) → true silence
+            return gain < 0.01 ? 0 : gain
         } else {
             // 50-100% slider → 100%-maxBoost (linear boost)
             let t = (slider - 0.5) / 0.5

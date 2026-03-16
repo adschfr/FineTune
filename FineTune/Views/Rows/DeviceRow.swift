@@ -168,6 +168,10 @@ struct DeviceRow: View {
                     value: $sliderValue,
                     onEditingChanged: { editing in
                         isEditing = editing
+                        if !editing {
+                            // Sync with clamped value from monitor
+                            sliderValue = Double(volume)
+                        }
                     }
                 )
                 .opacity(showMutedIcon ? 0.5 : 1.0)

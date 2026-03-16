@@ -53,16 +53,21 @@ private struct BaseMuteButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isMuted ? mutedIcon : unmutedIcon)
-                .font(.system(size: 14))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(buttonColor)
-                .scaleEffect(isPulsing ? 1.1 : 1.0)
-                .frame(
-                    minWidth: DesignTokens.Dimensions.minTouchTarget,
-                    minHeight: DesignTokens.Dimensions.minTouchTarget
-                )
-                .contentShape(Rectangle())
+            ZStack {
+                Image(systemName: unmutedIcon)
+                    .opacity(isMuted ? 0 : 1)
+                Image(systemName: mutedIcon)
+                    .opacity(isMuted ? 1 : 0)
+            }
+            .font(.system(size: 14))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(buttonColor)
+            .scaleEffect(isPulsing ? 1.1 : 1.0)
+            .frame(
+                minWidth: DesignTokens.Dimensions.minTouchTarget,
+                minHeight: DesignTokens.Dimensions.minTouchTarget
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(MuteButtonPressStyle())
         .onHover { hovering in
