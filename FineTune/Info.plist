@@ -6,6 +6,8 @@
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>FineTune needs access to control volume levels for individual applications.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>FineTune needs microphone access to capture audio from apps using input-capable devices.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>FineTune uses Bluetooth to connect paired audio devices from the menu bar.</string>
 	<key>SUFeedURL</key>
