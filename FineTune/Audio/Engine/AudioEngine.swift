@@ -363,6 +363,7 @@ final class AudioEngine {
     /// Pinned apps appear first (sorted alphabetically), then unpinned active apps (sorted alphabetically).
     var displayableApps: [DisplayableApp] {
         let activeApps = apps
+            .filter { !settingsManager.isIgnored($0.persistenceIdentifier) }
         let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
 
         // Get pinned apps that are not currently active
@@ -414,6 +415,38 @@ final class AudioEngine {
     /// Check if an identifier is pinned (for inactive apps).
     func isPinned(identifier: String) -> Bool {
         settingsManager.isPinned(identifier)
+    }
+
+    // MARK: - Ignored Apps
+
+    /// Hide an active app so FineTune ignores it entirely.
+    func ignoreApp(_ app: AudioApp) {
+        let info = IgnoredAppInfo(
+            persistenceIdentifier: app.persistenceIdentifier,
+            displayName: app.name,
+            bundleID: app.bundleID
+        )
+        settingsManager.ignoreApp(app.persistenceIdentifier, info: info)
+
+        // Tear down the live tap so audio returns to natural volume
+        if let tap = taps.removeValue(forKey: app.id) {
+            tap.invalidate()
+        }
+        appDeviceRouting.removeValue(forKey: app.id)
+        followsDefault.remove(app.id)
+        appliedPIDs.remove(app.id)
+    }
+
+    /// Unhide an app by its persistence identifier.
+    /// Immediately creates a tap if the app is currently running.
+    func unignoreApp(_ identifier: String) {
+        settingsManager.unignoreApp(identifier)
+        applyPersistedSettings()
+    }
+
+    /// Check if an identifier is hidden.
+    func isIgnored(identifier: String) -> Bool {
+        settingsManager.isIgnored(identifier)
     }
 
     // MARK: - Inactive App Settings (by persistence identifier)
@@ -858,6 +891,7 @@ final class AudioEngine {
     func applyPersistedSettings() {
         for app in apps {
             guard !appliedPIDs.contains(app.id) else { continue }
+            guard !settingsManager.isIgnored(app.persistenceIdentifier) else { continue }
 
             // Load saved device selection mode (single vs multi)
             let savedMode = volumeState.loadSavedDeviceSelectionMode(for: app.id, identifier: app.persistenceIdentifier)
