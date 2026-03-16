@@ -11,6 +11,14 @@ struct PinnedAppInfo: Codable, Equatable {
     let bundleID: String?
 }
 
+// MARK: - Ignored App Info
+
+struct IgnoredAppInfo: Codable, Equatable {
+    let persistenceIdentifier: String
+    let displayName: String
+    let bundleID: String?
+}
+
 // MARK: - App-Wide Settings Enums
 
 enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
@@ -79,6 +87,8 @@ final class SettingsManager {
         var preferredInputDeviceUID: String? = nil  // User's intended input device (survives disconnect)
         var pinnedApps: Set<String> = []  // Persistence identifiers of pinned apps
         var pinnedAppInfo: [String: PinnedAppInfo] = [:]  // Persistence identifier → app metadata
+        var ignoredApps: Set<String> = []  // Persistence identifiers of hidden apps
+        var ignoredAppInfo: [String: IgnoredAppInfo] = [:]  // Persistence identifier → app metadata
 
         // DDC monitor speaker volumes (keyed by CoreAudio device UID for stability across reboots)
         var ddcVolumes: [String: Int] = [:]       // device UID → volume (0-100)
@@ -119,6 +129,8 @@ final class SettingsManager {
             preferredInputDeviceUID = try c.decodeIfPresent(String.self, forKey: .preferredInputDeviceUID)
             pinnedApps = try c.decodeIfPresent(Set<String>.self, forKey: .pinnedApps) ?? []
             pinnedAppInfo = try c.decodeIfPresent([String: PinnedAppInfo].self, forKey: .pinnedAppInfo) ?? [:]
+            ignoredApps = try c.decodeIfPresent(Set<String>.self, forKey: .ignoredApps) ?? []
+            ignoredAppInfo = try c.decodeIfPresent([String: IgnoredAppInfo].self, forKey: .ignoredAppInfo) ?? [:]
             ddcVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcVolumes) ?? [:]
             ddcMuteStates = try c.decodeIfPresent([String: Bool].self, forKey: .ddcMuteStates) ?? [:]
             ddcSavedVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcSavedVolumes) ?? [:]
@@ -261,6 +273,38 @@ final class SettingsManager {
     /// Returns metadata for all pinned apps
     func getPinnedAppInfo() -> [PinnedAppInfo] {
         settings.pinnedApps.compactMap { settings.pinnedAppInfo[$0] }
+    }
+
+    // MARK: - Ignored Apps
+
+    func ignoreApp(_ identifier: String, info: IgnoredAppInfo) {
+        settings.ignoredApps.insert(identifier)
+        settings.ignoredAppInfo[identifier] = info
+        // Hiding is mutually exclusive with pinning
+        settings.pinnedApps.remove(identifier)
+        settings.pinnedAppInfo.removeValue(forKey: identifier)
+        // Clear per-app settings — FineTune won't interact with this app
+        settings.appVolumes.removeValue(forKey: identifier)
+        settings.appMutes.removeValue(forKey: identifier)
+        settings.appDeviceRouting.removeValue(forKey: identifier)
+        settings.appEQSettings.removeValue(forKey: identifier)
+        settings.appDeviceSelectionMode.removeValue(forKey: identifier)
+        settings.appSelectedDeviceUIDs.removeValue(forKey: identifier)
+        scheduleSave()
+    }
+
+    func unignoreApp(_ identifier: String) {
+        settings.ignoredApps.remove(identifier)
+        settings.ignoredAppInfo.removeValue(forKey: identifier)
+        scheduleSave()
+    }
+
+    func isIgnored(_ identifier: String) -> Bool {
+        settings.ignoredApps.contains(identifier)
+    }
+
+    func getIgnoredAppInfo() -> [IgnoredAppInfo] {
+        settings.ignoredApps.compactMap { settings.ignoredAppInfo[$0] }
     }
 
     // MARK: - DDC Monitor Volume
@@ -523,6 +567,8 @@ final class SettingsManager {
         settings.appEQSettings.removeAll()
         settings.pinnedApps.removeAll()
         settings.pinnedAppInfo.removeAll()
+        settings.ignoredApps.removeAll()
+        settings.ignoredAppInfo.removeAll()
         settings.appSettings = AppSettings()
         settings.systemSoundsFollowsDefault = true
         settings.lockedInputDeviceUID = nil
