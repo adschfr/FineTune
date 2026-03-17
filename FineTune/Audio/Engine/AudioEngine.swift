@@ -618,6 +618,37 @@ final class AudioEngine {
         logger.info("AudioEngine shutdown complete")
     }
 
+    // MARK: - Settings Reset
+
+    /// Resets all persisted settings and synchronizes in-memory engine state.
+    /// Active taps are kept alive but reverted to defaults (unity volume, unmuted, flat EQ).
+    func handleSettingsReset() {
+        // 1. Clear persisted state
+        settingsManager.resetAllSettings()
+
+        // 2. Clear in-memory routing and tracking state
+        appliedPIDs.removeAll()
+        appDeviceRouting.removeAll()
+        followsDefault.removeAll()
+
+        // 3. Clear cached per-app audio state
+        volumeState.resetAll()
+
+        // 4. Push defaults to all active taps
+        let defaultVolume = settingsManager.appSettings.defaultNewAppVolume
+        for tap in taps.values {
+            tap.volume = defaultVolume
+            tap.isMuted = false
+            tap.updateEQSettings(.flat)
+            tap.updateAutoEQProfile(nil)
+        }
+
+        // 5. Re-apply from clean settings (re-establishes routing to system default)
+        applyPersistedSettings()
+
+        logger.info("Settings reset: engine state synchronized")
+    }
+
     func setVolume(for app: AudioApp, to volume: Float) {
         volumeState.setVolume(for: app.id, to: volume, identifier: app.persistenceIdentifier)
         if let deviceUID = appDeviceRouting[app.id] {

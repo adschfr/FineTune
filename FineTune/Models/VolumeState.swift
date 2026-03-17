@@ -195,6 +195,10 @@ final class VolumeState {
         states = states.filter { pids.contains($0.key) }
     }
 
+    func resetAll() {
+        states.removeAll()
+    }
+
     // MARK: - Private
 
     private func ensureState(for pid: pid_t, identifier: String) {
