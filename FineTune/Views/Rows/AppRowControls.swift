@@ -6,7 +6,6 @@ import SwiftUI
 struct AppRowControls: View {
     let volume: Float
     let isMuted: Bool
-    let audioLevel: Float
     let devices: [AudioDevice]
     let selectedDeviceUID: String
     let selectedDeviceUIDs: Set<String>
@@ -26,23 +25,12 @@ struct AppRowControls: View {
 
     @State private var dragOverrideValue: Double?
     @State private var isEQButtonHovered = false
-    @State private var isBoostButtonHovered = false
 
     private var sliderValue: Double {
         dragOverrideValue ?? VolumeMapping.gainToSlider(volume)
     }
 
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
-
-    private var boostButtonColor: Color {
-        if boost.isBoosted {
-            return DesignTokens.Colors.accentPrimary
-        } else if isBoostButtonHovered {
-            return DesignTokens.Colors.interactiveHover
-        } else {
-            return DesignTokens.Colors.textTertiary
-        }
-    }
 
     private var eqButtonColor: Color {
         if isEQExpanded {
@@ -106,27 +94,8 @@ struct AppRowControls: View {
                 range: 0...100
             )
 
-            // Boost button
-            Button {
-                onBoostChange(boost.next)
-            } label: {
-                Text(boost.label)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(boostButtonColor)
-                    .frame(
-                        minWidth: DesignTokens.Dimensions.minTouchTarget,
-                        minHeight: DesignTokens.Dimensions.minTouchTarget
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .onHover { isBoostButtonHovered = $0 }
-            .help("Volume boost: \(boost.label)")
-            .accessibilityLabel("Volume boost \(boost.label)")
-            .animation(DesignTokens.Animation.hover, value: isBoostButtonHovered)
-
-            // VU Meter
-            VUMeter(level: audioLevel, isMuted: showMutedIcon)
+            // Boost chevrons
+            BoostChevrons(level: boost, onTap: { onBoostChange(boost.next) })
 
             // Device picker
             DevicePicker(
@@ -172,6 +141,6 @@ struct AppRowControls: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEQExpanded)
             .animation(DesignTokens.Animation.hover, value: isEQButtonHovered)
         }
-        .frame(width: DesignTokens.Dimensions.controlsWidth)
+        .fixedSize()
     }
 }
