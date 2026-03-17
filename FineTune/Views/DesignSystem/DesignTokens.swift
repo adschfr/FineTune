@@ -114,8 +114,8 @@ enum DesignTokens {
         /// VU meter red segment (bar 7, peak/clip)
         static let vuRed = Color(red: 0.90, green: 0.25, blue: 0.25)
 
-        /// VU meter unlit bar color
-        static let vuUnlit: Color = .primary.opacity(0.08)
+        /// VU meter unlit bar color (matches sliderTrack for visual consistency)
+        static let vuUnlit: Color = .primary.opacity(0.15)
 
         /// VU meter muted state
         static let vuMuted: Color = .primary.opacity(0.35)
@@ -241,24 +241,10 @@ enum DesignTokens {
         /// Minimum slider width
         static let sliderMinWidth: CGFloat = 120
 
-        /// VU meter width
-        static let vuMeterWidth: CGFloat = 28
-
-        /// Controls section width
-        static var controlsWidth: CGFloat {
-            contentWidth - iconSize - Spacing.sm - 100
-        }
-
         /// Percentage text width (fixed to prevent layout shift)
         static let percentageWidth: CGFloat = 40
 
         // MARK: VU Meter
-
-        /// VU meter bar height
-        static let vuMeterBarHeight: CGFloat = 10
-
-        /// VU meter bar spacing
-        static let vuMeterBarSpacing: CGFloat = 2
 
         /// VU meter bar count
         static let vuMeterBarCount: Int = 8
