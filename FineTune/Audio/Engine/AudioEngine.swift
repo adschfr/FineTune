@@ -27,6 +27,14 @@ final class AudioEngine {
 
     /// Closure to check if a device is alive. Overridable for testing.
     private let isAliveCheck: (AudioDeviceID) -> Bool
+
+    /// One-shot HAL listeners for devices that were present but not alive during priority resolution.
+    /// Keyed by AudioDeviceID. Each entry holds the device UID, listener block, and a timeout task.
+    private var aliveWatchers: [AudioDeviceID: (uid: String, block: AudioObjectPropertyListenerBlock, timeout: Task<Void, Never>)] = [:]
+
+    /// Number of pending alive watchers (exposed for testing).
+    var pendingAliveWatcherCount: Int { aliveWatchers.count }
+
     private var appliedPIDs: Set<pid_t> = []
     private var appDeviceRouting: [pid_t: String] = [:]  // pid → deviceUID (always explicit)
     private var followsDefault: Set<pid_t> = []  // Apps that follow system default
@@ -1212,6 +1220,9 @@ final class AudioEngine {
 
     /// Called when device disappears - updates routing and switches taps immediately
     private func handleDeviceDisconnected(_ deviceUID: String, name deviceName: String) {
+        // Clean up alive watcher — use UID lookup since device is already removed from monitor
+        removeAliveWatcher(forUID: deviceUID)
+
         // If we were waiting for macOS to auto-switch to this device, cancel — it's gone
         if case .pendingAutoSwitch(let uid, let task) = outputPriorityState, uid == deviceUID {
             task.cancel()
@@ -1411,6 +1422,12 @@ final class AudioEngine {
             isAlive: isAliveCheck
         )?.uid)
 
+        // If this device is present but not alive, watch for it to become alive
+        if let device = deviceMonitor.device(for: deviceUID),
+           !isAliveCheck(device.id) {
+            installAliveWatcher(deviceID: device.id, uid: deviceUID, name: deviceName)
+        }
+
         if isNewDeviceHigherPriority, deviceUID != currentDefault {
             // A higher-priority device reconnected — switch to it
             reEvaluateOutputDefault()
@@ -1447,6 +1464,69 @@ final class AudioEngine {
             timeoutTask: timeoutTask
         )
         logger.debug("Entered PENDING_AUTOSWITCH for \(deviceName) (\(timeout)s grace)")
+    }
+
+    // MARK: - Alive Watchers
+
+    /// Installs a one-shot HAL listener for kAudioDevicePropertyDeviceIsAlive on a device
+    /// that is present but not yet alive. When the device becomes alive, re-runs
+    /// handleDeviceConnected so priority is re-evaluated. Self-removes after firing or timeout.
+    private func installAliveWatcher(deviceID: AudioDeviceID, uid: String, name: String) {
+        guard aliveWatchers[deviceID] == nil else { return }
+
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsAlive,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isAliveCheck(deviceID) else { return }
+                self.logger.info("Device became alive: \(name) (\(uid)), re-evaluating priority")
+                self.removeAliveWatcher(deviceID)
+                self.handleDeviceConnected(uid, name: name)
+            }
+        }
+
+        let status = AudioObjectAddPropertyListenerBlock(deviceID, &address, .main, block)
+        guard status == noErr else {
+            logger.warning("Failed to install alive watcher for \(name) (\(deviceID)): \(status)")
+            return
+        }
+
+        let timeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            guard let self, !Task.isCancelled else { return }
+            self.logger.debug("Alive watcher timed out for \(name) (\(uid))")
+            self.removeAliveWatcher(deviceID)
+        }
+
+        aliveWatchers[deviceID] = (uid: uid, block: block, timeout: timeoutTask)
+        logger.debug("Installed alive watcher for \(name) (\(uid))")
+    }
+
+    /// Removes a one-shot alive watcher by device ID, cleaning up the HAL listener and timeout.
+    private func removeAliveWatcher(_ deviceID: AudioDeviceID) {
+        guard let watcher = aliveWatchers.removeValue(forKey: deviceID) else { return }
+        watcher.timeout.cancel()
+
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsAlive,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, watcher.block)
+        if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
+            logger.warning("Failed to remove alive watcher for device \(deviceID): \(status)")
+        }
+    }
+
+    /// Removes a one-shot alive watcher by device UID. Used during disconnect when the
+    /// device is already removed from the monitor's list and device(for:) returns nil.
+    private func removeAliveWatcher(forUID uid: String) {
+        guard let (deviceID, _) = aliveWatchers.first(where: { $0.value.uid == uid }) else { return }
+        removeAliveWatcher(deviceID)
     }
 
     private func showReconnectNotification(deviceName: String, affectedApps: [AudioApp]) {
