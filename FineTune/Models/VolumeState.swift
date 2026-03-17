@@ -12,6 +12,7 @@ struct AppAudioState {
     var volume: Float
     var muted: Bool
     var persistenceIdentifier: String
+    var boost: BoostLevel = .x1
     var deviceSelectionMode: DeviceSelectionMode = .single
     var selectedDeviceUIDs: Set<String> = []  // Used in multi mode
 }
@@ -52,6 +53,38 @@ final class VolumeState {
         ensureState(for: pid, identifier: identifier)
         if let saved = settingsManager?.getVolume(for: identifier) {
             states[pid]?.volume = saved
+            return saved
+        }
+        return nil
+    }
+
+    // MARK: - Boost
+
+    func getBoost(for pid: pid_t) -> BoostLevel {
+        states[pid]?.boost ?? .x1
+    }
+
+    func setBoost(for pid: pid_t, to boost: BoostLevel, identifier: String? = nil) {
+        if var state = states[pid] {
+            state.boost = boost
+            if let identifier = identifier {
+                state.persistenceIdentifier = identifier
+            }
+            states[pid] = state
+            settingsManager?.setBoost(for: state.persistenceIdentifier, to: boost)
+        } else if let identifier = identifier {
+            let defaultVolume = settingsManager?.appSettings.defaultNewAppVolume ?? 1.0
+            var newState = AppAudioState(volume: defaultVolume, muted: false, persistenceIdentifier: identifier)
+            newState.boost = boost
+            states[pid] = newState
+            settingsManager?.setBoost(for: identifier, to: boost)
+        }
+    }
+
+    func loadSavedBoost(for pid: pid_t, identifier: String) -> BoostLevel? {
+        ensureState(for: pid, identifier: identifier)
+        if let saved = settingsManager?.getBoost(for: identifier) {
+            states[pid]?.boost = saved
             return saved
         }
         return nil

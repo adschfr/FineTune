@@ -34,6 +34,10 @@ final class ProcessTapController: ProcessTapControlling {
     /// When nil, tap creation always uses stereo mixdown capture.
     private var preferredTapSourceDeviceUID: String?
 
+    /// Exposes the current tap source device UID for diagnostics and tap source refresh logic.
+    /// Non-nil means stream-specific tap; nil means stereo mixdown.
+    var tapSourceDeviceUID: String? { preferredTapSourceDeviceUID }
+
     // MARK: - RT-Safe State (nonisolated(unsafe) for lock-free audio thread access)
     //
     // These variables are accessed from CoreAudio's real-time thread without locks.
@@ -41,7 +45,7 @@ final class ProcessTapController: ProcessTapControlling {
     // The audio callback reads these values; the main thread writes them.
     // No lock is needed because single-word aligned loads/stores are atomic.
 
-    /// Target volume set by user (0.0-2.0, where 1.0 = unity gain, 2.0 = +6dB boost)
+    /// Target gain set by AudioEngine (volume × boost). Range 0.0-4.0 (1.0 = unity, 4.0 = +12dB).
     private nonisolated(unsafe) var _volume: Float = 1.0
     /// Current ramped volume for primary tap (smoothly approaches _volume)
     private nonisolated(unsafe) var _primaryCurrentVolume: Float = 1.0
@@ -511,6 +515,39 @@ final class ProcessTapController: ProcessTapControlling {
 
         let endTime = CFAbsoluteTimeGetCurrent()
         logger.info("[UPDATE] === END === Total time: \((endTime - startTime) * 1000)ms")
+    }
+
+    /// Refreshes the process tap source (stream-specific ↔ stereo mixdown) without changing
+    /// the output device. Used when the system default changes and an explicitly-routed app's
+    /// stream-specific tap becomes stale (captures silence on the old default's stream).
+    func refreshTapSource(_ preferredDeviceUID: String?) async throws {
+        let oldPreferred = self.preferredTapSourceDeviceUID
+        self.preferredTapSourceDeviceUID = preferredDeviceUID
+        guard activated, let primaryUID = currentDeviceUIDs.first else { return }
+        guard oldPreferred != preferredDeviceUID else { return }
+
+        let allUIDs = currentDeviceUIDs
+        logger.info("[REFRESH] Tap source changing for \(self.app.name): \(oldPreferred ?? "mixdown") → \(preferredDeviceUID ?? "mixdown")")
+
+        crossfadeTask?.cancel()
+        crossfadeTask = Task {
+            try await performCrossfadeSwitch(to: primaryUID, allDeviceUIDs: allUIDs)
+        }
+        do {
+            try await crossfadeTask!.value
+        } catch is CancellationError {
+            logger.info("[REFRESH] Tap source refresh cancelled")
+            return
+        } catch {
+            logger.warning("[REFRESH] Crossfade failed, using destructive switch: \(error.localizedDescription)")
+            guard primaryResources.tapDescription != nil else {
+                throw CrossfadeError.noTapDescription
+            }
+            try await performDestructiveDeviceSwitch(to: primaryUID, allDeviceUIDs: allUIDs)
+        }
+        crossfadeTask = nil
+
+        logger.info("[REFRESH] Tap source refresh complete for \(self.app.name)")
     }
 
     /// Tears down the tap and releases all CoreAudio resources.

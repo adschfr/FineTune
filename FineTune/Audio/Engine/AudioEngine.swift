@@ -489,6 +489,14 @@ final class AudioEngine {
         settingsManager.setVolume(for: identifier, to: volume)
     }
 
+    func getBoostForInactive(identifier: String) -> BoostLevel {
+        settingsManager.getBoost(for: identifier) ?? .x1
+    }
+
+    func setBoostForInactive(identifier: String, to boost: BoostLevel) {
+        settingsManager.setBoost(for: identifier, to: boost)
+    }
+
     /// Get mute state for an inactive app by persistence identifier.
     func getMuteForInactive(identifier: String) -> Bool {
         settingsManager.getMute(for: identifier) ?? false
@@ -607,11 +615,27 @@ final class AudioEngine {
         if let deviceUID = appDeviceRouting[app.id] {
             ensureTapExists(for: app, deviceUID: deviceUID)
         }
-        taps[app.id]?.volume = volume
+        taps[app.id]?.volume = effectiveVolume(for: app.id)
     }
 
     func getVolume(for app: AudioApp) -> Float {
         volumeState.getVolume(for: app.id)
+    }
+
+    // MARK: - Boost
+
+    func setBoost(for app: AudioApp, to boost: BoostLevel) {
+        volumeState.setBoost(for: app.id, to: boost, identifier: app.persistenceIdentifier)
+        taps[app.id]?.volume = effectiveVolume(for: app.id)
+    }
+
+    func getBoost(for app: AudioApp) -> BoostLevel {
+        volumeState.getBoost(for: app.id)
+    }
+
+    /// Effective gain for ProcessTapController: volume × boost
+    private func effectiveVolume(for pid: pid_t) -> Float {
+        volumeState.getVolume(for: pid) * volumeState.getBoost(for: pid).rawValue
     }
 
     func setMute(for app: AudioApp, to muted: Bool) {
@@ -747,6 +771,21 @@ final class AudioEngine {
             // Defensive: re-persist routing even if in-memory state matches,
             // to guard against settings file corruption or incomplete prior writes
             settingsManager.setDeviceRouting(for: app.persistenceIdentifier, deviceUID: deviceUID)
+
+            // If transitioning from follows-default to explicit and tap has a stream-specific
+            // source, refresh to mixdown so it won't go stale when the default changes later.
+            if let tap = taps[app.id], tap.tapSourceDeviceUID != nil {
+                Task {
+                    do {
+                        try await tap.refreshTapSource(nil)
+                        tap.volume = self.effectiveVolume(for: app.id)
+                        tap.isMuted = self.volumeState.getMute(for: app.id)
+                    } catch {
+                        self.logger.error("Failed to refresh tap source for \(app.name): \(error)")
+                    }
+                }
+            }
+
             guard appDeviceRouting[app.id] != deviceUID else { return }
             appDeviceRouting[app.id] = deviceUID
         } else {
@@ -767,13 +806,13 @@ final class AudioEngine {
 
         // Switch tap if needed
         guard let targetUID = appDeviceRouting[app.id] else { return }
-        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [targetUID])
+        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: followsDefault.contains(app.id))
         if let tap = taps[app.id] {
             Task {
                 do {
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     // Restore saved volume/mute state after device switch
-                    tap.volume = self.volumeState.getVolume(for: app.id)
+                    tap.volume = self.effectiveVolume(for: app.id)
                     tap.isMuted = self.volumeState.getMute(for: app.id)
                     // Update device volume/mute for VU meter after switch
                     if let device = self.deviceMonitor.device(for: targetUID) {
@@ -870,9 +909,9 @@ final class AudioEngine {
             // Tap exists - update devices
             if tap.currentDeviceUIDs != deviceUIDs {
                 do {
-                    let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs)
+                    let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
                     try await tap.updateDevices(to: deviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID)
-                    tap.volume = volumeState.getVolume(for: app.id)
+                    tap.volume = effectiveVolume(for: app.id)
                     tap.isMuted = volumeState.getMute(for: app.id)
                     // Update device volume for VU meter (use primary device)
                     if let primaryUID = deviceUIDs.first,
@@ -897,10 +936,10 @@ final class AudioEngine {
         guard taps[app.id] == nil else { return }
         guard permission.status == .authorized else { return }
 
-        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs)
+        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
         do {
             let tap = try tapFactory(app, deviceUIDs, preferredTapSourceUID)
-            tap.volume = volumeState.getVolume(for: app.id)
+            tap.volume = effectiveVolume(for: app.id)
 
             // Set initial device volume/mute for VU meter (use primary device)
             if let primaryUID = deviceUIDs.first,
@@ -934,9 +973,10 @@ final class AudioEngine {
             let savedMode = volumeState.loadSavedDeviceSelectionMode(for: app.id, identifier: app.persistenceIdentifier)
             let mode = savedMode ?? .single
 
-            // Load saved volume and mute state
+            // Load saved volume, mute, and boost state
             let savedVolume = volumeState.loadSavedVolume(for: app.id, identifier: app.persistenceIdentifier)
             let savedMute = volumeState.loadSavedMute(for: app.id, identifier: app.persistenceIdentifier)
+            _ = volumeState.loadSavedBoost(for: app.id, identifier: app.persistenceIdentifier)
 
             // Handle multi-device mode
             if mode == .multi {
@@ -955,9 +995,9 @@ final class AudioEngine {
                         appDeviceRouting[app.id] = availableUIDs[0]
                         appliedPIDs.insert(app.id)
 
-                        // Apply volume and mute
-                        if let volume = savedVolume {
-                            taps[app.id]?.volume = volume
+                        // Apply volume (with boost) and mute
+                        if savedVolume != nil {
+                            taps[app.id]?.volume = effectiveVolume(for: app.id)
                         }
                         if let muted = savedMute, muted {
                             taps[app.id]?.isMuted = true
@@ -1001,11 +1041,11 @@ final class AudioEngine {
             // If a tap already exists but is on the wrong device (e.g., app reappeared
             // after the default changed while it was absent), switch it.
             if let existingTap = taps[app.id], existingTap.currentDeviceUIDs != [deviceUID] {
-                let preferredSource = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID])
+                let preferredSource = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
                 Task {
                     do {
                         try await existingTap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredSource)
-                        existingTap.volume = self.volumeState.getVolume(for: app.id)
+                        existingTap.volume = self.effectiveVolume(for: app.id)
                         existingTap.isMuted = self.volumeState.getMute(for: app.id)
                         if let device = self.deviceMonitor.device(for: deviceUID) {
                             existingTap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
@@ -1028,10 +1068,11 @@ final class AudioEngine {
             guard taps[app.id] != nil else { continue }
             appliedPIDs.insert(app.id)
 
-            if let volume = savedVolume {
-                let displayPercent = Int(VolumeMapping.gainToSlider(volume) * 200)
-                logger.debug("Applying saved volume \(displayPercent)% to \(app.name)")
-                taps[app.id]?.volume = volume
+            if savedVolume != nil {
+                let effective = effectiveVolume(for: app.id)
+                let displayPercent = Int(effective * 100)
+                logger.debug("Applying saved volume \(displayPercent)% (with boost) to \(app.name)")
+                taps[app.id]?.volume = effective
             }
 
             if let muted = savedMute, muted {
@@ -1045,10 +1086,10 @@ final class AudioEngine {
         guard taps[app.id] == nil else { return }
         guard permission.status == .authorized else { return }
 
-        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID])
+        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
         do {
             let tap = try tapFactory(app, [deviceUID], preferredTapSourceUID)
-            tap.volume = volumeState.getVolume(for: app.id)
+            tap.volume = effectiveVolume(for: app.id)
 
             // Set initial device volume/mute for VU meter accuracy
             if let device = deviceMonitor.device(for: deviceUID) {
@@ -1153,9 +1194,9 @@ final class AudioEngine {
         Task {
             for (app, tap) in tapsToSwitch {
                 do {
-                    let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [targetUID])
+                    let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: true)
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
-                    tap.volume = self.volumeState.getVolume(for: app.id)
+                    tap.volume = self.effectiveVolume(for: app.id)
                     tap.isMuted = self.volumeState.getMute(for: app.id)
                     if let device = self.deviceMonitor.device(for: targetUID) {
                         tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
@@ -1235,9 +1276,9 @@ final class AudioEngine {
                 // Handle single-mode switches — source device is dead, skip crossfade
                 for (tap, fallbackUID) in singleModeTapsToSwitch {
                     do {
-                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [fallbackUID])
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [fallbackUID], isFollowsDefault: true)
                         try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
-                        tap.volume = self.volumeState.getVolume(for: tap.app.id)
+                        tap.volume = self.effectiveVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
                         self.applyAutoEQToTap(tap)
                     } catch {
@@ -1249,9 +1290,9 @@ final class AudioEngine {
                 // Source device is dead, skip crossfade
                 for (tap, remainingUIDs) in multiModeTapsToUpdate {
                     do {
-                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: remainingUIDs)
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: remainingUIDs, isFollowsDefault: self.followsDefault.contains(tap.app.id))
                         try await tap.updateDevices(to: remainingUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
-                        tap.volume = self.volumeState.getVolume(for: tap.app.id)
+                        tap.volume = self.effectiveVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
                         self.logger.debug("Removed \(deviceName) from \(tap.app.name) multi-device output")
                     } catch {
@@ -1309,9 +1350,9 @@ final class AudioEngine {
             Task {
                 for tap in tapsToSwitch {
                     do {
-                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID])
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: false)
                         try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
-                        tap.volume = self.volumeState.getVolume(for: tap.app.id)
+                        tap.volume = self.effectiveVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
                         if let device = self.deviceMonitor.device(for: deviceUID) {
                             tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
@@ -1562,10 +1603,12 @@ final class AudioEngine {
         }
     }
 
-    /// Returns the device UID to use for stream-specific tap capture.
-    /// Only use stream-specific taping when the selected outputs include the current system default;
-    /// otherwise fall back to stereo mixdown to avoid tapping the wrong device stream.
-    private func preferredTapSourceDeviceUID(forOutputUIDs outputUIDs: [String]) -> String? {
+    /// Returns the preferred tap source device UID for stream-specific capture.
+    /// Only follows-default apps use stream-specific taps (multichannel preserved, tap always
+    /// valid because the app switches device when default changes). Explicitly-routed apps
+    /// always use stereo mixdown (nil) — their tap never goes stale when the default changes.
+    private func preferredTapSourceDeviceUID(forOutputUIDs outputUIDs: [String], isFollowsDefault: Bool) -> String? {
+        guard isFollowsDefault else { return nil }
         guard let defaultUID = deviceVolumeMonitor.defaultDeviceUID else { return nil }
         return outputUIDs.contains(defaultUID) ? defaultUID : nil
     }
@@ -1576,7 +1619,7 @@ final class AudioEngine {
 
         // Cancel cleanup for PIDs that reappeared — but only if bundleID matches.
         // PID reuse by a different app should not rescue the old tap.
-        var reappearedPIDs: [pid_t] = []
+
         for pid in activePIDs {
             guard let task = pendingCleanup[pid] else { continue }
 
@@ -1592,17 +1635,13 @@ final class AudioEngine {
 
             pendingCleanup.removeValue(forKey: pid)
             task.cancel()
-            // Remove from appliedPIDs so applyPersistedSettings re-processes this app,
-            // ensuring the tap is routed to the current default device (which may have
-            // changed while the app was temporarily absent from the process list).
-            appliedPIDs.remove(pid)
-            reappearedPIDs.append(pid)
+            // Don't remove from appliedPIDs — the tap is still alive and the aggregate
+            // device is still running. The process just transiently stopped audio I/O
+            // during a device change (kAudioProcessPropertyIsRunning flicker).
+            // Device routing is already handled by routeFollowsDefaultApps (follows-default)
+            // or stays put (explicit routing). Re-processing would cause an unnecessary
+            // crossfade that interrupts audio.
             logger.debug("Cancelled pending cleanup for PID \(pid) - app reappeared")
-        }
-
-        // Re-apply settings for reappeared apps so their taps switch to the correct device
-        if !reappearedPIDs.isEmpty {
-            applyPersistedSettings()
         }
 
         // Schedule cleanup for newly stale PIDs (with grace period)

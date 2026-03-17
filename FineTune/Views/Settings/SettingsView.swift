@@ -76,14 +76,6 @@ struct SettingsView: View {
                 range: 0.1...1.0
             )
 
-            SettingsSliderRow(
-                icon: "speaker.wave.3",
-                title: "Max Volume Boost",
-                description: "Safety limit for volume slider",
-                value: $settings.maxVolumeBoost,
-                range: 1.0...4.0
-            )
-
             SettingsToggleRow(
                 icon: "mic",
                 title: "Lock Input Device",

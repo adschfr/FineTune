@@ -24,6 +24,9 @@ protocol ProcessTapControlling: AnyObject {
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool
+
+    var tapSourceDeviceUID: String? { get }
+    func refreshTapSource(_ preferredDeviceUID: String?) async throws
 }
 
 extension ProcessTapControlling {
@@ -35,5 +38,9 @@ extension ProcessTapControlling {
     /// Convenience: defaults sourceDeviceDead to false.
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?) async throws {
         try await updateDevices(to: newDeviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false)
+    }
+
+    func refreshTapSource(_ preferredDeviceUID: String?) async throws {
+        // Default no-op for mocks that don't override
     }
 }

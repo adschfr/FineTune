@@ -12,7 +12,8 @@ struct AppRowWithLevelPolling: View {
     let isFollowingDefault: Bool
     let defaultDeviceUID: String?
     let deviceSelectionMode: DeviceSelectionMode
-    let maxVolumeBoost: Float
+    let boost: BoostLevel
+    let onBoostChange: (BoostLevel) -> Void
     let isPinned: Bool  // Whether app is pinned to top
     let getAudioLevel: () -> Float
     let isPopupVisible: Bool
@@ -42,7 +43,8 @@ struct AppRowWithLevelPolling: View {
         isFollowingDefault: Bool = true,
         defaultDeviceUID: String? = nil,
         deviceSelectionMode: DeviceSelectionMode = .single,
-        maxVolumeBoost: Float = 2.0,
+        boost: BoostLevel = .x1,
+        onBoostChange: @escaping (BoostLevel) -> Void = { _ in },
         isPinned: Bool = false,
         getAudioLevel: @escaping () -> Float,
         isPopupVisible: Bool = true,
@@ -68,7 +70,8 @@ struct AppRowWithLevelPolling: View {
         self.isFollowingDefault = isFollowingDefault
         self.defaultDeviceUID = defaultDeviceUID
         self.deviceSelectionMode = deviceSelectionMode
-        self.maxVolumeBoost = maxVolumeBoost
+        self.boost = boost
+        self.onBoostChange = onBoostChange
         self.isPinned = isPinned
         self.getAudioLevel = getAudioLevel
         self.isPopupVisible = isPopupVisible
@@ -98,7 +101,8 @@ struct AppRowWithLevelPolling: View {
             defaultDeviceUID: defaultDeviceUID,
             deviceSelectionMode: deviceSelectionMode,
             isMuted: isMuted,
-            maxVolumeBoost: maxVolumeBoost,
+            boost: boost,
+            onBoostChange: onBoostChange,
             isPinned: isPinned,
             onVolumeChange: onVolumeChange,
             onMuteChange: onMuteChange,

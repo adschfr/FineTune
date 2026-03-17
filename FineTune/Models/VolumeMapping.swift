@@ -1,42 +1,21 @@
 // FineTune/Models/VolumeMapping.swift
 import Foundation
 
-/// Utility for converting between slider position and audio gain.
-/// Linear mapping: 50% slider = 100% gain (unity), visual consistency over audio precision.
+/// Utility for converting between slider position (0-1) and audio gain (0-1).
+/// Square-law (x²) curve: more control at low volumes for per-app mixing.
+/// Percentage displays slider position, not raw gain.
+/// Boost is handled separately per-app, not in this mapping.
 enum VolumeMapping {
-    /// Convert slider position (0-1) to linear gain
-    /// Linear mapping: 50% slider = unity gain (1.0)
-    /// - Parameters:
-    ///   - slider: Normalized slider position 0.0 to 1.0
-    ///   - maxBoost: Maximum volume multiplier (e.g., 2.0 = 200%, 4.0 = 400%)
-    /// - Returns: Linear gain multiplier (0 to maxBoost)
-    static func sliderToGain(_ slider: Double, maxBoost: Float = 2.0) -> Float {
-        if slider <= 0.5 {
-            // 0-50% slider → 0-100% gain (linear attenuation)
-            let gain = Float(slider * 2)
-            // Industry-standard threshold clamp: sub-1% gain (~-40 dB) → true silence
-            return gain < 0.01 ? 0 : gain
-        } else {
-            // 50-100% slider → 100%-maxBoost (linear boost)
-            let t = (slider - 0.5) / 0.5
-            return 1.0 + Float(t) * (maxBoost - 1.0)
-        }
+    /// Convert slider position to gain using square-law curve.
+    static func sliderToGain(_ slider: Double) -> Float {
+        if slider <= 0 { return 0 }
+        let t = min(slider, 1.0)
+        return Float(t * t)
     }
 
-    /// Convert linear gain to slider position (0-1)
-    /// - Parameters:
-    ///   - gain: Linear gain multiplier
-    ///   - maxBoost: Maximum volume multiplier (e.g., 2.0 = 200%, 4.0 = 400%)
-    /// - Returns: Normalized slider position 0.0 to 1.0
-    static func gainToSlider(_ gain: Float, maxBoost: Float = 2.0) -> Double {
-        if gain <= 1.0 {
-            // 0-100% gain → 0-50% slider
-            return Double(gain * 0.5)
-        } else {
-            // 100%-maxBoost → 50-100% slider
-            guard maxBoost > 1.0 else { return 1.0 }
-            let t = (gain - 1.0) / (maxBoost - 1.0)
-            return 0.5 + Double(t) * 0.5
-        }
+    /// Convert gain to slider position using inverse square-law (sqrt).
+    static func gainToSlider(_ gain: Float) -> Double {
+        if gain <= 0 { return 0 }
+        return Double(sqrt(min(gain, 1.0)))
     }
 }

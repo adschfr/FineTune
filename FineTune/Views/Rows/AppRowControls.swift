@@ -13,10 +13,11 @@ struct AppRowControls: View {
     let isFollowingDefault: Bool
     let defaultDeviceUID: String?
     let deviceSelectionMode: DeviceSelectionMode
-    let maxVolumeBoost: Float
+    let boost: BoostLevel
     let isEQExpanded: Bool
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
+    let onBoostChange: (BoostLevel) -> Void
     let onDeviceSelected: (String) -> Void
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
@@ -25,12 +26,23 @@ struct AppRowControls: View {
 
     @State private var dragOverrideValue: Double?
     @State private var isEQButtonHovered = false
+    @State private var isBoostButtonHovered = false
 
     private var sliderValue: Double {
-        dragOverrideValue ?? VolumeMapping.gainToSlider(volume, maxBoost: maxVolumeBoost)
+        dragOverrideValue ?? VolumeMapping.gainToSlider(volume)
     }
 
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
+
+    private var boostButtonColor: Color {
+        if boost.isBoosted {
+            return DesignTokens.Colors.accentPrimary
+        } else if isBoostButtonHovered {
+            return DesignTokens.Colors.interactiveHover
+        } else {
+            return DesignTokens.Colors.textTertiary
+        }
+    }
 
     private var eqButtonColor: Color {
         if isEQExpanded {
@@ -62,14 +74,14 @@ struct AppRowControls: View {
                     get: { sliderValue },
                     set: { newValue in
                         dragOverrideValue = newValue
-                        let gain = VolumeMapping.sliderToGain(newValue, maxBoost: maxVolumeBoost)
+                        let gain = VolumeMapping.sliderToGain(newValue)
                         onVolumeChange(gain)
                         if isMuted {
                             onMuteChange(false)
                         }
                     }
                 ),
-                showUnityMarker: true,
+                showUnityMarker: false,
                 onEditingChanged: { editing in
                     if !editing {
                         dragOverrideValue = nil
@@ -79,20 +91,39 @@ struct AppRowControls: View {
             .frame(width: DesignTokens.Dimensions.sliderWidth)
             .opacity(showMutedIcon ? 0.5 : 1.0)
 
-            // Editable volume percentage
+            // Editable volume percentage (shows slider position, not raw gain)
             EditablePercentage(
                 percentage: Binding(
                     get: {
-                        let gain = VolumeMapping.sliderToGain(sliderValue, maxBoost: maxVolumeBoost)
-                        return Int(round(gain * 100))
+                        Int(round(sliderValue * 100))
                     },
                     set: { newPercentage in
-                        let gain = Float(newPercentage) / 100.0
+                        let sliderPos = Double(newPercentage) / 100.0
+                        let gain = VolumeMapping.sliderToGain(sliderPos)
                         onVolumeChange(gain)
                     }
                 ),
-                range: 0...Int(round(maxVolumeBoost * 100))
+                range: 0...100
             )
+
+            // Boost button
+            Button {
+                onBoostChange(boost.next)
+            } label: {
+                Text(boost.label)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(boostButtonColor)
+                    .frame(
+                        minWidth: DesignTokens.Dimensions.minTouchTarget,
+                        minHeight: DesignTokens.Dimensions.minTouchTarget
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { isBoostButtonHovered = $0 }
+            .help("Volume boost: \(boost.label)")
+            .accessibilityLabel("Volume boost \(boost.label)")
+            .animation(DesignTokens.Animation.hover, value: isBoostButtonHovered)
 
             // VU Meter
             VUMeter(level: audioLevel, isMuted: showMutedIcon)
