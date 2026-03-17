@@ -480,6 +480,7 @@ struct MenuBarPopupView: View {
                         let filteredPaired = pairedDevices.filter { !connectedNames.contains($0.name) }
                         if !filteredPaired.isEmpty {
                             SectionHeader(title: "Paired")
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.top, DesignTokens.Spacing.xs)
 
                             ForEach(filteredPaired) { device in
@@ -631,33 +632,52 @@ struct MenuBarPopupView: View {
     }
 
     /// Edit mode content for apps: simplified rows with eye toggle + hidden section at bottom.
+    private let appEditColumns = [
+        GridItem(.flexible(), spacing: DesignTokens.Spacing.xs),
+        GridItem(.flexible(), spacing: DesignTokens.Spacing.xs)
+    ]
+
     @ViewBuilder
     private var appEditModeContent: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            // Visible apps (active + pinned inactive)
-            ForEach(audioEngine.displayableApps) { displayableApp in
-                switch displayableApp {
-                case .active(let app):
-                    AppEditRow(
-                        icon: app.icon,
-                        name: app.name,
-                        isIgnored: false,
-                        onToggleVisibility: { audioEngine.ignoreApp(app) }
-                    )
-                case .pinnedInactive(let info):
-                    AppEditRow(
-                        icon: displayableApp.icon,
-                        name: info.displayName,
-                        isIgnored: false,
-                        onToggleVisibility: {
-                            let hiddenInfo = IgnoredAppInfo(
-                                persistenceIdentifier: info.persistenceIdentifier,
-                                displayName: info.displayName,
-                                bundleID: info.bundleID
-                            )
-                            audioEngine.settingsManager.ignoreApp(info.persistenceIdentifier, info: hiddenInfo)
-                        }
-                    )
+            // Visible apps in 2-column grid
+            LazyVGrid(columns: appEditColumns, spacing: DesignTokens.Spacing.xs) {
+                ForEach(audioEngine.displayableApps) { displayableApp in
+                    switch displayableApp {
+                    case .active(let app):
+                        AppEditRow(
+                            icon: app.icon,
+                            name: app.name,
+                            isIgnored: false,
+                            isPinned: audioEngine.isPinned(app),
+                            onToggleVisibility: { audioEngine.ignoreApp(app) },
+                            onTogglePin: {
+                                if audioEngine.isPinned(app) {
+                                    audioEngine.unpinApp(app.persistenceIdentifier)
+                                } else {
+                                    audioEngine.pinApp(app)
+                                }
+                            }
+                        )
+                    case .pinnedInactive(let info):
+                        AppEditRow(
+                            icon: displayableApp.icon,
+                            name: info.displayName,
+                            isIgnored: false,
+                            isPinned: true,
+                            onToggleVisibility: {
+                                let hiddenInfo = IgnoredAppInfo(
+                                    persistenceIdentifier: info.persistenceIdentifier,
+                                    displayName: info.displayName,
+                                    bundleID: info.bundleID
+                                )
+                                audioEngine.settingsManager.ignoreApp(info.persistenceIdentifier, info: hiddenInfo)
+                            },
+                            onTogglePin: {
+                                audioEngine.unpinApp(info.persistenceIdentifier)
+                            }
+                        )
+                    }
                 }
             }
 
@@ -672,13 +692,17 @@ struct MenuBarPopupView: View {
                     .sectionHeaderStyle()
                     .padding(.bottom, DesignTokens.Spacing.xs)
 
-                ForEach(ignoredApps, id: \.persistenceIdentifier) { info in
-                    AppEditRow(
-                        icon: DisplayableApp.loadIcon(bundleID: info.bundleID),
-                        name: info.displayName,
-                        isIgnored: true,
-                        onToggleVisibility: { audioEngine.unignoreApp(info.persistenceIdentifier) }
-                    )
+                LazyVGrid(columns: appEditColumns, spacing: DesignTokens.Spacing.xs) {
+                    ForEach(ignoredApps, id: \.persistenceIdentifier) { info in
+                        AppEditRow(
+                            icon: DisplayableApp.loadIcon(bundleID: info.bundleID),
+                            name: info.displayName,
+                            isIgnored: true,
+                            isPinned: false,
+                            onToggleVisibility: { audioEngine.unignoreApp(info.persistenceIdentifier) },
+                            onTogglePin: {}
+                        )
+                    }
                 }
             }
         }
@@ -718,7 +742,6 @@ struct MenuBarPopupView: View {
                 onBoostChange: { boost in
                     audioEngine.setBoost(for: app, to: boost)
                 },
-                isPinned: audioEngine.isPinned(app),
                 getAudioLevel: { audioEngine.getAudioLevel(for: app) },
                 isPopupVisible: isPopupVisible,
                 onVolumeChange: { volume in
@@ -741,13 +764,6 @@ struct MenuBarPopupView: View {
                 },
                 onAppActivate: {
                     activateApp(pid: app.id, bundleID: app.bundleID)
-                },
-                onPinToggle: {
-                    if audioEngine.isPinned(app) {
-                        audioEngine.unpinApp(app.persistenceIdentifier)
-                    } else {
-                        audioEngine.pinApp(app)
-                    }
                 },
                 eqSettings: audioEngine.getEQSettings(for: app),
                 onEQChange: { settings in
@@ -798,9 +814,6 @@ struct MenuBarPopupView: View {
             },
             onSelectFollowDefault: {
                 audioEngine.setDeviceRoutingForInactive(identifier: identifier, deviceUID: nil)
-            },
-            onUnpin: {
-                audioEngine.unpinApp(identifier)
             },
             eqSettings: audioEngine.getEQSettingsForInactive(identifier: identifier),
             onEQChange: { settings in
