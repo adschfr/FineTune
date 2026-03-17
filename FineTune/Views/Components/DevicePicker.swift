@@ -23,7 +23,7 @@ struct DevicePicker: View {
     @State private var currentSelectedUIDs: Set<String> = []
 
     // Configuration
-    private let triggerWidth: CGFloat = 128
+    private let triggerWidth: CGFloat = 105
     private let popoverWidth: CGFloat = 210
     private let itemHeight: CGFloat = 26
     private let itemSpacing: CGFloat = 2

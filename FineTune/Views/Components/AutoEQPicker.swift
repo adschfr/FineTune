@@ -26,9 +26,9 @@ struct AutoEQPicker: View {
 
     private var iconColor: Color {
         if isExpanded {
-            return DesignTokens.Colors.interactiveActive
+            return DesignTokens.Colors.accentPrimary
         } else if profileName != nil {
-            return DesignTokens.Colors.interactiveActive
+            return DesignTokens.Colors.accentPrimary
         } else if isButtonHovered {
             return DesignTokens.Colors.interactiveHover
         }
@@ -55,7 +55,7 @@ struct AutoEQPicker: View {
             }
         } label: {
             Image(systemName: "wand.and.sparkles")
-                .font(.system(size: 14))
+                .font(.system(size: 16))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(iconColor)
                 .frame(

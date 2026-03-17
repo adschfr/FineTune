@@ -65,16 +65,16 @@ struct PairedDeviceRow: View {
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(DesignTokens.Colors.accentPrimary)
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
                 .padding(.horizontal, DesignTokens.Spacing.sm)
-                .padding(.vertical, DesignTokens.Spacing.xxs)
+                .padding(.vertical, DesignTokens.Spacing.xxs + 1)
                 .background(
                     RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                        .fill(DesignTokens.Colors.accentPrimary.opacity(0.12))
+                        .fill(.regularMaterial)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                        .strokeBorder(DesignTokens.Colors.accentPrimary.opacity(0.3), lineWidth: 0.5)
+                        .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
                 )
             }
         }
