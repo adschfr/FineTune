@@ -26,23 +26,12 @@ struct InactiveAppRow: View {
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
-    let onUnpin: () -> Void  // Inactive apps can only be unpinned
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
-    @State private var isPinButtonHovered = false
     @State private var localEQSettings: EQSettings
-
-    /// Pin button color - always visible for inactive (pinned) apps
-    private var pinButtonColor: Color {
-        if isPinButtonHovered {
-            return DesignTokens.Colors.interactiveHover
-        } else {
-            return DesignTokens.Colors.interactiveActive  // Always active (pinned)
-        }
-    }
 
     init(
         appInfo: PinnedAppInfo,
@@ -63,7 +52,6 @@ struct InactiveAppRow: View {
         onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
-        onUnpin: @escaping () -> Void,
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
@@ -87,7 +75,6 @@ struct InactiveAppRow: View {
         self.onDevicesSelected = onDevicesSelected
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
-        self.onUnpin = onUnpin
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
         self.isEQExpanded = isEQExpanded
@@ -99,33 +86,14 @@ struct InactiveAppRow: View {
         ExpandableGlassRow(isExpanded: isEQExpanded) {
             // Header: Main row content (always visible)
             HStack(spacing: DesignTokens.Spacing.sm) {
-                // Unpin star button - left of app icon
-                Button {
-                    onUnpin()
-                } label: {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 11))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(pinButtonColor)
-                        .frame(
-                            minWidth: DesignTokens.Dimensions.minTouchTarget,
-                            minHeight: DesignTokens.Dimensions.minTouchTarget
-                        )
-                        .contentShape(Rectangle())
-                        .scaleEffect(isPinButtonHovered ? 1.1 : 1.0)
-                }
-                .buttonStyle(.plain)
-                .onHover { isPinButtonHovered = $0 }
-                .help("Unpin app")
-                .animation(DesignTokens.Animation.hover, value: pinButtonColor)
-                .animation(DesignTokens.Animation.quick, value: isPinButtonHovered)
+                // VU Meter (always 0 for inactive apps)
+                VUMeter(level: 0, isMuted: isMuted)
 
-                // App icon (no activation for inactive apps - can't bring to front what isn't running)
+                // App icon (no activation for inactive apps)
                 Image(nsImage: icon)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
-                    .opacity(0.6)  // Dimmed to indicate inactive state
+                    .frame(width: DesignTokens.Dimensions.rowContentHeight - 4, height: DesignTokens.Dimensions.rowContentHeight - 4)
 
                 // App name - expands to fill available space
                 Text(appInfo.displayName)
@@ -133,13 +101,12 @@ struct InactiveAppRow: View {
                     .lineLimit(1)
                     .help(appInfo.displayName)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)  // Dimmed text
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
 
                 // Shared controls section (VU meter always 0 for inactive apps)
                 AppRowControls(
                     volume: volume,
                     isMuted: isMuted,
-                    audioLevel: 0,  // No audio for inactive apps
                     devices: devices,
                     selectedDeviceUID: selectedDeviceUID ?? defaultDeviceUID ?? "",
                     selectedDeviceUIDs: selectedDeviceUIDs,
@@ -159,6 +126,7 @@ struct InactiveAppRow: View {
                 )
             }
             .frame(height: DesignTokens.Dimensions.rowContentHeight)
+            .opacity(0.6)
         } expandedContent: {
             // EQ panel
             EQPanelView(

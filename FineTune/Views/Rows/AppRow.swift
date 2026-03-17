@@ -16,7 +16,6 @@ struct AppRow: View {
     let isMutedExternal: Bool  // Mute state from AudioEngine
     let boost: BoostLevel
     let onBoostChange: (BoostLevel) -> Void
-    let isPinned: Bool  // Whether app is pinned to top
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
     let onDeviceSelected: (String) -> Void  // Single mode
@@ -24,29 +23,13 @@ struct AppRow: View {
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
     let onAppActivate: () -> Void
-    let onPinToggle: () -> Void  // Toggle pin state
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
-    @State private var isRowHovered = false
     @State private var isIconHovered = false
-    @State private var isPinButtonHovered = false
     @State private var localEQSettings: EQSettings
-
-    /// Pin button color - visible when pinned or row is hovered
-    private var pinButtonColor: Color {
-        if isPinned {
-            return DesignTokens.Colors.interactiveActive
-        } else if isPinButtonHovered {
-            return DesignTokens.Colors.interactiveHover
-        } else if isRowHovered {
-            return DesignTokens.Colors.interactiveDefault
-        } else {
-            return .clear
-        }
-    }
 
     init(
         app: AudioApp,
@@ -61,7 +44,6 @@ struct AppRow: View {
         isMuted: Bool = false,
         boost: BoostLevel = .x1,
         onBoostChange: @escaping (BoostLevel) -> Void = { _ in },
-        isPinned: Bool = false,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteChange: @escaping (Bool) -> Void,
         onDeviceSelected: @escaping (String) -> Void,
@@ -69,7 +51,6 @@ struct AppRow: View {
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
         onAppActivate: @escaping () -> Void = {},
-        onPinToggle: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
@@ -87,7 +68,6 @@ struct AppRow: View {
         self.isMutedExternal = isMuted
         self.boost = boost
         self.onBoostChange = onBoostChange
-        self.isPinned = isPinned
         self.onVolumeChange = onVolumeChange
         self.onMuteChange = onMuteChange
         self.onDeviceSelected = onDeviceSelected
@@ -95,7 +75,6 @@ struct AppRow: View {
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
         self.onAppActivate = onAppActivate
-        self.onPinToggle = onPinToggle
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
         self.isEQExpanded = isEQExpanded
@@ -108,33 +87,15 @@ struct AppRow: View {
         ExpandableGlassRow(isExpanded: isEQExpanded) {
             // Header: Main row content (always visible)
             HStack(spacing: DesignTokens.Spacing.sm) {
-                // Pin/unpin star button - left of app icon
-                Button {
-                    onPinToggle()
-                } label: {
-                    Image(systemName: isPinned ? "star.fill" : "star")
-                        .font(.system(size: 11))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(pinButtonColor)
-                        .frame(
-                            minWidth: DesignTokens.Dimensions.minTouchTarget,
-                            minHeight: DesignTokens.Dimensions.minTouchTarget
-                        )
-                        .contentShape(Rectangle())
-                        .scaleEffect(isPinButtonHovered ? 1.1 : 1.0)
-                }
-                .buttonStyle(.plain)
-                .onHover { isPinButtonHovered = $0 }
-                .help(isPinned ? "Unpin app" : "Pin app to top")
-                .animation(DesignTokens.Animation.hover, value: pinButtonColor)
-                .animation(DesignTokens.Animation.quick, value: isPinButtonHovered)
+                // VU Meter
+                VUMeter(level: audioLevel, isMuted: isMutedExternal || volume == 0)
 
                 // App icon - clickable to activate app
                 Button(action: onAppActivate) {
                     Image(nsImage: app.icon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
+                        .frame(width: DesignTokens.Dimensions.rowContentHeight - 4, height: DesignTokens.Dimensions.rowContentHeight - 4)
                         .opacity(isIconHovered ? 0.7 : 1.0)
                 }
                 .buttonStyle(.plain)
@@ -159,7 +120,6 @@ struct AppRow: View {
                 AppRowControls(
                     volume: volume,
                     isMuted: isMutedExternal,
-                    audioLevel: audioLevel,
                     devices: devices,
                     selectedDeviceUID: selectedDeviceUID,
                     selectedDeviceUIDs: selectedDeviceUIDs,
@@ -179,7 +139,6 @@ struct AppRow: View {
                 )
             }
             .frame(height: DesignTokens.Dimensions.rowContentHeight)
-            .onHover { isRowHovered = $0 }
         } expandedContent: {
             // EQ panel - shown when expanded
             // SwiftUI calculates natural height via conditional rendering

@@ -14,7 +14,6 @@ struct AppRowWithLevelPolling: View {
     let deviceSelectionMode: DeviceSelectionMode
     let boost: BoostLevel
     let onBoostChange: (BoostLevel) -> Void
-    let isPinned: Bool  // Whether app is pinned to top
     let getAudioLevel: () -> Float
     let isPopupVisible: Bool
     let onVolumeChange: (Float) -> Void
@@ -24,7 +23,6 @@ struct AppRowWithLevelPolling: View {
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
     let onAppActivate: () -> Void
-    let onPinToggle: () -> Void  // Toggle pin state
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
     let isEQExpanded: Bool
@@ -45,7 +43,6 @@ struct AppRowWithLevelPolling: View {
         deviceSelectionMode: DeviceSelectionMode = .single,
         boost: BoostLevel = .x1,
         onBoostChange: @escaping (BoostLevel) -> Void = { _ in },
-        isPinned: Bool = false,
         getAudioLevel: @escaping () -> Float,
         isPopupVisible: Bool = true,
         onVolumeChange: @escaping (Float) -> Void,
@@ -55,7 +52,6 @@ struct AppRowWithLevelPolling: View {
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
         onAppActivate: @escaping () -> Void = {},
-        onPinToggle: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
@@ -72,7 +68,6 @@ struct AppRowWithLevelPolling: View {
         self.deviceSelectionMode = deviceSelectionMode
         self.boost = boost
         self.onBoostChange = onBoostChange
-        self.isPinned = isPinned
         self.getAudioLevel = getAudioLevel
         self.isPopupVisible = isPopupVisible
         self.onVolumeChange = onVolumeChange
@@ -82,7 +77,6 @@ struct AppRowWithLevelPolling: View {
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
         self.onAppActivate = onAppActivate
-        self.onPinToggle = onPinToggle
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
         self.isEQExpanded = isEQExpanded
@@ -103,7 +97,6 @@ struct AppRowWithLevelPolling: View {
             isMuted: isMuted,
             boost: boost,
             onBoostChange: onBoostChange,
-            isPinned: isPinned,
             onVolumeChange: onVolumeChange,
             onMuteChange: onMuteChange,
             onDeviceSelected: onDeviceSelected,
@@ -111,7 +104,6 @@ struct AppRowWithLevelPolling: View {
             onDeviceModeChange: onDeviceModeChange,
             onSelectFollowDefault: onSelectFollowDefault,
             onAppActivate: onAppActivate,
-            onPinToggle: onPinToggle,
             eqSettings: eqSettings,
             onEQChange: onEQChange,
             isEQExpanded: isEQExpanded,
