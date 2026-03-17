@@ -1,4 +1,5 @@
 // FineTune/Views/Components/VUMeter.swift
+import Combine
 import SwiftUI
 
 /// A vertical VU meter visualization for audio levels
@@ -8,13 +9,18 @@ struct VUMeter: View {
     var isMuted: Bool = false
 
     @State private var peakLevel: Float = 0
-    @State private var peakHoldTimer: Timer?
+    @State private var isDecaying = false
+    @State private var holdTask: Task<Void, Never>?
+
+    /// 30fps timer for smooth peak decay (only active during decay)
+    private let decayTimer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common)
+    @State private var decayTimerCancellable: AnyCancellable?
 
     private let barCount = DesignTokens.Dimensions.vuMeterBarCount
 
     var body: some View {
-        HStack(spacing: DesignTokens.Dimensions.vuMeterBarSpacing) {
-            ForEach(0..<barCount, id: \.self) { index in
+        VStack(spacing: 1) {
+            ForEach((0..<barCount).reversed(), id: \.self) { index in
                 VUMeterBar(
                     index: index,
                     level: level,
@@ -24,48 +30,50 @@ struct VUMeter: View {
                 )
             }
         }
-        .frame(width: DesignTokens.Dimensions.vuMeterWidth)
-        .onChange(of: level) { _, newLevel in
-            if newLevel > peakLevel {
-                // New peak - capture and start decay timer
-                peakLevel = newLevel
-                startPeakDecayTimer()
-            } else if peakLevel > newLevel && peakHoldTimer == nil {
-                // Level dropped below peak and no timer running - start decay
-                startPeakDecayTimer()
-            }
-        }
-        .onDisappear {
-            peakHoldTimer?.invalidate()
-            peakHoldTimer = nil
-        }
-    }
-
-    private func startPeakDecayTimer() {
-        peakHoldTimer?.invalidate()
-        // After hold period, start gradual decay using repeating timer
-        peakHoldTimer = Timer.scheduledTimer(withTimeInterval: DesignTokens.Timing.vuMeterPeakHold, repeats: false) { [self] _ in
-            // Start the gradual decay timer
-            startGradualDecay()
-        }
-    }
-
-    private func startGradualDecay() {
-        peakHoldTimer?.invalidate()
-        // Decay ~24dB over 2.8 seconds (BBC PPM standard)
-        // At 30fps, that's ~84 frames, so decay rate ≈ 0.012 per frame (linear in amplitude)
-        peakHoldTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [self] timer in
-            let decayRate: Float = 0.012  // Per-frame decay
+        .frame(width: 10, height: DesignTokens.Dimensions.rowContentHeight - 4)
+        .onReceive(decayTimer) { _ in
+            guard isDecaying else { return }
+            // Decay ~24dB over 2.8 seconds (BBC PPM standard)
+            // At 30fps: ~84 frames, decay rate ≈ 0.012 per frame
+            let decayRate: Float = 0.012
             if peakLevel > level {
                 withAnimation(DesignTokens.Animation.vuMeterLevel) {
                     peakLevel = max(level, peakLevel - decayRate)
                 }
             } else {
-                // Peak has reached current level, stop decaying
-                timer.invalidate()
-                peakHoldTimer = nil
+                stopDecay()
             }
         }
+        .onChange(of: level) { _, newLevel in
+            if newLevel > peakLevel {
+                peakLevel = newLevel
+                scheduleDecay()
+            } else if peakLevel > newLevel && !isDecaying {
+                scheduleDecay()
+            }
+        }
+        .onDisappear {
+            stopDecay()
+        }
+    }
+
+    /// Hold peak for a beat, then start decay
+    private func scheduleDecay() {
+        stopDecay()
+        holdTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(DesignTokens.Timing.vuMeterPeakHold))
+            guard !Task.isCancelled else { return }
+            isDecaying = true
+            decayTimerCancellable = decayTimer.connect() as? AnyCancellable
+        }
+    }
+
+    private func stopDecay() {
+        holdTask?.cancel()
+        holdTask = nil
+        isDecaying = false
+        decayTimerCancellable?.cancel()
+        decayTimerCancellable = nil
     }
 }
 
@@ -125,19 +133,15 @@ private struct VUMeterBar: View {
     }
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 1)
+        RoundedRectangle(cornerRadius: 0.5)
             .fill(isLit || isPeakIndicator ? barColor : DesignTokens.Colors.vuUnlit)
-            .frame(
-                width: (DesignTokens.Dimensions.vuMeterWidth - CGFloat(barCount - 1) * DesignTokens.Dimensions.vuMeterBarSpacing) / CGFloat(barCount),
-                height: DesignTokens.Dimensions.vuMeterBarHeight
-            )
             .animation(DesignTokens.Animation.vuMeterLevel, value: isLit)
     }
 }
 
 // MARK: - Previews
 
-#Preview("VU Meter - Horizontal") {
+#Preview("VU Meter - Vertical") {
     ComponentPreviewContainer {
         VStack(spacing: DesignTokens.Spacing.md) {
             HStack {
