@@ -58,6 +58,10 @@ extension AudioObjectID {
         }
 
         var cfString: CFString = "" as CFString
+        // Cap to CFString reference size — some drivers report larger sizes
+        // which would write past the stack variable (readStringWithQualifier
+        // already does this correctly with MemoryLayout<CFString>.size).
+        size = UInt32(MemoryLayout<CFString>.size)
         err = withUnsafeMutablePointer(to: &cfString) { ptr in
             AudioObjectGetPropertyData(self, &address, 0, nil, &size, ptr)
         }
