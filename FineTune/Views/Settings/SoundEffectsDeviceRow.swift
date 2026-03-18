@@ -21,6 +21,7 @@ struct SoundEffectsDeviceRow: View {
                 selectedDeviceUID: selectedDeviceUID ?? "",
                 isFollowingDefault: isFollowingDefault,
                 defaultDeviceUID: defaultDeviceUID,
+                triggerWidth: 160,
                 onDeviceSelected: { onDeviceSelected($0) },
                 onSelectFollowDefault: { onSelectFollowDefault() }
             )

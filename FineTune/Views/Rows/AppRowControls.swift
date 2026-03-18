@@ -109,7 +109,8 @@ struct AppRowControls: View {
                 onDeviceSelected: onDeviceSelected,
                 onDevicesSelected: onDevicesSelected,
                 onSelectFollowDefault: onSelectFollowDefault,
-                showModeToggle: true
+                showModeToggle: true,
+                triggerWidth: 105
             )
 
             // EQ button
