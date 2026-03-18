@@ -10,9 +10,9 @@ import os
 /// The tracker is reference-counted (not boolean) so rapid reconnects of the
 /// same device increment independently, and each echo is consumed separately.
 ///
-/// A generation counter prevents stale timeouts from consuming live counters:
-/// each increment and consume bumps the generation, so a timeout that fires
-/// after the echo was already consumed will see a generation mismatch and no-op.
+/// Each increment creates a unique token stored in a per-UID set. Timeouts
+/// check their own token; consume removes one token. This ensures timeouts
+/// are invalidated individually, not en masse.
 @MainActor
 final class EchoTracker {
 
@@ -24,13 +24,10 @@ final class EchoTracker {
     private let logger: Logger
     private let timeoutDuration: TimeInterval
 
-    /// Per-UID reference count of expected echoes.
-    private var counters: [String: Int] = [:]
-
-    /// Per-UID generation, bumped on every increment and consume.
-    /// Timeout tasks capture the generation at creation; if it no longer
-    /// matches when the timeout fires, the task is stale and no-ops.
-    private var generations: [String: Int] = [:]
+    /// Per-UID set of active timeout tokens. Each increment adds one;
+    /// each consume or successful timeout removes one.
+    private var activeTimeouts: [String: Set<Int>] = [:]
+    private var nextToken: Int = 0
 
     init(label: String, timeoutDuration: TimeInterval = 2.0,
          logger: Logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "EchoTracker")) {
@@ -42,17 +39,17 @@ final class EchoTracker {
     /// Record that we're about to programmatically change the default device.
     /// Must be called *after* confirming the HAL call succeeded.
     func increment(_ uid: String) {
-        counters[uid, default: 0] += 1
-        generations[uid, default: 0] += 1
-        let generation = generations[uid]!
+        let token = nextToken
+        nextToken += 1
+        activeTimeouts[uid, default: []].insert(token)
         let duration = timeoutDuration
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(duration))
             guard let self, !Task.isCancelled else { return }
-            guard self.generations[uid] == generation else { return }
-            guard let count = self.counters[uid], count > 0 else { return }
-            self.counters[uid] = count - 1
-            if count == 1 { self.counters.removeValue(forKey: uid) }
+            guard self.activeTimeouts[uid]?.remove(token) != nil else { return }
+            if self.activeTimeouts[uid]?.isEmpty == true {
+                self.activeTimeouts.removeValue(forKey: uid)
+            }
             self.logger.warning("\(self.label) echo for \(uid) timed out")
             self.onTimeout?(uid)
         }
@@ -61,17 +58,17 @@ final class EchoTracker {
     /// Try to consume one pending echo for this UID.
     /// Returns `true` if an echo was pending (caller should ignore the callback).
     func consume(_ uid: String) -> Bool {
-        guard let count = counters[uid], count > 0 else { return false }
-        counters[uid] = count - 1
-        if count == 1 { counters.removeValue(forKey: uid) }
-        // Bump generation so the corresponding timeout no-ops
-        generations[uid, default: 0] += 1
+        guard let token = activeTimeouts[uid]?.min() else { return false }
+        activeTimeouts[uid]?.remove(token)
+        if activeTimeouts[uid]?.isEmpty == true {
+            activeTimeouts.removeValue(forKey: uid)
+        }
         return true
     }
 
     /// Whether any echo is pending for any device.
     /// Used to skip interim routing when an override is in flight.
     var hasPending: Bool {
-        counters.values.contains { $0 > 0 }
+        !activeTimeouts.isEmpty
     }
 }
