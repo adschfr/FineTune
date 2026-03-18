@@ -2,6 +2,12 @@
 import SwiftUI
 import AppKit
 
+/// Borderless panels return `canBecomeKey == false` by default,
+/// which prevents text fields from receiving focus/keyboard input.
+private class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
 /// A dropdown panel without arrow using NSPanel
 /// Uses child window relationship for proper dismissal behavior
 struct PopoverHost<Content: View>: NSViewRepresentable {
@@ -32,12 +38,6 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(isPresented: $isPresented)
-    }
-
-    /// Borderless panels return `canBecomeKey == false` by default,
-    /// which prevents text fields from receiving focus/keyboard input.
-    private class KeyablePanel: NSPanel {
-        override var canBecomeKey: Bool { true }
     }
 
     class Coordinator: NSObject {
