@@ -40,13 +40,13 @@
 - **Audio routing** — Send apps to different outputs or follow system default
 - **Monitor speaker control** — Adjust volume on external displays via DDC
 - **Device priority** — Set preferred output order; auto-fallback on disconnect
-- **Volume boost** — 1x / 2x / 3x / 4x gain presets per app
+- **Per-app volume boost** — 1x / 2x / 3x / 4x gain presets
 - **Menu bar app** — Lightweight, always accessible
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
 
 <p align="center">
-  <img src="assets/screenshot-edit-mode.png" alt="FineTune edit mode with Bluetooth paired devices, pin and ignore toggles" width="400">
-  <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="400">
+  <img src="assets/screenshot-edit-mode.png" alt="FineTune edit mode with Bluetooth paired devices, pin and ignore toggles" width="480">
+  <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="375">
 </p>
 
 ## Install
@@ -74,6 +74,10 @@ macOS has no built-in per-app volume control. Your music is too loud while a pod
 - Audio capture permission (prompted on first launch)
 
 ## AutoEQ
+
+<p align="center">
+  <img src="assets/screenshot-autoeq.png" alt="FineTune AutoEQ headphone correction picker with search and favorites" width="550">
+</p>
 
 FineTune can apply headphone-specific frequency response corrections using profiles from the [AutoEQ](https://github.com/jaakkopasanen/AutoEq) project.
 
