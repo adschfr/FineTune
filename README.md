@@ -32,7 +32,10 @@
 - **Multi-device output** — Route audio to multiple devices simultaneously
 - **Input device control** — Monitor and adjust microphone levels
 - **10-band EQ** — 20 presets across 5 categories
+- **AutoEQ headphone correction** — Search thousands of headphone profiles or import your own ParametricEQ.txt files for per-device frequency response correction
+- **Bluetooth device management** — See paired Bluetooth devices and connect directly from the menu bar
 - **Pinned apps** — Pre-configure apps before they play
+- **Ignore apps** — Hide specific apps from FineTune in edit mode
 - **Audio routing** — Send apps to different outputs or follow system default
 - **Monitor speaker control** — Adjust volume on external displays via DDC
 - **Device priority** — Set preferred output order; auto-fallback on disconnect
@@ -69,11 +72,40 @@ macOS has no built-in per-app volume control. Your music is too loud while a pod
 - macOS 15.0 (Sequoia) or later
 - Audio capture permission (prompted on first launch)
 
+## AutoEQ
+
+FineTune can apply headphone-specific frequency response corrections using profiles from the [AutoEQ](https://github.com/jaakkopasanen/AutoEq) project.
+
+**Browse built-in profiles** — Click the wand icon next to any headphone device and search for your model. Profiles are fetched on demand and cached offline.
+
+**Import custom profiles** — Click "Import ParametricEQ.txt..." at the bottom of the AutoEQ panel. FineTune accepts [EqualizerAPO](https://sourceforge.net/projects/equalizerapo/) ParametricEQ.txt files:
+
+```
+Preamp: -6.2 dB
+Filter 1: ON PK Fc 100 Hz Gain -2.3 dB Q 1.41
+Filter 2: ON LSC Fc 105 Hz Gain 7.0 dB Q 0.71
+Filter 3: ON HSC Fc 8000 Hz Gain 2.1 dB Q 0.71
+```
+
+Supported filter types: `PK`/`PEQ` (peaking), `LS`/`LSC` (low shelf), `HS`/`HSC` (high shelf). Up to 10 filters per profile.
+
+You can download ParametricEQ.txt files from [autoeq.app](https://www.autoeq.app/) — select **EqualizerAPO ParametricEq** as the equalizer app — or create your own in any text editor.
+
 ## FAQ
 
 <details>
+<summary><strong>No sound / audio stops working?</strong></summary>
+FineTune needs the <strong>System Audio Recording</strong> permission. Go to System Settings → Privacy & Security → Screen & System Audio Recording and make sure FineTune is enabled. If it was just installed, you may need to restart the app after granting permission.
+</details>
+
+<details>
 <summary><strong>App not appearing?</strong></summary>
-Only apps actively playing audio show up. Start playback first.
+Only apps actively playing audio show up. Start playback first. If an app still doesn't appear, check that it isn't hidden — open edit mode (pencil icon) and look for the eye icon.
+</details>
+
+<details>
+<summary><strong>App causing audio issues?</strong></summary>
+Some apps (like audio processors or VoIP tools) don't work well with process taps. Open edit mode and click the eye icon to ignore the app — this tears down its tap entirely.
 </details>
 
 <details>
