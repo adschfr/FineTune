@@ -31,9 +31,7 @@ extension AudioObjectID {
         )
         var size = UInt32(MemoryLayout<T>.size)
         var value = defaultValue
-        let err = withUnsafeMutablePointer(to: &value) { ptr in
-            AudioObjectGetPropertyData(self, &address, 0, nil, &size, ptr)
-        }
+        let err = AudioObjectGetPropertyData(self, &address, 0, nil, &size, &value)
         guard err == noErr else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
         }
@@ -58,13 +56,8 @@ extension AudioObjectID {
         }
 
         var cfString: CFString = "" as CFString
-        // Cap to CFString reference size — some drivers report larger sizes
-        // which would write past the stack variable (readStringWithQualifier
-        // already does this correctly with MemoryLayout<CFString>.size).
         size = UInt32(MemoryLayout<CFString>.size)
-        err = withUnsafeMutablePointer(to: &cfString) { ptr in
-            AudioObjectGetPropertyData(self, &address, 0, nil, &size, ptr)
-        }
+        err = AudioObjectGetPropertyData(self, &address, 0, nil, &size, &cfString)
         guard err == noErr else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
         }
@@ -81,18 +74,32 @@ extension AudioObjectID {
             mScope: scope.propertyScope,
             mElement: kAudioObjectPropertyElementMain
         )
+        guard AudioObjectHasProperty(self, &address) else { return nil }
+
+        // Get actual data size — some HAL plugins write more than MemoryLayout<CFString>.size,
+        // corrupting the stack if we use a stack-allocated buffer.
         var qual = qualifier
-        var cfString: CFString = "" as CFString
-        var size = UInt32(MemoryLayout<CFString>.size)
-        let err = withUnsafeMutablePointer(to: &cfString) { ptr in
-            AudioObjectGetPropertyData(
-                self, &address,
-                UInt32(MemoryLayout<UInt32>.size), &qual,
-                &size, ptr
-            )
-        }
+        var dataSize: UInt32 = 0
+        var err = AudioObjectGetPropertyDataSize(
+            self, &address,
+            UInt32(MemoryLayout<UInt32>.size), &qual,
+            &dataSize
+        )
+        guard err == noErr, dataSize > 0 else { return nil }
+
+        // Heap-allocate to avoid stack buffer overflow from buggy drivers
+        let capacity = Swift.max(1, Int(dataSize) / MemoryLayout<CFString>.size)
+        let buffer = UnsafeMutablePointer<CFString>.allocate(capacity: capacity)
+        defer { buffer.deinitialize(count: 1); buffer.deallocate() }
+        buffer.initialize(to: "" as CFString)
+
+        err = AudioObjectGetPropertyData(
+            self, &address,
+            UInt32(MemoryLayout<UInt32>.size), &qual,
+            &dataSize, buffer
+        )
         guard err == noErr else { return nil }
-        return cfString as String
+        return buffer.pointee as String
     }
 }
 
