@@ -950,7 +950,7 @@ final class ProcessTapController: ProcessTapControlling {
     }
 
     @inline(__always)
-    private func processMappedBuffers(
+    static func processMappedBuffers(
         inputBuffers: UnsafeMutableAudioBufferListPointer,
         outputBuffers: UnsafeMutableAudioBufferListPointer,
         targetVol: Float,
@@ -1212,7 +1212,7 @@ final class ProcessTapController: ProcessTapControlling {
             autoEQProc = secondaryAutoEQProcessor
         }
 
-        processMappedBuffers(
+        Self.processMappedBuffers(
             inputBuffers: inputBuffers,
             outputBuffers: outputBuffers,
             targetVol: targetVol,
