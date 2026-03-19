@@ -1007,13 +1007,12 @@ final class ProcessTapController: ProcessTapControlling {
 
             let eq = eqProc  // Parameter read — each callback passes its own processor
             let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
-            let preamp: Float = (eq?.isEnabled == true && eqCanProcessStereoInterleaved) ? (eq?.preampAttenuation ?? 1.0) : 1.0
 
             if inputChannels == outputChannels {
                 let sampleCount = frameCount * inputChannels
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
+                    let gain = currentVol * crossfadeMultiplier
                     let base = frame * inputChannels
                     for ch in 0..<inputChannels {
                         outputSamples[base + ch] = inputSamples[base + ch] * gain
@@ -1025,7 +1024,7 @@ final class ProcessTapController: ProcessTapControlling {
             } else if inputChannels == 2 && outputChannels > 2 {
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
+                    let gain = currentVol * crossfadeMultiplier
                     let inBase = frame * 2
                     let outBase = frame * outputChannels
                     let left = inputSamples[inBase] * gain
@@ -1044,7 +1043,7 @@ final class ProcessTapController: ProcessTapControlling {
             } else if inputChannels == 1 && outputChannels > 1 {
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
+                    let gain = currentVol * crossfadeMultiplier
                     let sample = inputSamples[frame] * gain
                     let outBase = frame * outputChannels
 
@@ -1061,7 +1060,7 @@ final class ProcessTapController: ProcessTapControlling {
             } else {
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
+                    let gain = currentVol * crossfadeMultiplier
                     let inBase = frame * inputChannels
                     let outBase = frame * outputChannels
                     let copiedChannels = min(inputChannels, outputChannels)

@@ -6,7 +6,7 @@ import Accelerate
 ///
 /// Subclass of `BiquadProcessor` — inherits delay buffer management, atomic setup swaps,
 /// stereo biquad processing, and NaN safety. This class adds EQ-specific settings
-/// management and preamp attenuation computation.
+/// management and coefficient computation.
 final class EQProcessor: BiquadProcessor, @unchecked Sendable {
 
     /// Currently applied EQ settings (needed for sample rate recalculation)
@@ -14,14 +14,6 @@ final class EQProcessor: BiquadProcessor, @unchecked Sendable {
 
     /// Read-only access to current settings
     var currentSettings: EQSettings? { _currentSettings }
-
-    /// Pre-EQ attenuation to prevent post-EQ clipping when bands are boosted.
-    /// Computed as: pow(10, -maxBoostDB / 20) when any band has positive gain.
-    /// Audio callback reads this atomically; main thread writes in updateSettings().
-    private nonisolated(unsafe) var _preampAttenuation: Float = 1.0
-
-    /// Pre-EQ gain reduction to prevent clipping (RT-safe read)
-    var preampAttenuation: Float { _preampAttenuation }
 
     init(sampleRate: Double) {
         super.init(
@@ -40,10 +32,6 @@ final class EQProcessor: BiquadProcessor, @unchecked Sendable {
     func updateSettings(_ settings: EQSettings) {
         setEnabled(settings.isEnabled)
         _currentSettings = settings
-
-        // Compute pre-EQ attenuation to prevent post-EQ clipping
-        let maxBoostDB = settings.clampedGains.max() ?? 0
-        _preampAttenuation = maxBoostDB > 0 ? pow(10.0, -maxBoostDB / 20.0) : 1.0
 
         let coefficients = BiquadMath.coefficientsForAllBands(
             gains: settings.clampedGains,
