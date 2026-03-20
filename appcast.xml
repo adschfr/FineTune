@@ -24,6 +24,14 @@
     </item>
     -->
         <item>
+            <title>1.4.1</title>
+            <pubDate>Fri, 20 Mar 2026 07:28:46 +0000</pubDate>
+            <sparkle:version>33</sparkle:version>
+            <sparkle:shortVersionString>1.4.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/ronitsingh10/FineTune/releases/download/v1.4.1/FineTune-1.4.1.dmg" length="5209324" type="application/octet-stream" sparkle:edSignature="F6jhyp0Q3wK8m2oUEdB40D5PSaP1k+IfZTiTfe8LWH/yn+6Z5Mc35VMeIKQ9kjm0x8Nuph2eA87UWnOnJQX3AQ=="/>
+        </item>
+        <item>
             <title>1.4.0</title>
             <pubDate>Wed, 18 Mar 2026 07:47:49 +0000</pubDate>
             <sparkle:version>32</sparkle:version>
@@ -38,14 +46,6 @@
             <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/ronitsingh10/FineTune/releases/download/v1.4.0/FineTune-1.4.0.dmg" length="5203473" type="application/octet-stream" sparkle:edSignature="0o4E8nxm/cdnOtNFdhW6SQDZNYGho7809d67QgMgR7nKeXAWe/V4/vNnNxXayd0R5Pnb8iJET5ZuU2pe/7ZWAg=="/>
-        </item>
-        <item>
-            <title>1.4.0</title>
-            <pubDate>Wed, 18 Mar 2026 06:58:00 +0000</pubDate>
-            <sparkle:version>30</sparkle:version>
-            <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/ronitsingh10/FineTune/releases/download/v1.4.0/FineTune-1.4.0.dmg" length="5204361" type="application/octet-stream" sparkle:edSignature="QPpHrFkzUz2vttEIr+PAvbk/WlTL8+86hM++KVq3ALD46e24oGZ80i+7reau4PhWiDBis/IsayCv3HmGrwomDw=="/>
         </item>
     </channel>
 </rss>
