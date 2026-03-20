@@ -1,17 +1,12 @@
-<table>
-<tr>
-<td width="210">
-  <img src="assets/icon.png" width="170" height="170" alt="FineTune app icon">
-</td>
-<td>
-  <h3>FineTune</h3>
-  <p>Control the volume of every app independently, boost quiet ones up to 4x, route audio to different speakers, and shape your sound with EQ and headphone correction. Lives in your menu bar. Free and open-source.</p>
-  <p>
-    <a href="https://github.com/ronitsingh10/FineTune/releases/download/v1.4.1/FineTune-1.4.1.dmg"><img src="assets/download-badge.svg" alt="Download for macOS" height="48"/></a>
-  </p>
-</td>
-</tr>
-</table>
+<img src="assets/icon.png" width="170" height="170" alt="FineTune app icon" align="left"/>
+
+<h3>FineTune</h3>
+
+Control the volume of every app independently, boost quiet ones up to 4x, route audio to different speakers, and shape your sound with EQ and headphone correction. Lives in your menu bar. Free and open-source.
+
+<a href="https://github.com/ronitsingh10/FineTune/releases/download/v1.4.1/FineTune-1.4.1.dmg"><img src="assets/download-badge.svg" alt="Download for macOS" height="48"/></a>
+
+<br clear="all"/>
 
 <p align="center">
   <a href="https://github.com/ronitsingh10/FineTune/releases/latest"><img src="https://img.shields.io/github/v/release/ronitsingh10/FineTune?style=for-the-badge&labelColor=1c1c1e&color=0A84FF&logo=github&logoColor=white" alt="Latest Release"></a>
