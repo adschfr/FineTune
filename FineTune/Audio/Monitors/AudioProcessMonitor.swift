@@ -192,7 +192,9 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
         periodicRefreshTask?.cancel()
         periodicRefreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
+                // 10s is sufficient as a safety net — HAL listeners handle most changes.
+                // Lower intervals waste CPU at idle (#176).
+                try? await Task.sleep(for: .seconds(10))
                 guard !Task.isCancelled, let self else { return }
                 self.refresh()
             }

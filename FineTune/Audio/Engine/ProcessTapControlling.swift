@@ -17,6 +17,7 @@ protocol ProcessTapControlling: AnyObject {
 
     func activate() throws
     func invalidate()
+    func invalidateAsync() async
     func updateEQSettings(_ settings: EQSettings)
     func updateAutoEQProfile(_ profile: AutoEQProfile?)
     func setAutoEQPreampEnabled(_ enabled: Bool)
@@ -38,6 +39,10 @@ extension ProcessTapControlling {
     /// Convenience: defaults sourceDeviceDead to false.
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?) async throws {
         try await updateDevices(to: newDeviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false)
+    }
+
+    func invalidateAsync() async {
+        invalidate()
     }
 
     func refreshTapSource(_ preferredDeviceUID: String?) async throws {

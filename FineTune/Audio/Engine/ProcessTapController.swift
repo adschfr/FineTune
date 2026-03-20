@@ -554,17 +554,51 @@ final class ProcessTapController: ProcessTapControlling {
     /// Safe to call multiple times - subsequent calls are no-ops.
     private var _invalidating = false
     func invalidate() {
-        guard activated, !_invalidating else { return }
+        guard beginInvalidation() else { return }
+        defer { endInvalidation() }
+
+        // destroyAsync() captures IDs, clears instance state immediately,
+        // then dispatches blocking teardown to a background queue.
+        // Safe even if activate() is called again before cleanup completes.
+        secondaryResources.destroyAsync()
+        primaryResources.destroyAsync()
+
+        logger.info("Tap invalidated for \(self.app.name)")
+    }
+
+    /// Awaitable invalidation: suspends until CoreAudio resources are fully
+    /// destroyed. Prevents orphaned IO procs when a new tap is created immediately after.
+    func invalidateAsync() async {
+        guard beginInvalidation() else { return }
+        defer { endInvalidation() }
+
+        // Await full teardown of both resource sets (uses .userInitiated QoS for timely cleanup)
+        await withCheckedContinuation { continuation in
+            secondaryResources.destroyAsync(on: .global(qos: .userInitiated)) {
+                continuation.resume()
+            }
+        }
+        await withCheckedContinuation { continuation in
+            primaryResources.destroyAsync(on: .global(qos: .userInitiated)) {
+                continuation.resume()
+            }
+        }
+
+        logger.info("Tap invalidated (async) for \(self.app.name)")
+    }
+
+    // MARK: - Invalidation Helpers
+
+    /// Shared preamble for invalidation. Returns false if already invalidating or not activated.
+    private func beginInvalidation() -> Bool {
+        guard activated, !_invalidating else { return false }
         _invalidating = true
-        defer { _invalidating = false }
         activated = false
 
-        // Reset health tracking
         _lastRenderHostTime = 0
         _activationHostTime = 0
         _hasRenderedAudio = false
 
-        // Cancel any in-flight crossfade task
         crossfadeTask?.cancel()
         crossfadeTask = nil
 
@@ -574,15 +608,14 @@ final class ProcessTapController: ProcessTapControlling {
         _primaryCallbackID = 0
         _secondaryCallbackID = 0
 
-        // destroyAsync() captures IDs, clears instance state immediately,
-        // then dispatches blocking teardown to a background queue.
-        // Safe even if activate() is called again before cleanup completes.
-        secondaryResources.destroyAsync()
-        primaryResources.destroyAsync()
+        return true
+    }
+
+    /// Shared epilogue for invalidation. Clears EQ state and resets the reentrant guard.
+    private func endInvalidation() {
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
-
-        logger.info("Tap invalidated for \(self.app.name)")
+        _invalidating = false
     }
 
     deinit {

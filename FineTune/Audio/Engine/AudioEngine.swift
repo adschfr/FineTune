@@ -1811,6 +1811,9 @@ final class AudioEngine {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled, let self else { return }
 
+                // Skip entirely when no taps exist — avoids unnecessary work at idle (#176)
+                guard !self.taps.isEmpty else { continue }
+
                 let now = Date()
 
                 for (pid, tap) in self.taps {
@@ -1841,7 +1844,7 @@ final class AudioEngine {
                         if misses >= 3 {
                             self.logger.warning("Tap for PID \(pid) unresponsive (\(misses) misses), recreating")
                             consecutiveMisses[pid] = 0
-                            self.recreateTap(for: pid)
+                            await self.recreateTap(for: pid)
                         }
                     }
                 }
@@ -1859,10 +1862,12 @@ final class AudioEngine {
     }
 
     /// Tears down and recreates a tap for a given PID, preserving routing and settings.
-    private func recreateTap(for pid: pid_t) {
+    /// Async: awaits full CoreAudio resource teardown before creating the replacement tap
+    /// to prevent orphaned IO procs from accumulating (issue #176).
+    private func recreateTap(for pid: pid_t) async {
         guard let oldTap = taps.removeValue(forKey: pid) else { return }
         let deviceUIDs = oldTap.currentDeviceUIDs
-        oldTap.invalidate()
+        await oldTap.invalidateAsync()
 
         // Set cooldown to prevent thrashing
         tapRecoveryCooldownUntil[pid] = Date().addingTimeInterval(20)

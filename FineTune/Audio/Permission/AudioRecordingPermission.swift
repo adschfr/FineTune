@@ -19,7 +19,7 @@ enum AudioCapturePermissionStatus {
 @MainActor
 final class AudioRecordingPermission {
 
-    private(set) var status: AudioCapturePermissionStatus = .unknown
+    internal(set) var status: AudioCapturePermissionStatus = .unknown
 
     init() {
         refreshStatus()
