@@ -1,5 +1,4 @@
 // FineTune/Views/Components/VUMeter.swift
-import Combine
 import SwiftUI
 
 /// A vertical VU meter visualization for audio levels
@@ -9,12 +8,7 @@ struct VUMeter: View {
     var isMuted: Bool = false
 
     @State private var peakLevel: Float = 0
-    @State private var isDecaying = false
-    @State private var holdTask: Task<Void, Never>?
-
-    /// 30fps timer for smooth peak decay (only active during decay)
-    private let decayTimer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common)
-    @State private var decayTimerCancellable: AnyCancellable?
+    @State private var decayTask: Task<Void, Never>?
 
     private let barCount = DesignTokens.Dimensions.vuMeterBarCount
 
@@ -31,24 +25,11 @@ struct VUMeter: View {
             }
         }
         .frame(width: 10, height: DesignTokens.Dimensions.rowContentHeight - 4)
-        .onReceive(decayTimer) { _ in
-            guard isDecaying else { return }
-            // Decay ~24dB over 2.8 seconds (BBC PPM standard)
-            // At 30fps: ~84 frames, decay rate ≈ 0.012 per frame
-            let decayRate: Float = 0.012
-            if peakLevel > level {
-                withAnimation(DesignTokens.Animation.vuMeterLevel) {
-                    peakLevel = max(level, peakLevel - decayRate)
-                }
-            } else {
-                stopDecay()
-            }
-        }
         .onChange(of: level) { _, newLevel in
             if newLevel > peakLevel {
                 peakLevel = newLevel
                 scheduleDecay()
-            } else if peakLevel > newLevel && !isDecaying {
+            } else if peakLevel > newLevel && decayTask == nil {
                 scheduleDecay()
             }
         }
@@ -57,23 +38,29 @@ struct VUMeter: View {
         }
     }
 
-    /// Hold peak for a beat, then start decay
+    /// Hold peak briefly, then decay at 30fps until peak reaches current level
     private func scheduleDecay() {
         stopDecay()
-        holdTask = Task { @MainActor in
+        decayTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(DesignTokens.Timing.vuMeterPeakHold))
             guard !Task.isCancelled else { return }
-            isDecaying = true
-            decayTimerCancellable = decayTimer.connect() as? AnyCancellable
+
+            // Decay ~24dB over 2.8 seconds (BBC PPM standard)
+            // At 30fps: ~84 frames, decay rate ≈ 0.012 per frame
+            let decayRate: Float = 0.012
+            while !Task.isCancelled, peakLevel > level {
+                try? await Task.sleep(for: .seconds(1.0 / 30.0))
+                guard !Task.isCancelled else { return }
+                withAnimation(DesignTokens.Animation.vuMeterLevel) {
+                    peakLevel = max(level, peakLevel - decayRate)
+                }
+            }
         }
     }
 
     private func stopDecay() {
-        holdTask?.cancel()
-        holdTask = nil
-        isDecaying = false
-        decayTimerCancellable?.cancel()
-        decayTimerCancellable = nil
+        decayTask?.cancel()
+        decayTask = nil
     }
 }
 
