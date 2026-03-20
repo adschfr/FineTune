@@ -107,9 +107,7 @@ jobs:
           # create-dmg creates a nicely formatted DMG with Applications symlink
           npx create-dmg build/FineTune.app build/ --overwrite || true
 
-          # Rename to include version from tag
-          VERSION=${GITHUB_REF_NAME#v}
-          DMG_NAME="FineTune-${VERSION}.dmg"
+          DMG_NAME="FineTune.dmg"
 
           # Find and rename the created DMG (create-dmg names it "AppName Version.dmg")
           mv build/*.dmg "build/${DMG_NAME}"
@@ -189,7 +187,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: build/FineTune-*.dmg
+          files: build/FineTune.dmg
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
