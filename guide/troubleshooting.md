@@ -27,6 +27,7 @@ Some apps don't work well with CoreAudio process taps — particularly audio pro
 Common apps that may need to be ignored:
 - Audio Hijack, Loopback, and other Rogue Amoeba apps
 - Some VoIP/conferencing tools with custom audio engines
+- FaceTime, WhatsApp, and other calling apps (tapping can break echo cancellation, causing volume ducking)
 
 ## Volume slider not working
 
