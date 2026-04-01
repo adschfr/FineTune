@@ -29,6 +29,7 @@ struct DeviceRow: View {
 
     @State private var sliderValue: Double
     @State private var isEditing = false
+    @State private var suppressSliderAutoUnmute = false
 
     /// Show muted icon when system muted OR volume is 0
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
@@ -152,6 +153,7 @@ struct DeviceRow: View {
                     if showMutedIcon {
                         // Unmute: restore to default if at 0
                         if sliderValue == 0 {
+                            suppressSliderAutoUnmute = isMuted
                             sliderValue = defaultUnmuteVolume
                         }
                         if isMuted {
@@ -173,6 +175,10 @@ struct DeviceRow: View {
                 .opacity(showMutedIcon ? 0.5 : 1.0)
                 .onChange(of: sliderValue) { _, newValue in
                     onVolumeChange(Float(newValue))
+                    if suppressSliderAutoUnmute {
+                        suppressSliderAutoUnmute = false
+                        return
+                    }
                     // Auto-unmute when slider moved while muted
                     if isMuted && newValue > 0 {
                         onMuteToggle()

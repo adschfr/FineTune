@@ -1,5 +1,11 @@
 import AudioToolbox
 
+enum OutputVolumeBackend: Equatable {
+    case hardware
+    case ddc
+    case software
+}
+
 @MainActor
 protocol DeviceVolumeProviding: AnyObject {
     var defaultDeviceUID: String? { get }
@@ -17,6 +23,10 @@ protocol DeviceVolumeProviding: AnyObject {
     @discardableResult
     func setDefaultInputDevice(_ deviceID: AudioDeviceID) -> Bool
 
+    func outputVolumeBackend(for deviceID: AudioDeviceID) -> OutputVolumeBackend
+    func outputProcessingGain(for deviceID: AudioDeviceID) -> Float
+    func refreshOutputDeviceStates()
+
     func start()
     func stop()
 
@@ -26,5 +36,11 @@ protocol DeviceVolumeProviding: AnyObject {
 }
 
 extension DeviceVolumeProviding {
+    func outputProcessingGain(for deviceID: AudioDeviceID) -> Float {
+        1.0
+    }
+
+    func refreshOutputDeviceStates() {}
+
     func refreshAfterDDCProbe() {}
 }
