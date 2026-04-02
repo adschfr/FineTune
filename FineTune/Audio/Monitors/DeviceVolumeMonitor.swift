@@ -149,7 +149,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     }
     #endif
 
-    func outputVolumeBackend(for deviceID: AudioDeviceID) -> OutputVolumeBackend {
+    func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
         guard deviceID.isValid else { return .software }
 
         if deviceID.hasOutputVolumeControl() {
@@ -157,8 +157,13 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         }
 
         #if !APP_STORE
-        if let ddcController, ddcController.isDDCBacked(deviceID) {
-            return .ddc
+        if let ddcController {
+            if !ddcController.probeCompleted {
+                return .hardware
+            }
+            if ddcController.isDDCBacked(deviceID) {
+                return .ddc
+            }
         }
         #endif
 

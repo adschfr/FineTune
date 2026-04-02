@@ -1,6 +1,6 @@
 import AudioToolbox
 
-enum OutputVolumeBackend: Equatable {
+enum VolumeControlTier: Equatable {
     case hardware
     case ddc
     case software
@@ -23,7 +23,7 @@ protocol DeviceVolumeProviding: AnyObject {
     @discardableResult
     func setDefaultInputDevice(_ deviceID: AudioDeviceID) -> Bool
 
-    func outputVolumeBackend(for deviceID: AudioDeviceID) -> OutputVolumeBackend
+    func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier
     func outputProcessingGain(for deviceID: AudioDeviceID) -> Float
     func refreshOutputDeviceStates()
 

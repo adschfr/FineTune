@@ -76,7 +76,7 @@ final class AudioEngine {
         deviceMonitor.outputDevices
     }
 
-    func outputVolumeBackend(for deviceID: AudioDeviceID) -> OutputVolumeBackend {
+    func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
         deviceVolumeMonitor.outputVolumeBackend(for: deviceID)
     }
 

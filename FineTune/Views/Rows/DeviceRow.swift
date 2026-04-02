@@ -34,7 +34,7 @@ struct DeviceRow: View {
     /// Show muted icon when system muted OR volume is 0
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
 
-    /// Default volume to restore when unmuting from 0 (50%)
+    /// Default slider position to restore when unmuting from 0 (50%)
     private let defaultUnmuteVolume: Double = 0.5
 
     init(
@@ -79,7 +79,7 @@ struct DeviceRow: View {
         self.autoEQImportError = autoEQImportError
         self.autoEQPreampEnabled = autoEQPreampEnabled
         self.onAutoEQPreampToggle = onAutoEQPreampToggle
-        self._sliderValue = State(initialValue: Double(volume))
+        self._sliderValue = State(initialValue: VolumeMapping.gainToSlider(volume))
     }
 
     var body: some View {
@@ -174,7 +174,7 @@ struct DeviceRow: View {
                 )
                 .opacity(showMutedIcon ? 0.5 : 1.0)
                 .onChange(of: sliderValue) { _, newValue in
-                    onVolumeChange(Float(newValue))
+                    onVolumeChange(VolumeMapping.sliderToGain(newValue))
                     if suppressSliderAutoUnmute {
                         suppressSliderAutoUnmute = false
                         return
@@ -199,7 +199,7 @@ struct DeviceRow: View {
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }
-            sliderValue = Double(newValue)
+            sliderValue = VolumeMapping.gainToSlider(newValue)
         }
     }
 }
