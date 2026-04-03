@@ -3,21 +3,49 @@ import SwiftUI
 
 struct EQPanelView: View {
     @Binding var settings: EQSettings
+    let userPresets: [UserEQPreset]
     let onPresetSelected: (EQPreset) -> Void
+    let onUserPresetSelected: (UserEQPreset) -> Void
     let onSettingsChanged: (EQSettings) -> Void
+    let onSavePreset: (String, EQSettings) -> Void
+    let onDeleteUserPreset: (UUID) -> Void
+    let onRenameUserPreset: (UUID, String) -> Void
+
+    @State private var isSaving = false
+    @State private var savePresetName = ""
+    @FocusState private var isSaveFieldFocused: Bool
 
     private let frequencyLabels = ["32", "64", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
-    private var currentPreset: EQPreset? {
-        EQPreset.allCases.first { preset in
-            preset.settings.bandGains == settings.bandGains
-        }
+    // MARK: - Preset Matching
+
+    /// Finds the matching built-in preset for the current band gains, if any.
+    private var currentBuiltInPreset: EQPreset? {
+        EQPreset.allCases.first { $0.settings.bandGains == settings.bandGains }
     }
+
+    /// Finds the matching user preset for the current band gains, if any.
+    private var currentUserPreset: UserEQPreset? {
+        userPresets.first { $0.settings.bandGains == settings.bandGains }
+    }
+
+    /// The currently selected picker item (built-in, user, or nil for "Custom").
+    private var selectedPickerItem: EQPickerItem? {
+        if let builtIn = currentBuiltInPreset {
+            return EQPickerItem(builtIn: builtIn)
+        } else if let user = currentUserPreset {
+            return EQPickerItem(user: user)
+        }
+        return nil
+    }
+
+    /// Whether the current curve is custom (doesn't match any preset).
+    private var isCustomCurve: Bool { selectedPickerItem == nil }
 
     var body: some View {
         // Entire EQ panel content inside recessed background
         VStack(spacing: 12) {
-            // Header: Toggle left, Preset right
+            // Header: Toggle left, Preset + Save right
             HStack {
                 // EQ toggle on left
                 HStack(spacing: 6) {
@@ -35,6 +63,11 @@ struct EQPanelView: View {
 
                 Spacer()
 
+                // Save button (visible when curve is custom and not currently saving)
+                if isCustomCurve && !isSaving {
+                    saveButton
+                }
+
                 // Preset picker on right
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     Text("Preset")
@@ -42,12 +75,22 @@ struct EQPanelView: View {
                         .foregroundStyle(DesignTokens.Colors.textSecondary)
 
                     EQPresetPicker(
-                        selectedPreset: currentPreset,
-                        onPresetSelected: onPresetSelected
+                        selectedItem: selectedPickerItem,
+                        userPresets: userPresets,
+                        onBuiltInSelected: onPresetSelected,
+                        onUserPresetSelected: onUserPresetSelected,
+                        onDeleteUserPreset: onDeleteUserPreset,
+                        onRenameUserPreset: onRenameUserPreset
                     )
                 }
             }
             .zIndex(1)  // Ensure dropdown renders above sliders
+
+            // Save preset inline field
+            if isSaving {
+                savePresetField
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
 
             // 10-band sliders
             HStack(spacing: 22) {
@@ -77,17 +120,110 @@ struct EQPanelView: View {
         }
         .padding(.horizontal, 2)
         .padding(.vertical, 4)
+        .animation(DesignTokens.Animation.quick, value: isSaving)
         // No outer background - parent ExpandableGlassRow provides the glass container
     }
+
+    // MARK: - Save Button
+
+    private var saveButton: some View {
+        Button {
+            savePresetName = ""
+            isSaving = true
+            Task { @MainActor in
+                isSaveFieldFocused = true
+            }
+        } label: {
+            Image(systemName: "plus.circle")
+                .font(.system(size: 13))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+        }
+        .buttonStyle(.plain)
+        .help("Save current EQ as preset")
+        .accessibilityLabel("Save current EQ curve as a new preset")
+    }
+
+    // MARK: - Save Preset Field
+
+    private var savePresetField: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Image(systemName: "tag")
+                .font(.system(size: 11))
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
+
+            TextField("Preset name", text: $savePresetName)
+                .textFieldStyle(.plain)
+                .font(DesignTokens.Typography.pickerText)
+                .focused($isSaveFieldFocused)
+                .onSubmit { commitSave() }
+                .onExitCommand { cancelSave() }
+
+            Button("Save") { commitSave() }
+                .buttonStyle(.plain)
+                .font(DesignTokens.Typography.pickerText)
+                .foregroundStyle(
+                    savePresetName.trimmingCharacters(in: .whitespaces).isEmpty
+                        ? DesignTokens.Colors.textTertiary
+                        : DesignTokens.Colors.accentPrimary
+                )
+                .disabled(savePresetName.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Button {
+                cancelSave()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Cancel")
+            .accessibilityLabel("Cancel saving preset")
+        }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, DesignTokens.Spacing.xs)
+        .background {
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                .fill(DesignTokens.Colors.accentPrimary.opacity(0.08))
+                .overlay {
+                    RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                        .strokeBorder(DesignTokens.Colors.accentPrimary.opacity(0.3), lineWidth: 0.5)
+                }
+        }
+    }
+
+    // MARK: - Save Actions
+
+    private func commitSave() {
+        let trimmed = savePresetName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        onSavePreset(trimmed, settings)
+        isSaving = false
+        savePresetName = ""
+    }
+
+    private func cancelSave() {
+        isSaving = false
+        savePresetName = ""
+    }
 }
+
+// MARK: - Previews
 
 #Preview {
     // Simulating how it appears inside ExpandableGlassRow
     VStack {
         EQPanelView(
             settings: .constant(EQSettings()),
+            userPresets: [
+                UserEQPreset(name: "My Bass", settings: EQSettings(bandGains: [6, 5, 4, 0, 0, 0, 0, 0, 0, 0]))
+            ],
             onPresetSelected: { _ in },
-            onSettingsChanged: { _ in }
+            onUserPresetSelected: { _ in },
+            onSettingsChanged: { _ in },
+            onSavePreset: { _, _ in },
+            onDeleteUserPreset: { _ in },
+            onRenameUserPreset: { _, _ in }
         )
     }
     .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -96,6 +232,28 @@ struct EQPanelView: View {
         RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
             .fill(DesignTokens.Colors.recessedBackground)
     }
+    .frame(width: 550)
+    .padding()
+    .background(Color.black)
+}
+
+#Preview("Custom Curve - Save Visible") {
+    VStack {
+        EQPanelView(
+            settings: .constant(EQSettings(bandGains: [3, 2, 1, 0, -1, 0, 2, 3, 1, 0])),
+            userPresets: [],
+            onPresetSelected: { _ in },
+            onUserPresetSelected: { _ in },
+            onSettingsChanged: { _ in },
+            onSavePreset: { name, settings in
+                print("Saving preset: \(name)")
+            },
+            onDeleteUserPreset: { _ in },
+            onRenameUserPreset: { _, _ in }
+        )
+    }
+    .padding(.horizontal, DesignTokens.Spacing.sm)
+    .padding(.vertical, DesignTokens.Spacing.xs)
     .frame(width: 550)
     .padding()
     .background(Color.black)

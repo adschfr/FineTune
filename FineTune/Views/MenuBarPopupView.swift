@@ -770,8 +770,21 @@ struct MenuBarPopupView: View {
                     activateApp(pid: app.id, bundleID: app.bundleID)
                 },
                 eqSettings: audioEngine.getEQSettings(for: app),
+                userPresets: audioEngine.settingsManager.getUserPresets(),
                 onEQChange: { settings in
                     audioEngine.setEQSettings(settings, for: app)
+                },
+                onUserPresetSelected: { userPreset in
+                    audioEngine.setEQSettings(userPreset.settings, for: app)
+                },
+                onSavePreset: { name, settings in
+                    audioEngine.settingsManager.createUserPreset(name: name, settings: settings)
+                },
+                onDeleteUserPreset: { id in
+                    audioEngine.settingsManager.deleteUserPreset(id: id)
+                },
+                onRenameUserPreset: { id, newName in
+                    audioEngine.settingsManager.updateUserPreset(id: id, name: newName)
                 },
                 isEQExpanded: expandedRowID == displayableApp.id,
                 onEQToggle: {
@@ -820,8 +833,21 @@ struct MenuBarPopupView: View {
                 audioEngine.setDeviceRoutingForInactive(identifier: identifier, deviceUID: nil)
             },
             eqSettings: audioEngine.getEQSettingsForInactive(identifier: identifier),
+            userPresets: audioEngine.settingsManager.getUserPresets(),
             onEQChange: { settings in
                 audioEngine.setEQSettingsForInactive(settings, identifier: identifier)
+            },
+            onUserPresetSelected: { userPreset in
+                audioEngine.setEQSettingsForInactive(userPreset.settings, identifier: identifier)
+            },
+            onSavePreset: { name, settings in
+                audioEngine.settingsManager.createUserPreset(name: name, settings: settings)
+            },
+            onDeleteUserPreset: { id in
+                audioEngine.settingsManager.deleteUserPreset(id: id)
+            },
+            onRenameUserPreset: { id, newName in
+                audioEngine.settingsManager.updateUserPreset(id: id, name: newName)
             },
             isEQExpanded: expandedRowID == displayableApp.id,
             onEQToggle: {
