@@ -282,9 +282,19 @@ struct MenuBarPopupView: View {
         Divider()
             .padding(.vertical, DesignTokens.Spacing.xs)
 
-        // Quit button
+        // Footer: support link + quit
         HStack {
+            Link(destination: DesignTokens.Links.support) {
+                Label("Support", systemImage: "heart")
+            }
+            .buttonStyle(.plain)
+            .font(DesignTokens.Typography.caption)
+            .foregroundStyle(DesignTokens.Colors.textTertiary)
+            .accessibilityLabel("Support FineTune")
+            .help("Support FineTune")
+
             Spacer()
+
             Button("Quit FineTune") {
                 NSApplication.shared.terminate(nil)
             }

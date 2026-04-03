@@ -199,6 +199,13 @@ struct SettingsView: View {
 
             Text("·")
 
+            Link(destination: DesignTokens.Links.support) {
+                Text("\(Image(systemName: "heart")) Support FineTune")
+            }
+            .accessibilityLabel("Support FineTune")
+
+            Text("·")
+
             Text("Copyright © \(yearText) Ronit Singh")
         }
         .font(DesignTokens.Typography.caption)
