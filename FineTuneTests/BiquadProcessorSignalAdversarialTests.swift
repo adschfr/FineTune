@@ -11,7 +11,6 @@
 // - Rapid settings churn
 // - Process ordering and double-process effects
 //
-// QA engineer: adversarial coverage for TASK-016
 
 import Accelerate
 import Testing

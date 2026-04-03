@@ -5,7 +5,7 @@
 // that encapsulates buffer mapping, volume ramp, channel routing, EQ chain, and
 // soft limiting. Already decoupled from instance state (all deps passed as params).
 //
-// Coverage targets (TASK-015):
+// Coverage targets:
 // 1. Buffer mapping: stereo, mono, surround, asymmetric, silence-bug regression
 // 2. Volume ramp: convergence, no overshoot, zero-target, unmute, rapid changes, single-frame
 // 3. Processing chain: EQ->limiter ordering, passthrough, zero-volume silence
