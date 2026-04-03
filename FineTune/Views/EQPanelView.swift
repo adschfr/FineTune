@@ -191,7 +191,7 @@ struct EQPanelView: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
+                .strokeBorder(DesignTokens.Colors.menuBorderHover, lineWidth: 0.5)
         }
     }
 
@@ -200,7 +200,10 @@ struct EQPanelView: View {
     private func commitSave() {
         let trimmed = savePresetName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        onSavePreset(trimmed, settings)
+        // Store with isEnabled = true — isEnabled is per-app state, not preset state
+        var presetSettings = settings
+        presetSettings.isEnabled = true
+        onSavePreset(trimmed, presetSettings)
         isSaving = false
         savePresetName = ""
     }
