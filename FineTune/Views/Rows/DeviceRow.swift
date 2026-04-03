@@ -30,6 +30,9 @@ struct DeviceRow: View {
     @State private var sliderValue: Double
     @State private var isEditing = false
     @State private var suppressSliderAutoUnmute = false
+    /// Suppresses write-back when slider is being synced from a device volume change.
+    /// Breaks the quantization feedback loop on USB DACs with discrete dB steps.
+    @State private var isUpdatingSliderFromDevice = false
 
     /// Show muted icon when system muted OR volume is 0
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
@@ -176,6 +179,11 @@ struct DeviceRow: View {
                 )
                 .opacity(showMutedIcon ? 0.5 : 1.0)
                 .onChange(of: sliderValue) { _, newValue in
+                    // Skip write-back when syncing from device (breaks USB DAC quantization spiral)
+                    if isUpdatingSliderFromDevice {
+                        isUpdatingSliderFromDevice = false
+                        return
+                    }
                     onVolumeChange(VolumeMapping.sliderToGain(newValue))
                     if suppressSliderAutoUnmute {
                         suppressSliderAutoUnmute = false
@@ -201,7 +209,10 @@ struct DeviceRow: View {
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }
-            sliderValue = VolumeMapping.gainToSlider(newValue)
+            let newSlider = VolumeMapping.gainToSlider(newValue)
+            guard newSlider != sliderValue else { return }
+            isUpdatingSliderFromDevice = true
+            sliderValue = newSlider
         }
     }
 }
