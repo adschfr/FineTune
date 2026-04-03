@@ -64,14 +64,14 @@ struct EQPanelView: View {
                 if isSaving {
                     // Save field fills the middle gap
                     savePresetField
-                        .transition(.opacity)
+                        .transition(.blurReplace.combined(with: .opacity))
                 } else {
                     Spacer()
 
                     // Save button (visible when curve is custom)
                     if isCustomCurve {
                         saveButton
-                            .transition(.opacity)
+                            .transition(.blurReplace.combined(with: .opacity))
                     }
                 }
 
