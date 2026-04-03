@@ -13,6 +13,7 @@ struct SettingsView: View {
     let outputDevices: [AudioDevice]
 
     @State private var showResetConfirmation = false
+    @State private var isSupportHovered = false
 
     var body: some View {
         // Scrollable settings content
@@ -199,8 +200,17 @@ struct SettingsView: View {
 
             Text("·")
 
-            Link(destination: DesignTokens.Links.support) {
-                Text("\(Image(systemName: "heart")) Support FineTune")
+            Button {
+                NSWorkspace.shared.open(DesignTokens.Links.support)
+            } label: {
+                Text("\(Image(systemName: isSupportHovered ? "heart.fill" : "heart")) Support FineTune")
+                    .foregroundStyle(isSupportHovered ? Color(nsColor: .systemPink) : DesignTokens.Colors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isSupportHovered = hovering
+                }
             }
             .accessibilityLabel("Support FineTune")
 

@@ -60,6 +60,9 @@ struct MenuBarPopupView: View {
     /// Editable copy of device order for drag-and-drop reordering
     @State private var editableDeviceOrder: [AudioDevice] = []
 
+    /// Hover state for support link heart animation
+    @State private var isSupportHovered = false
+
     /// Namespace for device toggle animation
     @Namespace private var deviceToggleNamespace
 
@@ -284,12 +287,19 @@ struct MenuBarPopupView: View {
 
         // Footer: support link + quit
         HStack {
-            Link(destination: DesignTokens.Links.support) {
-                Label("Support", systemImage: "heart")
+            Button {
+                NSWorkspace.shared.open(DesignTokens.Links.support)
+            } label: {
+                Label("Support", systemImage: isSupportHovered ? "heart.fill" : "heart")
             }
             .buttonStyle(.plain)
             .font(DesignTokens.Typography.caption)
-            .foregroundStyle(DesignTokens.Colors.textTertiary)
+            .foregroundStyle(isSupportHovered ? Color(nsColor: .systemPink) : DesignTokens.Colors.textTertiary)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isSupportHovered = hovering
+                }
+            }
             .accessibilityLabel("Support FineTune")
             .help("Support FineTune")
 

@@ -292,6 +292,6 @@ enum DesignTokens {
 
     enum Links {
         /// Financial support page (currently Ko-fi, URL is platform-agnostic in UI)
-        static let support = URL(string: "https://ko-fi.com/finetune")!
+        static let support = URL(string: "https://ko-fi.com/ronitsingh10")!
     }
 }
