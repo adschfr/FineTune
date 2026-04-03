@@ -149,32 +149,34 @@ struct EQPanelView: View {
 
     private var savePresetField: some View {
         HStack(spacing: DesignTokens.Spacing.xs) {
-            Image(systemName: "tag")
-                .font(.system(size: 10))
-                .foregroundStyle(DesignTokens.Colors.textTertiary)
-
             TextField("Preset name", text: $savePresetName)
                 .textFieldStyle(.plain)
-                .font(DesignTokens.Typography.pickerText)
+                .font(.system(size: 11, weight: .medium))
                 .focused($isSaveFieldFocused)
                 .onSubmit { commitSave() }
                 .onExitCommand { cancelSave() }
 
-            Button("Save") { commitSave() }
-                .buttonStyle(.plain)
-                .font(DesignTokens.Typography.pickerText)
-                .foregroundStyle(
-                    savePresetName.trimmingCharacters(in: .whitespaces).isEmpty
-                        ? DesignTokens.Colors.textTertiary
-                        : DesignTokens.Colors.accentPrimary
-                )
-                .disabled(savePresetName.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button {
+                commitSave()
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(
+                        savePresetName.trimmingCharacters(in: .whitespaces).isEmpty
+                            ? DesignTokens.Colors.textTertiary
+                            : DesignTokens.Colors.accentPrimary
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(savePresetName.trimmingCharacters(in: .whitespaces).isEmpty)
+            .help("Save preset")
+            .accessibilityLabel("Confirm save preset")
 
             Button {
                 cancelSave()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(DesignTokens.Colors.textTertiary)
             }
             .buttonStyle(.plain)
@@ -182,14 +184,14 @@ struct EQPanelView: View {
             .accessibilityLabel("Cancel saving preset")
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                .fill(DesignTokens.Colors.accentPrimary.opacity(0.08))
-                .overlay {
-                    RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                        .strokeBorder(DesignTokens.Colors.accentPrimary.opacity(0.3), lineWidth: 0.5)
-                }
+                .fill(.regularMaterial)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
         }
     }
 
