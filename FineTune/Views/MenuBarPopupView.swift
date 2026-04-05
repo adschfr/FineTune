@@ -533,6 +533,7 @@ struct MenuBarPopupView: View {
                         volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
                         hasVolumeControl: audioEngine.hasVolumeControl(for: device.id),
+                        usesSoftwareVolume: audioEngine.outputVolumeBackend(for: device.id) == .software,
                         onSetDefault: {
                             audioEngine.setDefaultOutputDevice(device.id)
                         },

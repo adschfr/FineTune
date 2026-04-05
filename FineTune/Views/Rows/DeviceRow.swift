@@ -4,10 +4,13 @@ import SwiftUI
 /// A row displaying a device with volume controls.
 /// Used in the Output Devices section.
 ///
-/// Device volume uses identity mapping (slider position == HAL scalar) because CoreAudio's
-/// VirtualMainVolume scalar is already audio-tapered by the driver (IOAudioLevelControl
-/// applies a dB curve by default). Applying an additional perceptual curve (x²) on top
-/// creates a "double taper" that kills the bottom 10% of slider range.
+/// Volume mapping depends on the device's volume backend:
+/// - **Hardware/DDC**: Identity mapping (slider == HAL scalar). CoreAudio's VirtualMainVolume
+///   scalar is already audio-tapered by the driver (IOAudioLevelControl applies a dB curve
+///   by default). No additional perceptual curve needed.
+/// - **Software**: VolumeMapping x² curve. Software gain is a linear PCM amplitude multiplier
+///   that needs perceptual scaling to feel natural.
+///
 /// See: IOAudioLevelControl.h `setLinearScale()`, empirical ScalarToDecibels measurement.
 struct DeviceRow: View {
     let device: AudioDevice
@@ -15,6 +18,9 @@ struct DeviceRow: View {
     let volume: Float
     let isMuted: Bool
     let hasVolumeControl: Bool
+    /// True when this device uses software volume (linear PCM gain, needs x² curve).
+    /// False for hardware/DDC devices where the HAL scalar is already audio-tapered.
+    let usesSoftwareVolume: Bool
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
@@ -52,6 +58,7 @@ struct DeviceRow: View {
         volume: Float,
         isMuted: Bool,
         hasVolumeControl: Bool = true,
+        usesSoftwareVolume: Bool = false,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void,
@@ -73,6 +80,7 @@ struct DeviceRow: View {
         self.volume = volume
         self.isMuted = isMuted
         self.hasVolumeControl = hasVolumeControl
+        self.usesSoftwareVolume = usesSoftwareVolume
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
@@ -88,9 +96,11 @@ struct DeviceRow: View {
         self.autoEQImportError = autoEQImportError
         self.autoEQPreampEnabled = autoEQPreampEnabled
         self.onAutoEQPreampToggle = onAutoEQPreampToggle
-        // Identity mapping: HAL scalar is already audio-tapered by the driver.
-        // No perceptual curve needed — slider position == scalar value.
-        self._sliderValue = State(initialValue: Double(volume))
+        // Software volume: linear PCM gain needs x² curve for perceptual linearity.
+        // Hardware/DDC: HAL scalar is already audio-tapered by the driver — identity mapping.
+        self._sliderValue = State(initialValue: usesSoftwareVolume
+            ? VolumeMapping.gainToSlider(volume)
+            : Double(volume))
     }
 
     var body: some View {
@@ -192,8 +202,11 @@ struct DeviceRow: View {
                         isUpdatingSliderFromDevice = false
                         return
                     }
-                    // Identity mapping: pass scalar directly to HAL (already audio-tapered).
-                    onVolumeChange(Float(newValue))
+                    // Software: apply x² curve (slider → linear PCM gain).
+                    // Hardware/DDC: identity (slider == HAL scalar, already audio-tapered).
+                    onVolumeChange(usesSoftwareVolume
+                        ? VolumeMapping.sliderToGain(newValue)
+                        : Float(newValue))
                     if suppressSliderAutoUnmute {
                         suppressSliderAutoUnmute = false
                         return
@@ -218,8 +231,11 @@ struct DeviceRow: View {
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }
-            // Identity mapping: HAL scalar == slider position.
-            let newSlider = Double(newValue)
+            // Software: inverse x² (linear PCM gain → slider position).
+            // Hardware/DDC: identity (HAL scalar == slider position).
+            let newSlider = usesSoftwareVolume
+                ? VolumeMapping.gainToSlider(newValue)
+                : Double(newValue)
             guard newSlider != sliderValue else { return }
             isUpdatingSliderFromDevice = true
             sliderValue = newSlider
