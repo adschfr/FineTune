@@ -1,8 +1,14 @@
 // FineTune/Views/Rows/DeviceRow.swift
 import SwiftUI
 
-/// A row displaying a device with volume controls
-/// Used in the Output Devices section
+/// A row displaying a device with volume controls.
+/// Used in the Output Devices section.
+///
+/// Device volume uses identity mapping (slider position == HAL scalar) because CoreAudio's
+/// VirtualMainVolume scalar is already audio-tapered by the driver (IOAudioLevelControl
+/// applies a dB curve by default). Applying an additional perceptual curve (x²) on top
+/// creates a "double taper" that kills the bottom 10% of slider range.
+/// See: IOAudioLevelControl.h `setLinearScale()`, empirical ScalarToDecibels measurement.
 struct DeviceRow: View {
     let device: AudioDevice
     let isDefault: Bool
@@ -82,7 +88,9 @@ struct DeviceRow: View {
         self.autoEQImportError = autoEQImportError
         self.autoEQPreampEnabled = autoEQPreampEnabled
         self.onAutoEQPreampToggle = onAutoEQPreampToggle
-        self._sliderValue = State(initialValue: VolumeMapping.gainToSlider(volume))
+        // Identity mapping: HAL scalar is already audio-tapered by the driver.
+        // No perceptual curve needed — slider position == scalar value.
+        self._sliderValue = State(initialValue: Double(volume))
     }
 
     var body: some View {
@@ -184,7 +192,8 @@ struct DeviceRow: View {
                         isUpdatingSliderFromDevice = false
                         return
                     }
-                    onVolumeChange(VolumeMapping.sliderToGain(newValue))
+                    // Identity mapping: pass scalar directly to HAL (already audio-tapered).
+                    onVolumeChange(Float(newValue))
                     if suppressSliderAutoUnmute {
                         suppressSliderAutoUnmute = false
                         return
@@ -209,7 +218,8 @@ struct DeviceRow: View {
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }
-            let newSlider = VolumeMapping.gainToSlider(newValue)
+            // Identity mapping: HAL scalar == slider position.
+            let newSlider = Double(newValue)
             guard newSlider != sliderValue else { return }
             isUpdatingSliderFromDevice = true
             sliderValue = newSlider

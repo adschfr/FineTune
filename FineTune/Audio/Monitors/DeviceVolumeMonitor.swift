@@ -323,7 +323,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         defaultInputDeviceUID = nil
     }
 
-    /// Threshold clamp: sub-1% scalar (~-40 dB) → true silence, matching industry practice
+    /// Threshold clamp: sub-1% scalar → true silence.
+    /// On audio-tapered devices, scalar 0.01 ≈ -99 dB (empirically measured on built-in output).
+    /// On software-volume devices, 0.01 gain = -40 dB (linear). Either way, inaudible.
     private func clampedVolume(_ volume: Float) -> Float {
         volume < 0.01 ? 0 : volume
     }
