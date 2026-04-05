@@ -14,6 +14,7 @@
 import AudioToolbox
 import Accelerate
 import Testing
+import Foundation
 @testable import FineTune
 
 // MARK: - Test Helpers
@@ -102,7 +103,9 @@ private func processWithDefaults(
     preferredStereoRight: Int = 1,
     currentVol: inout Float,
     eqProc: EQProcessor? = nil,
-    autoEQProc: AutoEQProcessor? = nil
+    autoEQProc: AutoEQProcessor? = nil,
+    loudnessEqualizerProc: LoudnessEqualizer? = nil,
+    loudnessCompensatorProc: LoudnessCompensator? = nil
 ) {
     ProcessTapController.processMappedBuffers(
         inputBuffers: input.bufferList,
@@ -114,8 +117,19 @@ private func processWithDefaults(
         preferredStereoRight: preferredStereoRight,
         currentVol: &currentVol,
         eqProc: eqProc,
-        autoEQProc: autoEQProc
+        autoEQProc: autoEQProc,
+        loudnessEqualizerProc: loudnessEqualizerProc,
+        loudnessCompensatorProc: loudnessCompensatorProc
     )
+}
+
+private func repositoryRootURL() -> URL {
+    URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+}
+
+private func loadRepositorySource(_ relativePath: String) throws -> String {
+    let url = repositoryRootURL().appendingPathComponent(relativePath)
+    return try String(contentsOf: url, encoding: .utf8)
 }
 
 // MARK: - Buffer Mapping Tests

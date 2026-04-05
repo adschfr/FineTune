@@ -64,7 +64,17 @@ struct AppSettings: Codable, Equatable {
     // Notifications
     var showDeviceDisconnectAlerts: Bool = true
 
+    // Audio Processing
+    var loudnessCompensationEnabled: Bool = false  // ISO 226:2023 equal-loudness contour compensation
+    var loudnessCompensationAmount: Float = 1.0    // 0...1 strength multiplier for compensation contour
+    var loudnessEqualizationEnabled: Bool = false  // Real-time loudness equalization
+
     init() {}
+
+    mutating func setUnifiedLoudnessEnabled(_ enabled: Bool) {
+        loudnessCompensationEnabled = enabled
+        loudnessEqualizationEnabled = enabled
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -74,6 +84,12 @@ struct AppSettings: Codable, Equatable {
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
         softwareDeviceVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .softwareDeviceVolumeEnabled) ?? false
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
+        loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
+        loudnessCompensationAmount = min(
+            max(try c.decodeIfPresent(Float.self, forKey: .loudnessCompensationAmount) ?? 1.0, 0.0),
+            1.0
+        )
+        loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
     }
 }
 

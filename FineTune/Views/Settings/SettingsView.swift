@@ -14,12 +14,22 @@ struct SettingsView: View {
 
     @State private var showResetConfirmation = false
 
+    private var unifiedLoudnessToggleBinding: Binding<Bool> {
+        Binding(
+            get: { settings.loudnessCompensationEnabled && settings.loudnessEqualizationEnabled },
+            set: { isEnabled in
+                settings.setUnifiedLoudnessEnabled(isEnabled)
+            }
+        )
+    }
+
     var body: some View {
         // Scrollable settings content
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 generalSection
                 audioSection
+                loudnessSection
                 notificationsSection
                 dataSection
 
@@ -105,7 +115,16 @@ struct SettingsView: View {
                     deviceVolumeMonitor.setSystemFollowDefault()
                 }
             )
+
+            SettingsLoudnessCompensationRow(
+                isOn: unifiedLoudnessToggleBinding,
+                amount: $settings.loudnessCompensationAmount
+            )
         }
+    }
+
+    private var loudnessSection: some View {
+        EmptyView()
     }
 
     // MARK: - Notifications Section

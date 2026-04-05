@@ -328,6 +328,7 @@ final class AudioEngine {
         deviceVolumeMonitor.onVolumeChanged = { [weak self] deviceID, newVolume in
             guard let self else { return }
             guard let deviceUID = self.deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid else { return }
+            let loudnessSettings = self.settingsManager.appSettings
             for (_, tap) in self.taps {
                 if tap.currentDeviceUID == deviceUID {
                     tap.currentDeviceVolume = newVolume
@@ -335,6 +336,11 @@ final class AudioEngine {
                        self.outputVolumeBackend(for: deviceID) == .software {
                         tap.volume = self.effectiveVolume(for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
                     }
+                    tap.updateLoudnessCompensation(
+                        volume: newVolume,
+                        amount: loudnessSettings.loudnessCompensationAmount,
+                        enabled: loudnessSettings.loudnessCompensationEnabled
+                    )
                 }
             }
         }
@@ -653,6 +659,7 @@ final class AudioEngine {
             applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
+            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, amount: 1.0, enabled: false)
         }
 
         // 6. Re-apply from clean settings (re-establishes routing to system default)
@@ -788,6 +795,28 @@ final class AudioEngine {
         settingsManager.autoEQPreampEnabled = enabled
         for tap in taps.values {
             tap.setAutoEQPreampEnabled(enabled)
+        }
+    }
+
+    func setLoudnessCompensationEnabled(_ enabled: Bool) {
+        let amount = settingsManager.appSettings.loudnessCompensationAmount
+        for tap in taps.values {
+            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, amount: amount, enabled: enabled)
+        }
+    }
+
+    func setLoudnessCompensationAmount(_ amount: Float) {
+        let enabled = settingsManager.appSettings.loudnessCompensationEnabled
+        for tap in taps.values {
+            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, amount: amount, enabled: enabled)
+        }
+    }
+
+    func setLoudnessEqualizationEnabled(_ enabled: Bool) {
+        var settings = LoudnessEqualizerSettings()
+        settings.enabled = enabled
+        for tap in taps.values {
+            tap.updateLoudnessEqualization(settings)
         }
     }
 
@@ -1031,6 +1060,14 @@ final class AudioEngine {
             tap.updateEQSettings(eqSettings)
             tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)
             applyAutoEQToTap(tap)
+            var loudnessEqSettings = LoudnessEqualizerSettings()
+            loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
+            tap.updateLoudnessEqualization(loudnessEqSettings)
+            tap.updateLoudnessCompensation(
+                volume: tap.currentDeviceVolume,
+                amount: settingsManager.appSettings.loudnessCompensationAmount,
+                enabled: settingsManager.appSettings.loudnessCompensationEnabled
+            )
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
@@ -1171,6 +1208,14 @@ final class AudioEngine {
             tap.updateEQSettings(eqSettings)
             tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)
             applyAutoEQToTap(tap)
+            var loudnessEqSettings = LoudnessEqualizerSettings()
+            loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
+            tap.updateLoudnessEqualization(loudnessEqSettings)
+            tap.updateLoudnessCompensation(
+                volume: tap.currentDeviceVolume,
+                amount: settingsManager.appSettings.loudnessCompensationAmount,
+                enabled: settingsManager.appSettings.loudnessCompensationEnabled
+            )
 
             logger.debug("Created tap for \(app.name)")
         } catch {
