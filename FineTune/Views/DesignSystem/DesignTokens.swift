@@ -120,51 +120,7 @@ enum DesignTokens {
         /// VU meter muted state
         static let vuMuted: Color = .primary.opacity(0.35)
 
-        // MARK: AutoEQ Status Card
-
-        /// Base blue used for active AutoEQ card tinting
-        private static let autoEQBlue = Color(red: 100 / 255, green: 140 / 255, blue: 1.0)
-
-        /// Active card background (correction on)
-        static let autoEQCardActiveBackground = autoEQBlue.opacity(0.08)
-
-        /// Active card border (correction on)
-        static let autoEQCardActiveBorder = autoEQBlue.opacity(0.15)
-
-        /// Dimmed card background (correction off)
-        static let autoEQCardDimmedBackground = Color.white.opacity(0.02)
-
-        /// Dimmed card border (correction off)
-        static let autoEQCardDimmedBorder = Color.white.opacity(0.08)
-
-        /// Active card source/measuredBy text
-        static let autoEQCardActiveSource = Color(red: 0x6C / 255, green: 0x8C / 255, blue: 1.0)
-
-        /// Dimmed card source text
-        static let autoEQCardDimmedSource = Color(white: 1 / 3)
-
-        /// Dimmed card profile name
-        static let autoEQCardDimmedName = Color(white: 0x88 / 255)
-
-        // MARK: AutoEQ Chips
-
-        /// Active chip background
-        static let chipActiveBackground = autoEQBlue.opacity(0.2)
-
-        /// Active chip label text
-        static let chipActiveText = Color(red: 0x8C / 255, green: 0xAB / 255, blue: 1.0)
-
-        /// Inactive chip background
-        static let chipInactiveBackground = Color.white.opacity(0.05)
-
-        /// Inactive chip label text
-        static let chipInactiveText = Color(white: 0.4)
-
-        /// Status dot — active (green)
-        static let statusDotActive = Color(red: 74 / 255, green: 222 / 255, blue: 128 / 255)
-
-        /// Status dot — inactive (red)
-        static let statusDotInactive = Color(red: 248 / 255, green: 113 / 255, blue: 113 / 255)
+        // MARK: AutoEQ
 
         /// Empty state dashed border
         static let autoEQEmptyBorder = Color.white.opacity(0.1)
@@ -172,11 +128,8 @@ enum DesignTokens {
         /// Empty state icon color
         static let autoEQEmptyIcon = Color(white: 0.267)
 
-        /// Controls divider on active card
-        static let autoEQCardActiveDivider = autoEQBlue.opacity(0.1)
-
-        /// Controls divider on dimmed card
-        static let autoEQCardDimmedDivider = Color.white.opacity(0.05)
+        /// Toggle label text color (Correction / Preamp labels)
+        static let autoEQToggleLabel = Color.white.opacity(0.5)
 
     }
 
@@ -206,9 +159,6 @@ enum DesignTokens {
 
         /// EQ frequency labels
         static let eqLabel = Font.system(size: 9, weight: .medium, design: .monospaced)
-
-        /// AutoEQ chip label text
-        static let chipLabel = Font.system(size: 9, weight: .medium)
 
         /// AutoEQ card profile name
         static let cardProfileName = Font.system(size: 12, weight: .semibold)
@@ -329,23 +279,6 @@ enum DesignTokens {
 
         /// Settings picker width
         static let settingsPickerWidth: CGFloat = 120
-
-        // MARK: AutoEQ
-
-        /// Status dot diameter (chip indicator)
-        static let statusDotSize: CGFloat = 5
-
-        /// Chip horizontal padding
-        static let chipPaddingH: CGFloat = 8
-
-        /// Chip vertical padding
-        static let chipPaddingV: CGFloat = 3
-
-        /// Chip corner radius (pill)
-        static let chipRadius: CGFloat = 10
-
-        /// Status card corner radius
-        static let statusCardRadius: CGFloat = 8
 
     }
 

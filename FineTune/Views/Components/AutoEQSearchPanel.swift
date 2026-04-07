@@ -109,6 +109,9 @@ struct AutoEQSearchPanel: View {
         VStack(spacing: 0) {
             statusZone
 
+            Divider()
+                .padding(.horizontal, DesignTokens.Spacing.xs)
+
             searchField
 
             Divider()
@@ -188,17 +191,17 @@ struct AutoEQSearchPanel: View {
 
             Text("No correction active")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(DesignTokens.Colors.autoEQCardDimmedName)
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
 
             Text("Search or pick a favorite below")
                 .font(.system(size: 9))
-                .foregroundStyle(DesignTokens.Colors.autoEQCardDimmedSource)
+                .foregroundStyle(DesignTokens.Colors.textQuaternary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
         .padding(.horizontal, DesignTokens.Spacing.md)
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.statusCardRadius)
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                 .strokeBorder(
                     DesignTokens.Colors.autoEQEmptyBorder,
                     style: StrokeStyle(lineWidth: 1, dash: [5, 3])
@@ -223,21 +226,21 @@ struct AutoEQSearchPanel: View {
         .padding(.vertical, 14)
         .padding(.horizontal, DesignTokens.Spacing.md)
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.statusCardRadius)
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                 .strokeBorder(DesignTokens.Colors.autoEQEmptyBorder, lineWidth: 1)
         )
         .padding(DesignTokens.Spacing.sm)
     }
 
-    // MARK: - Status Card
+    // MARK: - Status Section (flat, no card container)
 
     @ViewBuilder
     private func statusCard(id: String, name: String, source: String?) -> some View {
         let isFavorited = favoriteIDs.contains(id)
         let isStarHovered = starHoveredID == id
 
-        VStack(spacing: 0) {
-            // Top row: profile info + action buttons
+        VStack(spacing: DesignTokens.Spacing.sm) {
+            // Profile info + action buttons
             HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
                     Text(name)
@@ -245,18 +248,14 @@ struct AutoEQSearchPanel: View {
                         .foregroundStyle(
                             isCorrectionEnabled
                                 ? DesignTokens.Colors.textPrimary
-                                : DesignTokens.Colors.autoEQCardDimmedName
+                                : DesignTokens.Colors.textSecondary
                         )
                         .lineLimit(1)
 
                     if let source {
                         Text(source)
                             .font(DesignTokens.Typography.cardSource)
-                            .foregroundStyle(
-                                isCorrectionEnabled
-                                    ? DesignTokens.Colors.autoEQCardActiveSource
-                                    : DesignTokens.Colors.autoEQCardDimmedSource
-                            )
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
                             .lineLimit(1)
                     }
                 }
@@ -264,7 +263,7 @@ struct AutoEQSearchPanel: View {
                 Spacer(minLength: 0)
 
                 HStack(spacing: DesignTokens.Spacing.xs) {
-                    // Star button (always visible on card)
+                    // Star button (always visible)
                     Button {
                         onToggleFavorite(id)
                     } label: {
@@ -292,7 +291,7 @@ struct AutoEQSearchPanel: View {
                             .foregroundStyle(
                                 hoveredID == "_remove"
                                     ? DesignTokens.Colors.textSecondary
-                                    : DesignTokens.Colors.autoEQCardDimmedSource
+                                    : DesignTokens.Colors.textTertiary
                             )
                             .frame(width: 20, height: 20)
                             .contentShape(Rectangle())
@@ -304,99 +303,52 @@ struct AutoEQSearchPanel: View {
                 }
             }
 
-            // Controls divider
-            Rectangle()
-                .fill(
-                    isCorrectionEnabled
-                        ? DesignTokens.Colors.autoEQCardActiveDivider
-                        : DesignTokens.Colors.autoEQCardDimmedDivider
-                )
-                .frame(height: 0.5)
-                .padding(.top, DesignTokens.Spacing.sm)
+            // Mini toggle switches
+            HStack(spacing: 10) {
+                miniToggle(
+                    label: "Correction",
+                    isOn: isCorrectionEnabled
+                ) { onCorrectionToggle?(!isCorrectionEnabled) }
 
-            // Correction and Preamp chips
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                statusChip(label: "Correction", isActive: isCorrectionEnabled) {
-                    onCorrectionToggle?(!isCorrectionEnabled)
-                }
-
-                statusChip(label: "Preamp", isActive: preampEnabled) {
-                    onPreampToggle?()
-                }
+                miniToggle(
+                    label: "Preamp",
+                    isOn: preampEnabled
+                ) { onPreampToggle?() }
 
                 Spacer()
             }
-            .padding(.top, DesignTokens.Spacing.sm)
         }
-        .padding(.horizontal, DesignTokens.Spacing.md)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.statusCardRadius)
-                .fill(
-                    isCorrectionEnabled
-                        ? DesignTokens.Colors.autoEQCardActiveBackground
-                        : DesignTokens.Colors.autoEQCardDimmedBackground
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.statusCardRadius)
-                .strokeBorder(
-                    isCorrectionEnabled
-                        ? DesignTokens.Colors.autoEQCardActiveBorder
-                        : DesignTokens.Colors.autoEQCardDimmedBorder,
-                    lineWidth: 1
-                )
-        )
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, DesignTokens.Spacing.sm)
         .animation(.easeInOut(duration: 0.15), value: isCorrectionEnabled)
-        .animation(.easeInOut(duration: 0.15), value: preampEnabled)
-        .padding(DesignTokens.Spacing.sm)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(name) correction profile")
     }
 
-    // MARK: - Status Chip
+    // MARK: - Mini Toggle
 
-    private func statusChip(
+    private func miniToggle(
         label: String,
-        isActive: Bool,
+        isOn: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: DesignTokens.Spacing.xs) {
-                Circle()
-                    .fill(
-                        isActive
-                            ? DesignTokens.Colors.statusDotActive
-                            : DesignTokens.Colors.statusDotInactive
-                    )
-                    .frame(
-                        width: DesignTokens.Dimensions.statusDotSize,
-                        height: DesignTokens.Dimensions.statusDotSize
-                    )
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(DesignTokens.Colors.autoEQToggleLabel)
 
-                Text(label)
-                    .font(DesignTokens.Typography.chipLabel)
-                    .foregroundStyle(
-                        isActive
-                            ? DesignTokens.Colors.chipActiveText
-                            : DesignTokens.Colors.chipInactiveText
-                    )
-            }
-            .padding(.horizontal, DesignTokens.Dimensions.chipPaddingH)
-            .padding(.vertical, DesignTokens.Dimensions.chipPaddingV)
-            .background(
-                Capsule()
-                    .fill(
-                        isActive
-                            ? DesignTokens.Colors.chipActiveBackground
-                            : DesignTokens.Colors.chipInactiveBackground
-                    )
+            Toggle(
+                label,
+                isOn: Binding(get: { isOn }, set: { _ in action() })
             )
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .scaleEffect(0.65)
+            .labelsHidden()
         }
-        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
-        .accessibilityValue(isActive ? "Active" : "Inactive")
-        .accessibilityHint("Double-tap to toggle")
+        .accessibilityValue(isOn ? "On" : "Off")
     }
 
     // MARK: - Search Field
