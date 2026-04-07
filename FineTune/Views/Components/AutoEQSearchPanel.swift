@@ -2,7 +2,8 @@
 import SwiftUI
 
 /// Search panel for selecting AutoEQ headphone correction profiles.
-/// Displayed inline within an expanded DeviceRow.
+/// Two-zone layout: Status Zone (profile card or empty state)
+/// above Browse Zone (search + favorites/results + import).
 struct AutoEQSearchPanel: View {
     let profileManager: AutoEQProfileManager
     let favoriteIDs: Set<String>
@@ -34,28 +35,19 @@ struct AutoEQSearchPanel: View {
 
     // MARK: - Navigable Items
 
-    /// Unified list of all selectable rows for keyboard navigation.
+    /// Selectable rows for keyboard navigation (browse zone only).
     private enum NavigableItem: Equatable {
-        case correctionToggle
-        case noCorrection
-        case selectedProfile(String)
         case searchResult(String)
         case favorite(String)
 
-        var profileID: String? {
+        var profileID: String {
             switch self {
-            case .correctionToggle:
-                return nil
-            case .noCorrection: return nil
-            case .selectedProfile(let id), .searchResult(let id), .favorite(let id): return id
+            case .searchResult(let id), .favorite(let id): return id
             }
         }
 
         var itemID: String {
             switch self {
-            case .correctionToggle: return "_correction"
-            case .noCorrection: return "_none"
-            case .selectedProfile(let id): return "selected_\(id)"
             case .searchResult(let id): return "result_\(id)"
             case .favorite(let id): return "fav_\(id)"
             }
@@ -63,29 +55,13 @@ struct AutoEQSearchPanel: View {
     }
 
     private var navigableItems: [NavigableItem] {
-        var items: [NavigableItem] = [.noCorrection]
-
-        if Self.showsCorrectionToggle(selectedProfileID: selectedProfileID), onCorrectionToggle != nil {
-            items.insert(.correctionToggle, at: 0)
-        }
-
-        if let selectedID = selectedProfileID,
-           Self.showsAssignedProfileRow(selectedProfileName: selectedProfileName(for: selectedID)) {
-            items.append(.selectedProfile(selectedID))
-        }
-
         if !debouncedQuery.isEmpty {
-            for entry in results {
-                if entry.id == selectedProfileID { continue }
-                items.append(.searchResult(entry.id))
-            }
+            return results
+                .filter { $0.id != selectedProfileID }
+                .map { .searchResult($0.id) }
         } else {
-            for entry in resolvedFavorites {
-                items.append(.favorite(entry.id))
-            }
+            return resolvedFavorites.map { .favorite($0.id) }
         }
-
-        return items
     }
 
     // MARK: - Computed Results
@@ -115,313 +91,39 @@ struct AutoEQSearchPanel: View {
         return count
     }
 
-    private var correctionEnabledBinding: Binding<Bool> {
-        Binding(
-            get: { isCorrectionEnabled },
-            set: { newValue in onCorrectionToggle?(newValue) }
-        )
+    /// Resolved display info for the status card.
+    private var cardProfileInfo: (name: String, source: String?)? {
+        guard let selectedID = selectedProfileID else { return nil }
+        if let profile = profileManager.profile(for: selectedID) {
+            let source = profile.source == .imported ? "Imported" : profile.measuredBy
+            return (profile.name, source)
+        } else if let entry = profileManager.catalogEntry(for: selectedID) {
+            return (entry.name, entry.measuredBy)
+        }
+        return nil
     }
 
-    private func selectedProfileName(for id: String) -> String? {
-        profileManager.profile(for: id)?.name ?? profileManager.catalogEntry(for: id)?.name
-    }
-
-    static func showsCorrectionToggle(selectedProfileID: String?) -> Bool {
-        selectedProfileID != nil
-    }
-
-    static func showsAssignedProfileRow(selectedProfileName: String?) -> Bool {
-        selectedProfileName != nil
-    }
+    // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
-            // Search field
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+            statusZone
 
-                TextField("Search headphones...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundStyle(DesignTokens.Colors.textPrimary)
-                    .focused($isSearchFocused)
-                    .accessibilityLabel("Search headphones")
-
-                if !searchText.isEmpty {
-                    Button("Clear search", systemImage: "xmark.circle.fill") {
-                        searchText = ""
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignTokens.Colors.textTertiary)
-                }
-            }
-            .padding(.horizontal, DesignTokens.Spacing.sm)
-            .padding(.vertical, DesignTokens.Spacing.sm)
+            searchField
 
             Divider()
                 .padding(.horizontal, DesignTokens.Spacing.xs)
 
-            if Self.showsCorrectionToggle(selectedProfileID: selectedProfileID),
-               onCorrectionToggle != nil {
-                Button {
-                    onCorrectionToggle?(!isCorrectionEnabled)
-                } label: {
-                    HStack(spacing: DesignTokens.Spacing.sm) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Correction")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(DesignTokens.Colors.textPrimary)
+            browseZone
 
-                            Text(isCorrectionEnabled ? "On" : "Off")
-                                .font(.system(size: 9))
-                                .foregroundStyle(DesignTokens.Colors.textTertiary)
-                        }
-
-                        Spacer()
-
-                        Toggle("Correction", isOn: correctionEnabledBinding)
-                            .toggleStyle(.switch)
-                            .scaleEffect(0.7)
-                            .labelsHidden()
-                            .allowsHitTesting(false)
-                    }
-                    .padding(.horizontal, DesignTokens.Spacing.sm)
-                    .padding(.vertical, DesignTokens.Spacing.xs)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(rowHighlight(for: "_correction", isHovered: hoveredID == "_correction"))
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Correction")
-                .accessibilityValue(isCorrectionEnabled ? "On" : "Off")
-                .accessibilityHint("Toggles the assigned correction profile without removing it")
-                .padding(.horizontal, DesignTokens.Spacing.xs)
-                .whenHovered { isHovered in
-                    hoveredID = isHovered ? "_correction" : nil
-                    if isHovered { highlightedIndex = nil }
-                }
-
-                Divider()
-                    .padding(.horizontal, DesignTokens.Spacing.xs)
-            }
-
-            // "None" option to remove correction
-            Button {
-                onSelect(nil)
-                onDismiss()
-            } label: {
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Image(systemName: "xmark.circle")
-                            .font(.system(size: 12))
-                            .foregroundStyle(selectedProfileID == nil ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
-
-                        Text("No correction")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(selectedProfileID == nil ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
-                    }
-
-                    Spacer()
-
-                    if selectedProfileID == nil {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color.accentColor)
-                    }
-                }
-                .padding(.horizontal, DesignTokens.Spacing.sm)
-                .frame(height: itemHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(rowHighlight(for: "_none", isHovered: hoveredID == "_none"))
-                )
-            }
-            .buttonStyle(.plain)
-            .whenHovered { isHovered in
-                hoveredID = isHovered ? "_none" : nil
-                if isHovered { highlightedIndex = nil }
-            }
-            .accessibilityLabel("No correction")
-            .accessibilityAddTraits(selectedProfileID == nil ? .isSelected : [])
-            .padding(.horizontal, DesignTokens.Spacing.xs)
-            .padding(.top, DesignTokens.Spacing.xs)
-
-            // Currently selected profile (always visible when a profile is applied)
-            if let selectedID = selectedProfileID,
-               let selectedProfile = profileManager.profile(for: selectedID) {
-                profileRow(selectedProfile, itemIDPrefix: "selected_")
-                    .padding(.horizontal, DesignTokens.Spacing.xs)
-
-                // Preamp toggle — lets user A/B test profile preamp vs limiter-only
-                if let onPreampToggle {
-                    Button {
-                        onPreampToggle()
-                    } label: {
-                        HStack(spacing: DesignTokens.Spacing.sm) {
-                            Image(systemName: preampEnabled ? "speaker.wave.2" : "speaker.wave.3")
-                                .font(.system(size: 10))
-                                .foregroundStyle(preampEnabled ? DesignTokens.Colors.textTertiary : DesignTokens.Colors.interactiveActive)
-                                .frame(width: 14)
-
-                            Text(preampEnabled ? "Preamp on (quieter, no clipping)" : "Preamp off (louder, limiter active)")
-                                .font(.system(size: 10))
-                                .foregroundStyle(DesignTokens.Colors.textSecondary)
-
-                            Spacer()
-                        }
-                        .padding(.horizontal, DesignTokens.Spacing.sm)
-                        .frame(height: 22)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(hoveredID == "_preamp" ? Color.white.opacity(0.04) : Color.clear)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .whenHovered { hoveredID = $0 ? "_preamp" : nil }
-                    .padding(.horizontal, DesignTokens.Spacing.xs)
-                }
-            } else if let selectedID = selectedProfileID,
-                      let selectedName = selectedProfileName(for: selectedID),
-                      Self.showsAssignedProfileRow(selectedProfileName: selectedName) {
-                selectedCatalogProfileRow(id: selectedID, name: selectedName)
-                    .padding(.horizontal, DesignTokens.Spacing.xs)
-            }
-
-            // Results / Favorites / Empty state
-            if profileManager.catalogState == .loading && profileManager.catalogEntries.isEmpty {
-                // Catalog loading for the first time
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Loading headphone catalog...")
-                        .font(.system(size: 11))
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
-                }
-                .frame(maxWidth: .infinity, minHeight: listHeight)
-            } else if debouncedQuery.isEmpty {
-                let favorites = resolvedFavorites
-                if favorites.isEmpty {
-                    Text("Type to search headphones")
-                        .font(.system(size: 11))
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
-                        .frame(maxWidth: .infinity, minHeight: listHeight)
-                } else {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(spacing: 2) {
-                                Text("FAVORITES")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(DesignTokens.Colors.textTertiary)
-                                    .tracking(1.0)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, DesignTokens.Spacing.sm)
-                                    .padding(.top, DesignTokens.Spacing.xs)
-
-                                ForEach(favorites) { entry in
-                                    catalogEntryRow(entry, itemIDPrefix: "fav_")
-                                        .id(entry.id)
-                                }
-                            }
-                            .padding(.horizontal, DesignTokens.Spacing.xs)
-                            .padding(.vertical, DesignTokens.Spacing.xs)
-                        }
-                        .frame(height: listHeight)
-                        .onChange(of: highlightedIndex) { _, _ in
-                            scrollToHighlighted(proxy: proxy)
-                        }
-                    }
-                }
-            } else if results.isEmpty {
-                Text("No profiles found")
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignTokens.Colors.textTertiary)
-                    .frame(maxWidth: .infinity, minHeight: listHeight)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            let favCount = favoritePrefixCount
-                            ForEach(Array(results.enumerated()), id: \.element.id) { index, entry in
-                                if index == favCount && favCount > 0 {
-                                    Divider()
-                                        .padding(.horizontal, DesignTokens.Spacing.sm)
-                                        .padding(.vertical, 2)
-                                }
-                                catalogEntryRow(entry, itemIDPrefix: "result_")
-                                    .id(entry.id)
-                            }
-                        }
-                        .padding(.horizontal, DesignTokens.Spacing.xs)
-                        .padding(.vertical, DesignTokens.Spacing.xs)
-                    }
-                    .frame(height: listHeight)
-                    .onChange(of: highlightedIndex) { _, _ in
-                        scrollToHighlighted(proxy: proxy)
-                    }
-                }
-
-                resultCountLabel
-            }
-
-            // Catalog error message
-            if case .error(let message) = profileManager.catalogState,
-               profileManager.catalogEntries.isEmpty {
-                HStack(spacing: DesignTokens.Spacing.xs) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 10))
-                    Text(message)
-                        .font(.system(size: 10))
-                }
-                .foregroundStyle(.red.opacity(0.9))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, DesignTokens.Spacing.sm)
-                .padding(.bottom, DesignTokens.Spacing.xs)
-            }
+            catalogError
 
             Divider()
                 .padding(.horizontal, DesignTokens.Spacing.xs)
 
-            // Import button
-            Button {
-                onImport()
-            } label: {
-                HStack {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 10))
-                    Text("Import ParametricEQ.txt...")
-                        .font(.system(size: 11))
-                }
-                .foregroundStyle(DesignTokens.Colors.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, DesignTokens.Spacing.sm)
-                .frame(height: itemHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(hoveredID == "_import" ? Color.white.opacity(0.04) : Color.clear)
-                )
-            }
-            .buttonStyle(.plain)
-            .whenHovered { hoveredID = $0 ? "_import" : nil }
-            .accessibilityLabel("Import custom profile")
-            .accessibilityHint("Opens file picker for ParametricEQ.txt files")
-            .padding(.horizontal, DesignTokens.Spacing.xs)
-            .padding(.bottom, DesignTokens.Spacing.xs)
+            importButton
 
-            // Error messages
-            if let errorMessage = fetchError ?? importErrorMessage {
-                Text(errorMessage)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.red.opacity(0.9))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, DesignTokens.Spacing.sm)
-                    .padding(.bottom, DesignTokens.Spacing.xs)
-                    .transition(.opacity)
-            }
+            errorMessages
         }
         .animation(.easeInOut(duration: 0.2), value: fetchError)
         .animation(.easeInOut(duration: 0.2), value: importErrorMessage)
@@ -460,6 +162,414 @@ struct AutoEQSearchPanel: View {
         .onAppear { isSearchFocused = true }
     }
 
+    // MARK: - Status Zone
+
+    @ViewBuilder
+    private var statusZone: some View {
+        if let selectedID = selectedProfileID, let info = cardProfileInfo {
+            statusCard(id: selectedID, name: info.name, source: info.source)
+                .transition(.opacity)
+        } else if selectedProfileID != nil {
+            statusCardLoading
+                .transition(.opacity)
+        } else {
+            emptyStateView
+                .transition(.opacity)
+        }
+    }
+
+    // MARK: - Empty State
+
+    private var emptyStateView: some View {
+        VStack(spacing: DesignTokens.Spacing.xs) {
+            Image(systemName: "wand.and.sparkles")
+                .font(.system(size: 20))
+                .foregroundStyle(DesignTokens.Colors.autoEQEmptyIcon)
+
+            Text("No correction active")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DesignTokens.Colors.autoEQCardDimmedName)
+
+            Text("Search or pick a favorite below")
+                .font(.system(size: 9))
+                .foregroundStyle(DesignTokens.Colors.autoEQCardDimmedSource)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.statusCardRadius)
+                .strokeBorder(
+                    DesignTokens.Colors.autoEQEmptyBorder,
+                    style: StrokeStyle(lineWidth: 1, dash: [5, 3])
+                )
+        )
+        .padding(DesignTokens.Spacing.sm)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("No correction active. Search or pick a favorite below.")
+    }
+
+    // MARK: - Loading Placeholder
+
+    private var statusCardLoading: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Loading profile...")
+                .font(.system(size: 11))
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.statusCardRadius)
+                .strokeBorder(DesignTokens.Colors.autoEQEmptyBorder, lineWidth: 1)
+        )
+        .padding(DesignTokens.Spacing.sm)
+    }
+
+    // MARK: - Status Card
+
+    @ViewBuilder
+    private func statusCard(id: String, name: String, source: String?) -> some View {
+        let isFavorited = favoriteIDs.contains(id)
+        let isStarHovered = starHoveredID == id
+
+        VStack(spacing: 0) {
+            // Top row: profile info + action buttons
+            HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
+                    Text(name)
+                        .font(DesignTokens.Typography.cardProfileName)
+                        .foregroundStyle(
+                            isCorrectionEnabled
+                                ? DesignTokens.Colors.textPrimary
+                                : DesignTokens.Colors.autoEQCardDimmedName
+                        )
+                        .lineLimit(1)
+
+                    if let source {
+                        Text(source)
+                            .font(DesignTokens.Typography.cardSource)
+                            .foregroundStyle(
+                                isCorrectionEnabled
+                                    ? DesignTokens.Colors.autoEQCardActiveSource
+                                    : DesignTokens.Colors.autoEQCardDimmedSource
+                            )
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    // Star button (always visible on card)
+                    Button {
+                        onToggleFavorite(id)
+                    } label: {
+                        Image(systemName: isFavorited ? "star.fill" : "star")
+                            .font(.system(size: 11))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(
+                                starColor(isFavorited: isFavorited, isStarHovered: isStarHovered)
+                            )
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                            .scaleEffect(isStarHovered ? 1.1 : 1.0)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { starHoveredID = $0 ? id : nil }
+                    .animation(DesignTokens.Animation.hover, value: isStarHovered)
+                    .accessibilityLabel(isFavorited ? "Remove from favorites" : "Add to favorites")
+
+                    // Remove button
+                    Button {
+                        onSelect(nil)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(
+                                hoveredID == "_remove"
+                                    ? DesignTokens.Colors.textSecondary
+                                    : DesignTokens.Colors.autoEQCardDimmedSource
+                            )
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .whenHovered { hoveredID = $0 ? "_remove" : nil }
+                    .accessibilityLabel("Remove correction profile")
+                    .accessibilityHint("Returns to no correction state")
+                }
+            }
+
+            // Controls divider
+            Rectangle()
+                .fill(
+                    isCorrectionEnabled
+                        ? DesignTokens.Colors.autoEQCardActiveDivider
+                        : DesignTokens.Colors.autoEQCardDimmedDivider
+                )
+                .frame(height: 0.5)
+                .padding(.top, DesignTokens.Spacing.sm)
+
+            // Correction and Preamp chips
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                statusChip(label: "Correction", isActive: isCorrectionEnabled) {
+                    onCorrectionToggle?(!isCorrectionEnabled)
+                }
+
+                statusChip(label: "Preamp", isActive: preampEnabled) {
+                    onPreampToggle?()
+                }
+
+                Spacer()
+            }
+            .padding(.top, DesignTokens.Spacing.sm)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.statusCardRadius)
+                .fill(
+                    isCorrectionEnabled
+                        ? DesignTokens.Colors.autoEQCardActiveBackground
+                        : DesignTokens.Colors.autoEQCardDimmedBackground
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.statusCardRadius)
+                .strokeBorder(
+                    isCorrectionEnabled
+                        ? DesignTokens.Colors.autoEQCardActiveBorder
+                        : DesignTokens.Colors.autoEQCardDimmedBorder,
+                    lineWidth: 1
+                )
+        )
+        .animation(.easeInOut(duration: 0.15), value: isCorrectionEnabled)
+        .animation(.easeInOut(duration: 0.15), value: preampEnabled)
+        .padding(DesignTokens.Spacing.sm)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(name) correction profile")
+    }
+
+    // MARK: - Status Chip
+
+    private func statusChip(
+        label: String,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Circle()
+                    .fill(
+                        isActive
+                            ? DesignTokens.Colors.statusDotActive
+                            : DesignTokens.Colors.statusDotInactive
+                    )
+                    .frame(
+                        width: DesignTokens.Dimensions.statusDotSize,
+                        height: DesignTokens.Dimensions.statusDotSize
+                    )
+
+                Text(label)
+                    .font(DesignTokens.Typography.chipLabel)
+                    .foregroundStyle(
+                        isActive
+                            ? DesignTokens.Colors.chipActiveText
+                            : DesignTokens.Colors.chipInactiveText
+                    )
+            }
+            .padding(.horizontal, DesignTokens.Dimensions.chipPaddingH)
+            .padding(.vertical, DesignTokens.Dimensions.chipPaddingV)
+            .background(
+                Capsule()
+                    .fill(
+                        isActive
+                            ? DesignTokens.Colors.chipActiveBackground
+                            : DesignTokens.Colors.chipInactiveBackground
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(isActive ? "Active" : "Inactive")
+        .accessibilityHint("Double-tap to toggle")
+    }
+
+    // MARK: - Search Field
+
+    private var searchField: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
+
+            TextField("Search headphones...", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
+                .focused($isSearchFocused)
+                .accessibilityLabel("Search headphones")
+
+            if !searchText.isEmpty {
+                Button("Clear search", systemImage: "xmark.circle.fill") {
+                    searchText = ""
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
+            }
+        }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, DesignTokens.Spacing.sm)
+    }
+
+    // MARK: - Browse Zone
+
+    @ViewBuilder
+    private var browseZone: some View {
+        if profileManager.catalogState == .loading && profileManager.catalogEntries.isEmpty {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading headphone catalog...")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+            }
+            .frame(maxWidth: .infinity, minHeight: listHeight)
+        } else if debouncedQuery.isEmpty {
+            let favorites = resolvedFavorites
+            if favorites.isEmpty {
+                Text("Type to search headphones")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    .frame(maxWidth: .infinity, minHeight: listHeight)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            Text("FAVORITES")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(DesignTokens.Colors.textTertiary)
+                                .tracking(1.0)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, DesignTokens.Spacing.sm)
+                                .padding(.top, DesignTokens.Spacing.xs)
+
+                            ForEach(favorites) { entry in
+                                catalogEntryRow(entry, itemIDPrefix: "fav_")
+                                    .id(entry.id)
+                            }
+                        }
+                        .padding(.horizontal, DesignTokens.Spacing.xs)
+                        .padding(.vertical, DesignTokens.Spacing.xs)
+                    }
+                    .frame(height: listHeight)
+                    .onChange(of: highlightedIndex) { _, _ in
+                        scrollToHighlighted(proxy: proxy)
+                    }
+                }
+            }
+        } else if results.isEmpty {
+            Text("No profiles found")
+                .font(.system(size: 11))
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
+                .frame(maxWidth: .infinity, minHeight: listHeight)
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        let favCount = favoritePrefixCount
+                        ForEach(Array(results.enumerated()), id: \.element.id) { index, entry in
+                            if index == favCount && favCount > 0 {
+                                Divider()
+                                    .padding(.horizontal, DesignTokens.Spacing.sm)
+                                    .padding(.vertical, 2)
+                            }
+                            catalogEntryRow(entry, itemIDPrefix: "result_")
+                                .id(entry.id)
+                        }
+                    }
+                    .padding(.horizontal, DesignTokens.Spacing.xs)
+                    .padding(.vertical, DesignTokens.Spacing.xs)
+                }
+                .frame(height: listHeight)
+                .onChange(of: highlightedIndex) { _, _ in
+                    scrollToHighlighted(proxy: proxy)
+                }
+            }
+
+            resultCountLabel
+        }
+    }
+
+    // MARK: - Catalog Error
+
+    @ViewBuilder
+    private var catalogError: some View {
+        if case .error(let message) = profileManager.catalogState,
+           profileManager.catalogEntries.isEmpty {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 10))
+                Text(message)
+                    .font(.system(size: 10))
+            }
+            .foregroundStyle(.red.opacity(0.9))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .padding(.bottom, DesignTokens.Spacing.xs)
+        }
+    }
+
+    // MARK: - Import Button
+
+    private var importButton: some View {
+        Button {
+            onImport()
+        } label: {
+            HStack {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 10))
+                Text("Import ParametricEQ.txt...")
+                    .font(.system(size: 11))
+            }
+            .foregroundStyle(DesignTokens.Colors.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .frame(height: itemHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(hoveredID == "_import" ? Color.white.opacity(0.04) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .whenHovered { hoveredID = $0 ? "_import" : nil }
+        .accessibilityLabel("Import custom profile")
+        .accessibilityHint("Opens file picker for ParametricEQ.txt files")
+        .padding(.horizontal, DesignTokens.Spacing.xs)
+        .padding(.bottom, DesignTokens.Spacing.xs)
+    }
+
+    // MARK: - Error Messages
+
+    @ViewBuilder
+    private var errorMessages: some View {
+        if let errorMessage = fetchError ?? importErrorMessage {
+            Text(errorMessage)
+                .font(.system(size: 10))
+                .foregroundStyle(.red.opacity(0.9))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, DesignTokens.Spacing.sm)
+                .padding(.bottom, DesignTokens.Spacing.xs)
+                .transition(.opacity)
+        }
+    }
+
     // MARK: - Result Count
 
     @ViewBuilder
@@ -481,68 +591,7 @@ struct AutoEQSearchPanel: View {
         }
     }
 
-    // MARK: - Profile Row (for already-loaded profiles like the selected one)
-
-    @ViewBuilder
-    private func profileRow(_ profile: AutoEQProfile, itemIDPrefix: String) -> some View {
-        let isSelected = profile.id == selectedProfileID
-        let isFavorited = favoriteIDs.contains(profile.id)
-        let itemID = "\(itemIDPrefix)\(profile.id)"
-        let isRowHovered = hoveredID == profile.id
-        let isStarHovered = starHoveredID == profile.id
-        let isRowHighlighted = isHighlighted(itemID)
-
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(profile.name)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(DesignTokens.Colors.textPrimary)
-                    .lineLimit(1)
-
-                if profile.source == .imported {
-                    Text("Imported")
-                        .font(.system(size: 9))
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
-                } else if let measuredBy = profile.measuredBy {
-                    Text(measuredBy)
-                        .font(.system(size: 9))
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
-                }
-            }
-
-            Spacer()
-
-            starButton(id: profile.id, isFavorited: isFavorited, isVisible: isRowHovered || isRowHighlighted, isStarHovered: isStarHovered)
-
-            if isSelected {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-            }
-        }
-        .padding(.horizontal, DesignTokens.Spacing.sm)
-        .frame(height: itemHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(rowHighlight(for: itemID, isHovered: isRowHovered))
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onSelect(profile)
-            onDismiss()
-        }
-        .accessibilityAddTraits(.isButton)
-        .whenHovered { isHovered in
-            hoveredID = isHovered ? profile.id : nil
-            if isHovered { highlightedIndex = nil }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(profile.name)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityHint("Apply this correction profile")
-    }
-
-    // MARK: - Catalog Entry Row (lightweight, fetches on tap)
+    // MARK: - Catalog Entry Row
 
     @ViewBuilder
     private func catalogEntryRow(_ entry: AutoEQCatalogEntry, itemIDPrefix: String) -> some View {
@@ -572,7 +621,12 @@ struct AutoEQSearchPanel: View {
                 ProgressView()
                     .controlSize(.mini)
             } else {
-                starButton(id: entry.id, isFavorited: isFavorited, isVisible: isRowHovered || isRowHighlighted, isStarHovered: isStarHovered)
+                starButton(
+                    id: entry.id,
+                    isFavorited: isFavorited,
+                    isVisible: isRowHovered || isRowHighlighted,
+                    isStarHovered: isStarHovered
+                )
 
                 if isSelected {
                     Image(systemName: "checkmark")
@@ -602,10 +656,15 @@ struct AutoEQSearchPanel: View {
         .accessibilityHint("Apply this correction profile")
     }
 
-    // MARK: - Star Button
+    // MARK: - Star Button (browse zone rows)
 
     @ViewBuilder
-    private func starButton(id: String, isFavorited: Bool, isVisible: Bool, isStarHovered: Bool) -> some View {
+    private func starButton(
+        id: String,
+        isFavorited: Bool,
+        isVisible: Bool,
+        isStarHovered: Bool
+    ) -> some View {
         if isFavorited || isVisible {
             Button {
                 onToggleFavorite(id)
@@ -613,7 +672,9 @@ struct AutoEQSearchPanel: View {
                 Image(systemName: isFavorited ? "star.fill" : "star")
                     .font(.system(size: 10))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(starColor(isFavorited: isFavorited, isStarHovered: isStarHovered))
+                    .foregroundStyle(
+                        starColor(isFavorited: isFavorited, isStarHovered: isStarHovered)
+                    )
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
                     .scaleEffect(isStarHovered ? 1.1 : 1.0)
@@ -638,7 +699,6 @@ struct AutoEQSearchPanel: View {
                 onDismiss()
             } else {
                 fetchError = "Failed to load \(entry.name)"
-                // Auto-dismiss error after 3 seconds
                 Task {
                     try? await Task.sleep(for: .seconds(3))
                     if fetchError != nil { fetchError = nil }
@@ -669,31 +729,21 @@ struct AutoEQSearchPanel: View {
         let items = navigableItems
         guard let index = highlightedIndex, index < items.count else { return }
 
-        let item = items[index]
-        switch item {
-        case .correctionToggle:
-            onCorrectionToggle?(!isCorrectionEnabled)
-        case .noCorrection:
-            onSelect(nil)
+        let profileID = items[index].profileID
+        if let profile = profileManager.profile(for: profileID) {
+            onSelect(profile)
             onDismiss()
-        case .selectedProfile(let profileID), .searchResult(let profileID), .favorite(let profileID):
-            // Check if already loaded
-            if let profile = profileManager.profile(for: profileID) {
-                onSelect(profile)
-                onDismiss()
-            } else if let entry = profileManager.catalogEntries.first(where: { $0.id == profileID }) {
-                selectCatalogEntry(entry)
-            }
+        } else if let entry = profileManager.catalogEntries.first(where: { $0.id == profileID }) {
+            selectCatalogEntry(entry)
         }
     }
 
     private func scrollToHighlighted(proxy: ScrollViewProxy) {
         let items = navigableItems
         guard let index = highlightedIndex, index < items.count else { return }
-        if let profileID = items[index].profileID {
-            withAnimation(.easeOut(duration: 0.1)) {
-                proxy.scrollTo(profileID, anchor: .center)
-            }
+        let profileID = items[index].profileID
+        withAnimation(.easeOut(duration: 0.1)) {
+            proxy.scrollTo(profileID, anchor: .center)
         }
     }
 
@@ -718,54 +768,5 @@ struct AutoEQSearchPanel: View {
         } else {
             return DesignTokens.Colors.interactiveDefault
         }
-    }
-
-    @ViewBuilder
-    private func selectedCatalogProfileRow(id: String, name: String) -> some View {
-        let itemID = "selected_\(id)"
-        let isRowHovered = hoveredID == id
-
-        Button {
-            if let profile = profileManager.profile(for: id) {
-                onSelect(profile)
-                onDismiss()
-            } else if let entry = profileManager.catalogEntry(for: id) {
-                selectCatalogEntry(entry)
-            }
-        } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(name)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(DesignTokens.Colors.textPrimary)
-                        .lineLimit(1)
-
-                    Text("Selected profile")
-                        .font(.system(size: 9))
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
-                }
-
-                Spacer()
-
-                Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-            }
-            .padding(.horizontal, DesignTokens.Spacing.sm)
-            .frame(height: itemHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(rowHighlight(for: itemID, isHovered: isRowHovered))
-            )
-        }
-        .buttonStyle(.plain)
-        .whenHovered { isHovered in
-            hoveredID = isHovered ? id : nil
-            if isHovered { highlightedIndex = nil }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(name)
-        .accessibilityAddTraits(.isSelected)
-        .accessibilityHint("Assigned correction profile")
     }
 }
