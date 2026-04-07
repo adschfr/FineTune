@@ -50,8 +50,15 @@ struct DeviceRow: View {
     /// Breaks the quantization feedback loop on USB DACs with discrete dB steps.
     @State private var isUpdatingSliderFromDevice = false
 
-    /// Show muted icon when system muted OR volume is 0
-    private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
+    /// The displayed percentage value, matching EditablePercentage's formula.
+    /// Used for icon and unmute logic so visual state stays consistent with the label.
+    private var displayedPercentage: Int { Int(round(sliderValue * 100)) }
+
+    /// Show muted icon when system muted OR displayed volume is 0%.
+    /// Uses percentage threshold (not exact sliderValue == 0) because SwiftUI Slider
+    /// and volume clamping can leave sliderValue at tiny non-zero values (e.g. 0.003)
+    /// that display as "0%" but fail exact Double equality.
+    private var showMutedIcon: Bool { isMuted || displayedPercentage == 0 }
 
     /// Default slider position to restore when unmuting from 0 (50%)
     private let defaultUnmuteVolume: Double = 0.5
@@ -174,8 +181,8 @@ struct DeviceRow: View {
                 // Mute button
                 MuteButton(isMuted: showMutedIcon) {
                     if showMutedIcon {
-                        // Unmute: restore to default if at 0
-                        if sliderValue == 0 {
+                        // Unmute: restore to default if displayed as 0%
+                        if displayedPercentage == 0 {
                             suppressSliderAutoUnmute = isMuted
                             sliderValue = defaultUnmuteVolume
                         }

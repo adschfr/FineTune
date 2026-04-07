@@ -102,7 +102,7 @@ struct InactiveAppRow: View {
             // Header: Main row content (always visible)
             HStack(spacing: DesignTokens.Spacing.sm) {
                 // VU Meter (always 0 for inactive apps)
-                VUMeter(level: 0, isMuted: isMuted)
+                VUMeter(level: 0, isMuted: isMuted || volume == 0)
 
                 // App icon (no activation for inactive apps)
                 Image(nsImage: icon)

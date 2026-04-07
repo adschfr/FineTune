@@ -30,7 +30,14 @@ struct AppRowControls: View {
         dragOverrideValue ?? VolumeMapping.gainToSlider(volume)
     }
 
-    private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
+    /// The displayed percentage value, matching EditablePercentage's formula.
+    private var displayedPercentage: Int { Int(round(sliderValue * 100)) }
+
+    /// Show muted icon when muted OR displayed volume is 0%.
+    /// Uses percentage threshold (not exact sliderValue == 0) because the x² volume
+    /// mapping round-trip can leave sliderValue at tiny non-zero values (e.g. 0.003)
+    /// that display as "0%" but fail exact Double equality.
+    private var showMutedIcon: Bool { isMuted || displayedPercentage == 0 }
 
     private var eqButtonColor: Color {
         if isEQExpanded {
@@ -47,7 +54,7 @@ struct AppRowControls: View {
             // Mute button
             MuteButton(isMuted: showMutedIcon) {
                 if showMutedIcon {
-                    if volume == 0 {
+                    if displayedPercentage == 0 {
                         onVolumeChange(1.0)
                     }
                     onMuteChange(false)
