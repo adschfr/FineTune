@@ -337,7 +337,7 @@ final class AudioEngine {
                         tap.volume = self.effectiveVolume(for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
                     }
                     tap.updateLoudnessCompensation(
-                        volume: newVolume,
+                        volume: self.effectiveLoudnessVolume(for: tap),
                         enabled: loudnessEnabled
                     )
                 }
@@ -658,7 +658,7 @@ final class AudioEngine {
             applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
-            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, enabled: false)
+            tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: false)
         }
 
         // 6. Re-apply from clean settings (re-establishes routing to system default)
@@ -674,6 +674,12 @@ final class AudioEngine {
         }
         if let tap = taps[app.id] {
             tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+            if settingsManager.appSettings.loudnessCompensationEnabled {
+                tap.updateLoudnessCompensation(
+                    volume: effectiveLoudnessVolume(for: tap),
+                    enabled: true
+                )
+            }
         }
     }
 
@@ -708,6 +714,13 @@ final class AudioEngine {
         }
 
         return appGain * deviceVolumeMonitor.outputProcessingGain(for: device.id)
+    }
+
+    /// Estimated listening level for loudness compensation: device volume × per-app slider.
+    /// Does not include boost (intentional amplification beyond reference).
+    /// The compensator's phon estimation clamps to [0,1] so values > 1 are treated as reference.
+    private func effectiveLoudnessVolume(for tap: any ProcessTapControlling) -> Float {
+        tap.currentDeviceVolume * volumeState.getVolume(for: tap.app.id)
     }
 
     private func applyTapOutputState(to tap: any ProcessTapControlling, for pid: pid_t, deviceUIDs: [String]? = nil) {
@@ -799,7 +812,7 @@ final class AudioEngine {
 
     func setLoudnessCompensationEnabled(_ enabled: Bool) {
         for tap in taps.values {
-            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, enabled: enabled)
+            tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: enabled)
         }
     }
 
@@ -1055,7 +1068,7 @@ final class AudioEngine {
             loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
             tap.updateLoudnessEqualization(loudnessEqSettings)
             tap.updateLoudnessCompensation(
-                volume: tap.currentDeviceVolume,
+                volume: effectiveLoudnessVolume(for: tap),
                 enabled: settingsManager.appSettings.loudnessCompensationEnabled
             )
 
@@ -1202,7 +1215,7 @@ final class AudioEngine {
             loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
             tap.updateLoudnessEqualization(loudnessEqSettings)
             tap.updateLoudnessCompensation(
-                volume: tap.currentDeviceVolume,
+                volume: effectiveLoudnessVolume(for: tap),
                 enabled: settingsManager.appSettings.loudnessCompensationEnabled
             )
 
