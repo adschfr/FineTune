@@ -1073,7 +1073,7 @@ struct LoudnessIntegrationTests {
         // With enabled loudness equalizer
         var settings = LoudnessEqualizerSettings()
         settings.enabled = true
-        let equalizer = LoudnessEqualizer(settings: settings, sampleRate: sampleRate, channelCount: 2)
+        let equalizer = LoudnessEqualizer(settings: settings, sampleRate: sampleRate)
 
         let eqOutput = TestABL(buffers: [(channels: 2, frames: frames)])
         var eqVol: Float = 1.0
@@ -1126,7 +1126,7 @@ struct LoudnessIntegrationTests {
         // Both: equalizer + compensator
         var eqSettings = LoudnessEqualizerSettings()
         eqSettings.enabled = true
-        let equalizer = LoudnessEqualizer(settings: eqSettings, sampleRate: Float(sampleRate), channelCount: 2)
+        let equalizer = LoudnessEqualizer(settings: eqSettings, sampleRate: Float(sampleRate))
         let compensator2 = LoudnessCompensator(sampleRate: sampleRate)
         compensator2.updateForVolume(0.25)
         let bothOutput = TestABL(buffers: [(channels: 2, frames: frames)])
