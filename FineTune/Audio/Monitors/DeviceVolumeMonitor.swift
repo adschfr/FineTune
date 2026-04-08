@@ -29,6 +29,10 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     /// Whether system sounds should follow the macOS default output device
     private(set) var isSystemFollowingDefault: Bool = true
 
+    /// System alert volume (0.0–1.0), matches System Settings > Sound > Alert volume.
+    /// Read/written via AppleScript since no CoreAudio property exists for this.
+    private(set) var alertVolume: Float = 1.0
+
     /// Called when any output device's volume changes (deviceID, newVolume)
     var onVolumeChanged: ((AudioDeviceID, Float) -> Void)?
 
@@ -93,6 +97,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
     /// Debounced volume log tasks — log settled value at .info after 300ms instead of every change at .debug
     private var pendingVolumeLogTasks: [AudioDeviceID: Task<Void, Never>] = [:]
+
+    /// Debounce task for alert volume writes (NSAppleScript is heavy — throttle during drag)
+    private var alertVolumeDebounceTask: Task<Void, Never>?
 
     private var defaultDeviceAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDefaultOutputDevice,
@@ -259,6 +266,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         }
 
         startObservingInputDeviceList()
+
+        // Read initial alert volume
+        refreshAlertVolume()
 
         // Validate system sound state matches persisted preference
         validateSystemSoundState()
@@ -650,6 +660,72 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         settingsManager.setSystemSoundsFollowDefault(false)
         setSystemDevice(deviceID)
         logger.debug("System sounds set to explicit device: \(deviceID)")
+    }
+
+    // MARK: - Alert Volume
+
+    /// Reads the current system alert volume via AppleScript.
+    /// No CoreAudio property exists for alert volume — AppleScript is the canonical API.
+    /// Safe to call periodically for live sync; skip if a debounced write is pending.
+    func refreshAlertVolume() {
+        guard alertVolumeDebounceTask == nil else { return }
+
+        let script = NSAppleScript(source: "get alert volume of (get volume settings)")
+        var error: NSDictionary?
+        if let result = script?.executeAndReturnError(&error) {
+            let pct = Int(result.int32Value)
+            alertVolume = Float(pct) / 100.0
+        }
+    }
+
+    /// Sets the system alert volume (same as System Settings > Sound > Alert volume).
+    /// Updates the local property immediately for responsive UI, then debounces the
+    /// AppleScript call by 100ms to avoid blocking during rapid slider drags.
+    /// - Parameter volume: Alert volume from 0.0 to 1.0
+    func setAlertVolume(_ volume: Float) {
+        let clamped = max(0, min(1, volume))
+        let pct = Int(round(clamped * 100))
+        let newVolume = Float(pct) / 100.0
+
+        // Deduplicate: @Observable update → SwiftUI re-render → Slider re-sends same value
+        // through Binding set. Without this guard, each re-render cancels the pending debounce
+        // task before the 100ms elapses, so the NSAppleScript write never fires.
+        guard newVolume != alertVolume else { return }
+
+        alertVolume = newVolume
+
+        alertVolumeDebounceTask?.cancel()
+        alertVolumeDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled, let self else { return }
+
+            // Use osascript subprocess instead of NSAppleScript — the in-process
+            // NSAppleScript `set volume` silently fails under Hardened Runtime without
+            // com.apple.security.automation.apple-events entitlement. Spawning osascript
+            // as a child process bypasses this restriction.
+            //
+            // Process.run() is non-blocking (just fork+exec). terminationHandler fires
+            // on a background thread when osascript exits — no main thread blocking.
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", "set volume alert volume \(pct)"]
+            process.terminationHandler = { [weak self] proc in
+                if proc.terminationStatus != 0 {
+                    Task { @MainActor [weak self] in
+                        self?.logger.warning(
+                            "osascript exited with status \(proc.terminationStatus) setting alert volume"
+                        )
+                    }
+                }
+            }
+            do {
+                try process.run()
+            } catch {
+                self.logger.warning("Failed to launch osascript for alert volume: \(error)")
+            }
+
+            self.alertVolumeDebounceTask = nil
+        }
     }
 
     /// Synchronizes volume and mute listeners with the current device list from deviceMonitor

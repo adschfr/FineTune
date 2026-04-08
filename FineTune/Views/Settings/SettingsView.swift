@@ -105,6 +105,26 @@ struct SettingsView: View {
                     deviceVolumeMonitor.setSystemFollowDefault()
                 }
             )
+
+            // Sound Effects alert volume slider
+            SettingsSliderRow(
+                icon: "bell.and.waves.left.and.right",
+                title: "Alert Volume",
+                description: "Volume for alerts and notifications",
+                value: Binding(
+                    get: { deviceVolumeMonitor.alertVolume },
+                    set: { deviceVolumeMonitor.setAlertVolume($0) }
+                )
+            )
+            .task {
+                // Poll alert volume for live sync with System Settings.
+                // No CoreAudio property listener exists for alert volume —
+                // AppleScript is the only read path, so periodic refresh is required.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2))
+                    deviceVolumeMonitor.refreshAlertVolume()
+                }
+            }
         }
     }
 
