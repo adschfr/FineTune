@@ -150,23 +150,6 @@ struct ISO226ContoursMigrationTests {
 @Suite("LoudnessCompensator — headroom fitting")
 struct LoudnessCompensatorHeadroomTests {
 
-    @Test("Derived loudness headroom covers the fitted cascade peak at 3% system volume")
-    func fittedCascadePeakIsCoveredAtThreePercentVolume() {
-        let sampleRate = 48_000.0
-        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 0.03)
-        let sectionGains = LoudnessCompensator.fittedSectionGains(forPhon: phon, sampleRate: sampleRate)
-        let headroomDB = LoudnessCompensator.requiredHeadroomDB(forBandGains: sectionGains)
-        let coefficients = LoudnessCompensator.coefficientsForBands(gains: sectionGains, sampleRate: sampleRate)
-
-        let peakDB = peakCascadeResponseDB(
-            coefficients: coefficients,
-            sectionCount: LoudnessCompensator.bandCount,
-            sampleRate: sampleRate
-        ) - headroomDB
-
-        #expect(peakDB <= 0.1, "Net cascade peak should be <= 0 dB after headroom, got \(peakDB) dB")
-    }
-
     @Test("4-filter loudness fit tracks the target contour at 3% system volume")
     func fittedCascadeTracksTargetAtThreePercentVolume() {
         let sampleRate = 48_000.0
@@ -202,23 +185,6 @@ struct LoudnessCompensatorHeadroomTests {
         let lowFrequencyRMSE = sqrt(lowFrequencySquaredError / Double(lowFrequencyCount))
         #expect(lowFrequencyRMSE <= 2.0, "Low-frequency RMSE should stay within 2 dB, got \(lowFrequencyRMSE) dB")
         #expect(maxAbsError <= 3.0, "Max fitted-response error should stay within 3 dB, got \(maxAbsError) dB")
-    }
-
-    private func peakCascadeResponseDB(coefficients: [Double], sectionCount: Int, sampleRate: Double) -> Double {
-        var peakDB = -Double.infinity
-        for index in 0..<4096 {
-            let frequency = 20.0 * pow(20_000.0 / 20.0, Double(index) / 4095.0)
-            peakDB = max(
-                peakDB,
-                cascadeResponseDB(
-                    coefficients: coefficients,
-                    sectionCount: sectionCount,
-                    sampleRate: sampleRate,
-                    frequency: frequency
-                )
-            )
-        }
-        return peakDB
     }
 
     private func cascadeResponseDB(

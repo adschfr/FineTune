@@ -4,11 +4,11 @@ import Accelerate
 /// RT-safe loudness compensation processor based on ISO 226:2023 equal-loudness contours.
 ///
 /// Applies frequency-dependent gain to counteract the human ear's reduced sensitivity
-/// to bass and treble at low listening levels. At the reference level (~90 phon),
+/// to bass and treble at low listening levels. At the reference level (~80 phon),
 /// compensation is flat (bypassed). At lower levels, the contour difference is
 /// normalized around 1 kHz so only spectral balance is corrected. The app then fits
-/// that target curve with a low-cost four-section shelf/bell cascade, and a matching
-/// preamp creates headroom equal to the fitted cascade's true peak boost.
+/// that target curve with a low-cost four-section shelf/bell cascade. The downstream
+/// SoftLimiter handles any peaks that exceed unity after EQ boost.
 ///
 /// Subclass of `BiquadProcessor` — inherits atomic setup swaps, stereo biquad processing,
 /// delay buffer management, and NaN safety. Follows the same pattern as `EQProcessor`.
@@ -46,7 +46,6 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
 
     /// Phon level used for the last coefficient computation.
     private var _currentPhon: Double = 80.0
-    private nonisolated(unsafe) var _preampLinear: Float = 1.0
 
     // MARK: - Init
 
@@ -80,18 +79,10 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         // Bypass when all gains are negligible (near reference level)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
         if allNegligible {
-            _preampLinear = 1.0
             setEnabled(false)
             swapSetup(nil)
             return
         }
-
-        // No preamp cut — the downstream SoftLimiter handles any peaks that
-        // exceed unity after EQ boost. A static preamp cut was causing massive
-        // perceived volume loss at low volumes (the primary use case). At 30%
-        // system volume the headroom cut alone was -14 dB at 1 kHz, making
-        // audio nearly inaudible.
-        _preampLinear = 1.0
 
         let coefficients = Self.coefficientsForBands(gains: gains, sampleRate: sampleRate)
         let newSetup = coefficients.withUnsafeBufferPointer { ptr in
@@ -132,19 +123,6 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         }
 
         return sectionGains.map(Float.init)
-    }
-
-    static func requiredHeadroomDB(forBandGains gains: [Float]) -> Double {
-        requiredHeadroomDB(forBandGains: gains, sampleRate: 48_000)
-    }
-
-    static func requiredHeadroomDB(forBandGains gains: [Float], sampleRate: Double) -> Double {
-        let coefficients = coefficientsForBands(gains: gains, sampleRate: sampleRate)
-        return peakCascadeResponseDB(coefficients: coefficients, sectionCount: bandCount, sampleRate: sampleRate)
-    }
-
-    private static func preampLinearGain(forHeadroomDB headroomDB: Double) -> Float {
-        Float(pow(10.0, -headroomDB / 20.0))
     }
 
     /// Build the flat coefficient array for `vDSP_biquad_CreateSetup`.
@@ -195,28 +173,9 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         // Called by updateSampleRate() — recompute for current phon at new sample rate
         let gains = computeBandGains(phon: _currentPhon)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
-        guard !allNegligible else {
-            _preampLinear = 1.0
-            return nil
-        }
-        // No preamp cut — the downstream SoftLimiter handles any peaks that
-        // exceed unity after EQ boost. See updateForVolume() for rationale.
-        _preampLinear = 1.0
+        guard !allNegligible else { return nil }
         let coefficients = Self.coefficientsForBands(gains: gains, sampleRate: sampleRate)
         return (coefficients, Self.bandCount)
-    }
-
-    private static func peakCascadeResponseDB(coefficients: [Double], sectionCount: Int, sampleRate: Double) -> Double {
-        var peakDB = 0.0
-
-        for sampleIndex in 0..<1024 {
-            let frequency = 20.0 * pow(20_000.0 / 20.0, Double(sampleIndex) / 1023.0)
-            let omega = 2.0 * Double.pi * frequency / sampleRate
-            let magnitude = cascadeMagnitude(coefficients: coefficients, sectionCount: sectionCount, omega: omega)
-            peakDB = max(peakDB, 20.0 * log10(magnitude))
-        }
-
-        return max(0.0, peakDB)
     }
 
     private static func cascadeMagnitude(coefficients: [Double], sectionCount: Int, omega: Double) -> Double {
@@ -343,11 +302,4 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         return (0..<size).map { augmented[$0][size] }
     }
 
-    override func preProcess(output: UnsafeMutablePointer<Float>, frameCount: Int) {
-        var preampLinear = _preampLinear
-        guard preampLinear != 1.0 else { return }
-
-        let sampleCount = frameCount * 2
-        vDSP_vsmul(output, 1, &preampLinear, output, 1, vDSP_Length(sampleCount))
-    }
 }
