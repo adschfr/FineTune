@@ -106,33 +106,26 @@ struct SettingsView: View {
                 }
             )
 
-            // Sound Effects volume slider (hidden when device lacks volume control)
-            if systemDeviceHasVolumeControl {
-                SettingsSliderRow(
-                    icon: "bell.and.waves.left.and.right",
-                    title: "Sound Effects Volume",
-                    description: "Volume for alerts and notifications",
-                    value: Binding(
-                        get: {
-                            deviceVolumeMonitor.volumes[deviceVolumeMonitor.systemDeviceID] ?? 0.5
-                        },
-                        set: { newValue in
-                            deviceVolumeMonitor.setVolume(
-                                for: deviceVolumeMonitor.systemDeviceID,
-                                to: newValue
-                            )
-                        }
-                    )
+            // Sound Effects alert volume slider
+            SettingsSliderRow(
+                icon: "bell.and.waves.left.and.right",
+                title: "Alert Volume",
+                description: "Volume for alerts and notifications",
+                value: Binding(
+                    get: { deviceVolumeMonitor.alertVolume },
+                    set: { deviceVolumeMonitor.setAlertVolume($0) }
                 )
+            )
+            .task {
+                // Poll alert volume for live sync with System Settings.
+                // No CoreAudio property listener exists for alert volume —
+                // AppleScript is the only read path, so periodic refresh is required.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2))
+                    deviceVolumeMonitor.refreshAlertVolume()
+                }
             }
         }
-    }
-
-    /// Whether the current system sound effects device supports CoreAudio volume control.
-    /// False for HDMI/DisplayPort monitors and invalid device IDs.
-    private var systemDeviceHasVolumeControl: Bool {
-        let deviceID = deviceVolumeMonitor.systemDeviceID
-        return deviceID.isValid && deviceID.hasOutputVolumeControl()
     }
 
     // MARK: - Notifications Section
