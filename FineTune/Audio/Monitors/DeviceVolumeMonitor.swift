@@ -698,12 +698,32 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         alertVolumeDebounceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(100))
             guard !Task.isCancelled, let self else { return }
-            let script = NSAppleScript(source: "set volume alert volume \(pct)")
-            var scriptError: NSDictionary?
-            script?.executeAndReturnError(&scriptError)
-            if let scriptError {
-                self.logger.warning("Failed to set alert volume: \(scriptError)")
+
+            // Use osascript subprocess instead of NSAppleScript — the in-process
+            // NSAppleScript `set volume` silently fails under Hardened Runtime without
+            // com.apple.security.automation.apple-events entitlement. Spawning osascript
+            // as a child process bypasses this restriction.
+            //
+            // Process.run() is non-blocking (just fork+exec). terminationHandler fires
+            // on a background thread when osascript exits — no main thread blocking.
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", "set volume alert volume \(pct)"]
+            process.terminationHandler = { [weak self] proc in
+                if proc.terminationStatus != 0 {
+                    Task { @MainActor [weak self] in
+                        self?.logger.warning(
+                            "osascript exited with status \(proc.terminationStatus) setting alert volume"
+                        )
+                    }
+                }
             }
+            do {
+                try process.run()
+            } catch {
+                self.logger.warning("Failed to launch osascript for alert volume: \(error)")
+            }
+
             self.alertVolumeDebounceTask = nil
         }
     }
