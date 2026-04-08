@@ -96,37 +96,6 @@ final class LoudnessDetector: @unchecked Sendable {
         return smoothedLevel
     }
 
-    // MARK: - Settings update
-
-    func updateSettings(_ settings: LoudnessEqualizerSettings, sampleRate: Float) {
-        self.settings = settings
-        self.sampleRate = sampleRate
-
-        let ws = Int(settings.analysisWindowMs / 1000 * sampleRate)
-        let newWindowSamples = max(ws, 1)
-
-        let hs = Int(settings.analysisHopMs / 1000 * sampleRate)
-        hopSamples = max(hs, 1)
-
-        if newWindowSamples != windowSamples {
-            windowSamples = newWindowSamples
-            inverseWindowSamples = 1.0 / Float(windowSamples)
-            ringBuffer = [Float](repeating: 0, count: windowSamples)
-            writeIndex = 0
-            hopCounter = 0
-            runningSquareSum = 0
-        }
-
-        attackCoeff = LoudnessEqualizerMath.timeConstantCoefficient(
-            timeMs: settings.detectorAttackMs,
-            stepMs: settings.analysisHopMs
-        )
-        releaseCoeff = LoudnessEqualizerMath.timeConstantCoefficient(
-            timeMs: settings.detectorReleaseMs,
-            stepMs: settings.analysisHopMs
-        )
-    }
-
     // MARK: - Reset
 
     func reset() {

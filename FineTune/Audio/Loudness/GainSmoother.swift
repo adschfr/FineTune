@@ -15,14 +15,6 @@ final class GainSmoother: @unchecked Sendable {
         self.releaseCoeff = LoudnessEqualizerMath.timeConstantCoefficient(timeMs: settings.gainReleaseMs, stepMs: hopMs)
     }
 
-    /// Update settings and recompute coefficients.
-    func updateSettings(_ settings: LoudnessEqualizerSettings, sampleRate: Float) {
-        self.settings = settings
-        let hopMs = settings.analysisHopMs
-        self.attackCoeff  = LoudnessEqualizerMath.timeConstantCoefficient(timeMs: settings.gainAttackMs,  stepMs: hopMs)
-        self.releaseCoeff = LoudnessEqualizerMath.timeConstantCoefficient(timeMs: settings.gainReleaseMs, stepMs: hopMs)
-    }
-
     /// Reset smoother to a known initial gain.
     func reset(initialGainDb: Float = 0) {
         currentGainDb = initialGainDb

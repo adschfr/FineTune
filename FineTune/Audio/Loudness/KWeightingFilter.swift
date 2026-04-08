@@ -63,12 +63,6 @@ final class KWeightingFilter: @unchecked Sendable {
         return y2
     }
 
-    /// Update coefficients for a new sample rate. Resets filter state.
-    func updateSampleRate(_ sampleRate: Float) {
-        computeCoefficients(sampleRate: Double(sampleRate))
-        reset()
-    }
-
     /// Reset all filter state to zero.
     func reset() {
         s1_z1 = 0; s1_z2 = 0
