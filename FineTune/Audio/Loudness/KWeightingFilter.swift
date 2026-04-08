@@ -91,10 +91,10 @@ final class KWeightingFilter: @unchecked Sendable {
         s1_a1 = Float(shelfCoeffs[3])
         s1_a2 = Float(shelfCoeffs[4])
 
-        // Stage 2: high-pass  38 Hz, Q = 0.5 (Butterworth)
+        // Stage 2: high-pass  38 Hz, Q = 1/√2 (Butterworth)
         let hpCoeffs = BiquadMath.highPassCoefficients(
             frequency: 38.0,
-            q: 0.5,
+            q: 1.0 / sqrt(2.0),
             sampleRate: sampleRate
         )
         s2_b0 = Float(hpCoeffs[0])

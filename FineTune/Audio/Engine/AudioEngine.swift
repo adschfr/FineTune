@@ -328,7 +328,7 @@ final class AudioEngine {
         deviceVolumeMonitor.onVolumeChanged = { [weak self] deviceID, newVolume in
             guard let self else { return }
             guard let deviceUID = self.deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid else { return }
-            let loudnessSettings = self.settingsManager.appSettings
+            let loudnessEnabled = self.settingsManager.appSettings.loudnessCompensationEnabled
             for (_, tap) in self.taps {
                 if tap.currentDeviceUID == deviceUID {
                     tap.currentDeviceVolume = newVolume
@@ -338,8 +338,7 @@ final class AudioEngine {
                     }
                     tap.updateLoudnessCompensation(
                         volume: newVolume,
-                        amount: loudnessSettings.loudnessCompensationAmount,
-                        enabled: loudnessSettings.loudnessCompensationEnabled
+                        enabled: loudnessEnabled
                     )
                 }
             }
@@ -659,7 +658,7 @@ final class AudioEngine {
             applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
-            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, amount: 1.0, enabled: false)
+            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, enabled: false)
         }
 
         // 6. Re-apply from clean settings (re-establishes routing to system default)
@@ -799,16 +798,8 @@ final class AudioEngine {
     }
 
     func setLoudnessCompensationEnabled(_ enabled: Bool) {
-        let amount = settingsManager.appSettings.loudnessCompensationAmount
         for tap in taps.values {
-            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, amount: amount, enabled: enabled)
-        }
-    }
-
-    func setLoudnessCompensationAmount(_ amount: Float) {
-        let enabled = settingsManager.appSettings.loudnessCompensationEnabled
-        for tap in taps.values {
-            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, amount: amount, enabled: enabled)
+            tap.updateLoudnessCompensation(volume: tap.currentDeviceVolume, enabled: enabled)
         }
     }
 
@@ -1065,7 +1056,6 @@ final class AudioEngine {
             tap.updateLoudnessEqualization(loudnessEqSettings)
             tap.updateLoudnessCompensation(
                 volume: tap.currentDeviceVolume,
-                amount: settingsManager.appSettings.loudnessCompensationAmount,
                 enabled: settingsManager.appSettings.loudnessCompensationEnabled
             )
 
@@ -1213,7 +1203,6 @@ final class AudioEngine {
             tap.updateLoudnessEqualization(loudnessEqSettings)
             tap.updateLoudnessCompensation(
                 volume: tap.currentDeviceVolume,
-                amount: settingsManager.appSettings.loudnessCompensationAmount,
                 enabled: settingsManager.appSettings.loudnessCompensationEnabled
             )
 

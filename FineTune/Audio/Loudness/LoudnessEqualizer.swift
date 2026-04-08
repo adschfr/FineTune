@@ -6,25 +6,30 @@ import Foundation
 /// Input/output memory layout: interleaved — frame-major ordering.
 ///   `output[f * channelCount + ch]`
 ///
-/// All mutable state is owned exclusively by the real-time audio thread.
-/// The class is marked @unchecked Sendable accordingly.
+/// **RT-safety contract**: All mutable state is owned exclusively by the real-time
+/// audio thread after init. Settings and sample-rate changes are handled by creating
+/// a **new** instance on the main thread, atomically swapping the `nonisolated(unsafe)`
+/// pointer in ProcessTapController, and deferring destruction of the old instance by
+/// 500ms (matching the BiquadProcessor.swapSetup pattern).
+///
+/// This eliminates the data-race window that existed when `updateSettings()` and
+/// `updateSampleRate()` mutated sub-processor state from the main thread while
+/// `process()` read/wrote from the RT thread.
 final class LoudnessEqualizer: @unchecked Sendable {
 
-    // MARK: - Private state
+    // MARK: - Private state (exclusively RT-thread owned after init)
 
-    private var settings: LoudnessEqualizerSettings
-    private var currentSampleRate: Float
+    private let settings: LoudnessEqualizerSettings
     private let kFilter: KWeightingFilter
     private let detector: LoudnessDetector
-    private var gainComputer: GainComputer
+    private let gainComputer: GainComputer
     private let gainSmoother: GainSmoother
-    private var currentLinearGain: Float = 1.0
+    private var currentLinearGain: Float
 
     // MARK: - Init
 
     init(settings: LoudnessEqualizerSettings, sampleRate: Float, channelCount: Int) {
         self.settings = settings
-        self.currentSampleRate = sampleRate
         self.kFilter = KWeightingFilter(sampleRate: sampleRate)
         self.detector = LoudnessDetector(settings: settings, sampleRate: sampleRate)
         self.gainComputer = GainComputer(settings: settings)
@@ -37,7 +42,7 @@ final class LoudnessEqualizer: @unchecked Sendable {
     /// Whether loudness processing is active.
     var isEnabled: Bool { settings.enabled }
 
-    /// The current settings snapshot.
+    /// The current settings snapshot (read from main thread for creating replacement instances).
     var currentSettings: LoudnessEqualizerSettings { settings }
 
     /// Process audio from an interleaved input buffer to an interleaved output buffer.
@@ -111,33 +116,5 @@ final class LoudnessEqualizer: @unchecked Sendable {
                 output[base + ch] = input[base + ch] * linearGain
             }
         }
-    }
-
-    /// Replace the current settings and propagate to sub-processors.
-    func updateSettings(_ settings: LoudnessEqualizerSettings) {
-        let wasEnabled = self.settings.enabled
-        self.settings = settings
-        gainComputer.settings = settings
-        detector.updateSettings(settings, sampleRate: currentSampleRate)
-        gainSmoother.updateSettings(settings, sampleRate: currentSampleRate)
-        if wasEnabled != settings.enabled || !settings.enabled {
-            reset()
-        }
-    }
-
-    /// Notify the equalizer that the host sample rate has changed.
-    func updateSampleRate(_ sampleRate: Float) {
-        currentSampleRate = sampleRate
-        kFilter.updateSampleRate(sampleRate)
-        detector.updateSettings(settings, sampleRate: sampleRate)
-        gainSmoother.updateSettings(settings, sampleRate: sampleRate)
-    }
-
-    /// Reset all internal state to initial conditions.
-    func reset() {
-        kFilter.reset()
-        detector.reset()
-        gainSmoother.reset()
-        currentLinearGain = 1.0
     }
 }

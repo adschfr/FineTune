@@ -66,7 +66,6 @@ struct AppSettings: Codable, Equatable {
 
     // Audio Processing
     var loudnessCompensationEnabled: Bool = false  // ISO 226:2023 equal-loudness contour compensation
-    var loudnessCompensationAmount: Float = 1.0    // 0...1 strength multiplier for compensation contour
     var loudnessEqualizationEnabled: Bool = false  // Real-time loudness equalization
 
     init() {}
@@ -85,10 +84,6 @@ struct AppSettings: Codable, Equatable {
         softwareDeviceVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .softwareDeviceVolumeEnabled) ?? false
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
-        loudnessCompensationAmount = min(
-            max(try c.decodeIfPresent(Float.self, forKey: .loudnessCompensationAmount) ?? 1.0, 0.0),
-            1.0
-        )
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
     }
 }

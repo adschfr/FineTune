@@ -29,7 +29,6 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 generalSection
                 audioSection
-                loudnessSection
                 notificationsSection
                 dataSection
 
@@ -117,15 +116,11 @@ struct SettingsView: View {
             )
 
             SettingsLoudnessCompensationRow(
-                isOn: unifiedLoudnessToggleBinding,
-                amount: $settings.loudnessCompensationAmount
+                isOn: unifiedLoudnessToggleBinding
             )
         }
     }
 
-    private var loudnessSection: some View {
-        EmptyView()
-    }
 
     // MARK: - Notifications Section
 

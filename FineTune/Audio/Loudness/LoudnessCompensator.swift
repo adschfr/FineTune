@@ -1,4 +1,3 @@
-// FineTune/Audio/Loudness/LoudnessCompensator.swift
 import Foundation
 import Accelerate
 
@@ -47,7 +46,6 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
 
     /// Phon level used for the last coefficient computation.
     private var _currentPhon: Double = 80.0
-    private var _currentAmount: Double = 1.0
     private nonisolated(unsafe) var _preampLinear: Float = 1.0
 
     // MARK: - Init
@@ -69,17 +67,15 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     /// than 1.0 (coalesces rapid slider drags), bypasses processor when at reference level.
     ///
     /// Call from main thread only.
-    func updateForVolume(_ systemVolume: Float, amount: Float = 1.0) {
+    func updateForVolume(_ systemVolume: Float) {
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: systemVolume)
-        let clampedAmount = Double(min(max(amount, 0.0), 1.0))
 
         // Coalesce rapid updates, but never skip a disabled processor because re-enabling
         // loudness from the UI must rebuild coefficients immediately even at the same volume.
-        guard !isEnabled || abs(phon - _currentPhon) >= 1.0 || abs(clampedAmount - _currentAmount) >= 0.001 else { return }
+        guard !isEnabled || abs(phon - _currentPhon) >= 1.0 else { return }
         _currentPhon = phon
-        _currentAmount = clampedAmount
 
-        let gains = computeBandGains(phon: phon, amount: clampedAmount)
+        let gains = computeBandGains(phon: phon)
         let headroomDB = Self.requiredHeadroomDB(forBandGains: gains, sampleRate: sampleRate)
 
         // Bypass when all gains are negligible (near reference level)
@@ -104,13 +100,13 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     // MARK: - Coefficient Computation
 
     /// Compute per-section gains (dB) for the fixed four-filter loudness topology.
-    private func computeBandGains(phon: Double, amount: Double) -> [Float] {
-        Self.fittedSectionGains(forPhon: phon, amount: amount, sampleRate: sampleRate)
+    private func computeBandGains(phon: Double) -> [Float] {
+        Self.fittedSectionGains(forPhon: phon, sampleRate: sampleRate)
     }
 
     /// Fit the fixed four-section loudness topology to the ISO-derived target curve.
-    static func fittedSectionGains(forPhon phon: Double, amount: Double = 1.0, sampleRate: Double) -> [Float] {
-        let targetCurve = targetCurveDB(forPhon: phon, amount: amount)
+    static func fittedSectionGains(forPhon phon: Double, sampleRate: Double) -> [Float] {
+        let targetCurve = targetCurveDB(forPhon: phon)
         let basisResponses = basisResponsesDB(sampleRate: sampleRate)
         let gramMatrix = gramMatrix(for: basisResponses)
 
@@ -193,7 +189,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
 
     override func recomputeCoefficients() -> (coefficients: [Double], sectionCount: Int)? {
         // Called by updateSampleRate() — recompute for current phon at new sample rate
-        let gains = computeBandGains(phon: _currentPhon, amount: _currentAmount)
+        let gains = computeBandGains(phon: _currentPhon)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
         guard !allNegligible else {
             _preampLinear = 1.0
@@ -240,8 +236,8 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         return magnitude
     }
 
-    private static func targetCurveDB(forPhon phon: Double, amount: Double) -> [Double] {
-        let compensation = ISO226Contours.compensationGains(atPhon: phon, amount: amount)
+    private static func targetCurveDB(forPhon phon: Double) -> [Double] {
+        let compensation = ISO226Contours.compensationGains(atPhon: phon)
         let fitFrequencies = fitGridFrequencies()
         return fitFrequencies.map { frequency in
             ISO226Contours.interpolateCompensation(compensation, atFrequency: frequency)
@@ -344,12 +340,10 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     }
 
     override func preProcess(output: UnsafeMutablePointer<Float>, frameCount: Int) {
-        let preampLinear = _preampLinear
+        var preampLinear = _preampLinear
         guard preampLinear != 1.0 else { return }
 
         let sampleCount = frameCount * 2
-        for sampleIndex in 0..<sampleCount {
-            output[sampleIndex] *= preampLinear
-        }
+        vDSP_vsmul(output, 1, &preampLinear, output, 1, vDSP_Length(sampleCount))
     }
 }

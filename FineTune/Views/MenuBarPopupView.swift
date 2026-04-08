@@ -164,9 +164,6 @@ struct MenuBarPopupView: View {
             if oldValue.loudnessCompensationEnabled != newValue.loudnessCompensationEnabled {
                 audioEngine.setLoudnessCompensationEnabled(newValue.loudnessCompensationEnabled)
             }
-            if oldValue.loudnessCompensationAmount != newValue.loudnessCompensationAmount {
-                audioEngine.setLoudnessCompensationAmount(newValue.loudnessCompensationAmount)
-            }
             if oldValue.loudnessEqualizationEnabled != newValue.loudnessEqualizationEnabled {
                 audioEngine.setLoudnessEqualizationEnabled(newValue.loudnessEqualizationEnabled)
             }

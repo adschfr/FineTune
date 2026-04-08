@@ -235,10 +235,10 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryAutoEQProcessor?.setPreampEnabled(enabled)
     }
 
-    func updateLoudnessCompensation(volume: Float, amount: Float, enabled: Bool) {
+    func updateLoudnessCompensation(volume: Float, enabled: Bool) {
         if enabled {
-            loudnessCompensator?.updateForVolume(volume, amount: amount)
-            secondaryLoudnessCompensator?.updateForVolume(volume, amount: amount)
+            loudnessCompensator?.updateForVolume(volume)
+            secondaryLoudnessCompensator?.updateForVolume(volume)
         } else {
             loudnessCompensator?.setEnabled(false)
             secondaryLoudnessCompensator?.setEnabled(false)
@@ -246,8 +246,24 @@ final class ProcessTapController: ProcessTapControlling {
     }
 
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {
-        loudnessEqualizerProcessor?.updateSettings(settings)
-        secondaryLoudnessEqualizerProcessor?.updateSettings(settings)
+        // Atomic swap pattern: create new instance, swap pointer, defer-destroy old.
+        // LoudnessEqualizer is immutable after init — no runtime mutation methods.
+        // This eliminates the data race between main-thread settings changes and
+        // RT-thread process() calls.
+        if let sampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
+            let newProcessor = LoudnessEqualizer(settings: settings, sampleRate: Float(sampleRate), channelCount: 2)
+            let old = loudnessEqualizerProcessor
+            loudnessEqualizerProcessor = newProcessor
+            if let old {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = old }
+            }
+        }
+        if let secondary = secondaryLoudnessEqualizerProcessor,
+           let sampleRate = try? secondaryResources.aggregateDeviceID.readNominalSampleRate() {
+            let newSecondary = LoudnessEqualizer(settings: settings, sampleRate: Float(sampleRate), channelCount: 2)
+            secondaryLoudnessEqualizerProcessor = newSecondary
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = secondary }
+        }
     }
 
     // MARK: - Multi-Device Aggregate Configuration
@@ -637,6 +653,7 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
         secondaryLoudnessCompensator = nil
+        secondaryLoudnessEqualizerProcessor = nil
         _invalidating = false
     }
 
@@ -804,7 +821,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         let secLoudness = LoudnessCompensator(sampleRate: sampleRate)
         secLoudness.updateForVolume(_currentDeviceVolume)
-        if loudnessCompensator?.isEnabled == false { secLoudness.setEnabled(false) }
+        if !(loudnessCompensator?.isEnabled ?? false) { secLoudness.setEnabled(false) }
         secondaryLoudnessCompensator = secLoudness
 
         nextCallbackID += 1
@@ -1015,8 +1032,18 @@ final class ProcessTapController: ProcessTapControlling {
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * 0.030))
             eqProcessor?.updateSampleRate(deviceSampleRate)
             autoEQProcessor?.updateSampleRate(deviceSampleRate)
-            loudnessEqualizerProcessor?.updateSampleRate(Float(deviceSampleRate))
             loudnessCompensator?.updateSampleRate(deviceSampleRate)
+
+            // LoudnessEqualizer is immutable — swap to new instance at new sample rate
+            if let oldLE = loudnessEqualizerProcessor {
+                let newLE = LoudnessEqualizer(
+                    settings: oldLE.currentSettings,
+                    sampleRate: Float(deviceSampleRate),
+                    channelCount: 2
+                )
+                loudnessEqualizerProcessor = newLE
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = oldLE }
+            }
         }
     }
 
