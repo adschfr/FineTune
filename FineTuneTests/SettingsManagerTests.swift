@@ -225,12 +225,6 @@ struct AppSettingsDefaultTests {
         #expect(settings.loudnessEqualizationEnabled == false)
     }
 
-    @Test("loudnessCompensationAmount defaults to 1.0")
-    func loudnessCompensationAmountDefault() {
-        let settings = AppSettings()
-        #expect(settings.loudnessCompensationAmount == 1.0)
-    }
-
     @Test("loudnessEqualizationEnabled round-trips through JSON as true")
     func loudnessEqualizationEnabledRoundTrip() throws {
         var settings = AppSettings()
@@ -238,15 +232,6 @@ struct AppSettingsDefaultTests {
         let data = try JSONEncoder().encode(settings)
         let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
         #expect(decoded.loudnessEqualizationEnabled == true)
-    }
-
-    @Test("loudnessCompensationAmount round-trips through JSON")
-    func loudnessCompensationAmountRoundTrip() throws {
-        var settings = AppSettings()
-        settings.loudnessCompensationAmount = 0.35
-        let data = try JSONEncoder().encode(settings)
-        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
-        #expect(decoded.loudnessCompensationAmount == 0.35)
     }
 
     @Test("Unified loudness toggle updates compensation and equalization together")
@@ -274,17 +259,6 @@ struct AppSettingsDefaultTests {
         #expect(manager.appSettings.loudnessEqualizationEnabled == true)
     }
 
-    @Test("loudnessCompensationAmount persists via SettingsManager")
-    @MainActor
-    func loudnessCompensationAmountPersistence() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-        let manager = SettingsManager(directory: tempDir)
-        var newSettings = manager.appSettings
-        newSettings.loudnessCompensationAmount = 0.6
-        manager.updateAppSettings(newSettings)
-        #expect(manager.appSettings.loudnessCompensationAmount == 0.6)
-    }
 }
 
 // MARK: - MenuBarIconStyle

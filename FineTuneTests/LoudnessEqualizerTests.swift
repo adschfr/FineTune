@@ -282,13 +282,13 @@ struct LoudnessEqualizerTests {
 
     @Test("Disabling after active gain riding restores immediate unity passthrough")
     func disablingAfterProcessingClearsResidualGain() {
-        var settings = LoudnessEqualizerSettings()
-        settings.enabled = true
+        var enabledSettings = LoudnessEqualizerSettings()
+        enabledSettings.enabled = true
 
         let sampleRate: Float = 48000
         let frameCount = 2048
         let channelCount = 2
-        let eq = LoudnessEqualizer(settings: settings, sampleRate: sampleRate, channelCount: channelCount)
+        let enabledEq = LoudnessEqualizer(settings: enabledSettings, sampleRate: sampleRate, channelCount: channelCount)
 
         var loudInput = [Float](repeating: 0, count: frameCount * channelCount)
         for frame in 0..<frameCount {
@@ -300,7 +300,7 @@ struct LoudnessEqualizerTests {
 
         loudInput.withUnsafeMutableBufferPointer { inPtr in
             loudOutput.withUnsafeMutableBufferPointer { outPtr in
-                eq.process(
+                enabledEq.process(
                     input: inPtr.baseAddress!,
                     output: outPtr.baseAddress!,
                     frameCount: frameCount,
@@ -309,8 +309,11 @@ struct LoudnessEqualizerTests {
             }
         }
 
-        settings.enabled = false
-        eq.updateSettings(settings)
+        // LoudnessEqualizer is immutable — create a new disabled instance
+        // (matches the atomic swap pattern used in production)
+        var disabledSettings = LoudnessEqualizerSettings()
+        disabledSettings.enabled = false
+        let disabledEq = LoudnessEqualizer(settings: disabledSettings, sampleRate: sampleRate, channelCount: channelCount)
 
         var quietInput = [Float](repeating: 0, count: frameCount * channelCount)
         for frame in 0..<frameCount {
@@ -322,7 +325,7 @@ struct LoudnessEqualizerTests {
 
         quietInput.withUnsafeMutableBufferPointer { inPtr in
             quietOutput.withUnsafeMutableBufferPointer { outPtr in
-                eq.process(
+                disabledEq.process(
                     input: inPtr.baseAddress!,
                     output: outPtr.baseAddress!,
                     frameCount: frameCount,
