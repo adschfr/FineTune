@@ -13,6 +13,9 @@ struct SettingsView: View {
     let outputDevices: [AudioDevice]
 
     @State private var showResetConfirmation = false
+    @State private var isSupportHovered = false
+    @State private var isStarHovered = false
+    @State private var isLicenseHovered = false
 
     var body: some View {
         // Scrollable settings content
@@ -213,13 +216,55 @@ struct SettingsView: View {
         let yearText = startYear == currentYear ? "\(startYear)" : "\(startYear)-\(currentYear)"
 
         return HStack(spacing: DesignTokens.Spacing.xs) {
-            Link(destination: URL(string: "https://github.com/ronitsingh10/FineTune")!) {
-                Text("\(Image(systemName: "star")) Star on GitHub")
+            Button {
+                NSWorkspace.shared.open(URL(string: "https://github.com/ronitsingh10/FineTune")!)
+            } label: {
+                Text("\(Image(systemName: isStarHovered ? "star.fill" : "star")) Star on GitHub")
+                    .foregroundStyle(isStarHovered ? Color(nsColor: .systemYellow) : DesignTokens.Colors.textTertiary)
             }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isStarHovered = hovering
+                }
+            }
+            .accessibilityLabel("Star FineTune on GitHub")
+
+            Text("·")
+
+            Button {
+                NSWorkspace.shared.open(DesignTokens.Links.support)
+            } label: {
+                Text("\(Image(systemName: isSupportHovered ? "heart.fill" : "heart")) Support FineTune")
+                    .foregroundStyle(isSupportHovered ? Color(nsColor: .systemPink) : DesignTokens.Colors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isSupportHovered = hovering
+                }
+            }
+            .accessibilityLabel("Support FineTune")
 
             Text("·")
 
             Text("Copyright © \(yearText) Ronit Singh")
+
+            Text("·")
+
+            Button {
+                NSWorkspace.shared.open(DesignTokens.Links.license)
+            } label: {
+                Text("GPL-3.0")
+                    .foregroundStyle(isLicenseHovered ? DesignTokens.Colors.textSecondary : DesignTokens.Colors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(DesignTokens.Animation.hover) {
+                    isLicenseHovered = hovering
+                }
+            }
+            .accessibilityLabel("View GPL-3.0 license")
         }
         .font(DesignTokens.Typography.caption)
         .foregroundStyle(DesignTokens.Colors.textTertiary)
