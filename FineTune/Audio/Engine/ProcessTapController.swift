@@ -257,7 +257,7 @@ final class ProcessTapController: ProcessTapControlling {
             kAudioAggregateDeviceMainSubDeviceKey: clockDeviceUID,
             kAudioAggregateDeviceClockDeviceKey: clockDeviceUID,
             kAudioAggregateDeviceIsPrivateKey: true,
-            kAudioAggregateDeviceIsStackedKey: true,  // All sub-devices receive same audio
+            kAudioAggregateDeviceIsStackedKey: true,  // Required for multi-device mirroring — HAL feeds same audio to all sub-devices
             kAudioAggregateDeviceTapAutoStartKey: true,
             kAudioAggregateDeviceSubDeviceListKey: subDevices,
             kAudioAggregateDeviceTapListKey: [
@@ -316,6 +316,7 @@ final class ProcessTapController: ProcessTapControlling {
                 let streamTap = CATapDescription(processes: app.processObjectIDs, deviceUID: deviceUID, stream: outputStream)
                 streamTap.uuid = UUID()
                 streamTap.muteBehavior = .mutedWhenTapped
+                streamTap.isPrivate = true
 
                 var tapID: AudioObjectID = .unknown
                 let err = AudioHardwareCreateProcessTap(streamTap, &tapID)
@@ -335,6 +336,7 @@ final class ProcessTapController: ProcessTapControlling {
         let mixdownTap = CATapDescription(stereoMixdownOfProcesses: app.processObjectIDs)
         mixdownTap.uuid = UUID()
         mixdownTap.muteBehavior = .mutedWhenTapped
+        mixdownTap.isPrivate = true
 
         var mixdownTapID: AudioObjectID = .unknown
         let mixdownErr = AudioHardwareCreateProcessTap(mixdownTap, &mixdownTapID)
