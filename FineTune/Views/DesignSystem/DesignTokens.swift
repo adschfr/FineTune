@@ -120,6 +120,17 @@ enum DesignTokens {
         /// VU meter muted state
         static let vuMuted: Color = .primary.opacity(0.35)
 
+        // MARK: AutoEQ
+
+        /// Empty state dashed border
+        static let autoEQEmptyBorder = Color.white.opacity(0.1)
+
+        /// Empty state icon color
+        static let autoEQEmptyIcon = Color(white: 0.267)
+
+        /// Toggle label text color (Correction / Preamp labels)
+        static let autoEQToggleLabel = Color.white.opacity(0.5)
+
     }
 
     // MARK: - Typography
@@ -148,6 +159,12 @@ enum DesignTokens {
 
         /// EQ frequency labels
         static let eqLabel = Font.system(size: 9, weight: .medium, design: .monospaced)
+
+        /// AutoEQ card profile name
+        static let cardProfileName = Font.system(size: 12, weight: .semibold)
+
+        /// AutoEQ card source/measuredBy
+        static let cardSource = Font.system(size: 9, weight: .regular)
     }
 
     // MARK: - Spacing (standard 1× multiplier)

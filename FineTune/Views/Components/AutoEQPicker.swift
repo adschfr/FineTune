@@ -30,7 +30,10 @@ struct AutoEQPicker: View {
         if isExpanded {
             return DesignTokens.Colors.accentPrimary
         } else if selection != nil || profileName != nil {
-            return DesignTokens.Colors.accentPrimary
+            // Dim when profile assigned but correction disabled
+            return isCorrectionEnabled
+                ? DesignTokens.Colors.accentPrimary
+                : DesignTokens.Colors.interactiveDefault
         } else if isButtonHovered {
             return DesignTokens.Colors.interactiveHover
         }
