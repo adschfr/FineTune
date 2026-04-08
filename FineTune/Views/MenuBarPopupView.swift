@@ -164,6 +164,12 @@ struct MenuBarPopupView: View {
             if oldValue.softwareDeviceVolumeEnabled != newValue.softwareDeviceVolumeEnabled {
                 audioEngine.handleSoftwareVolumeSettingChanged()
             }
+            if oldValue.loudnessCompensationEnabled != newValue.loudnessCompensationEnabled {
+                audioEngine.setLoudnessCompensationEnabled(newValue.loudnessCompensationEnabled)
+            }
+            if oldValue.loudnessEqualizationEnabled != newValue.loudnessEqualizationEnabled {
+                audioEngine.setLoudnessEqualizationEnabled(newValue.loudnessEqualizationEnabled)
+            }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
             pairedDevices = newValue

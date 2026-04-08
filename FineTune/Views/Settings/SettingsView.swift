@@ -17,6 +17,15 @@ struct SettingsView: View {
     @State private var isStarHovered = false
     @State private var isLicenseHovered = false
 
+    private var unifiedLoudnessToggleBinding: Binding<Bool> {
+        Binding(
+            get: { settings.loudnessCompensationEnabled && settings.loudnessEqualizationEnabled },
+            set: { isEnabled in
+                settings.setUnifiedLoudnessEnabled(isEnabled)
+            }
+        )
+    }
+
     var body: some View {
         // Scrollable settings content
         ScrollView {
@@ -128,8 +137,13 @@ struct SettingsView: View {
                     deviceVolumeMonitor.refreshAlertVolume()
                 }
             }
+
+            SettingsLoudnessCompensationRow(
+                isOn: unifiedLoudnessToggleBinding
+            )
         }
     }
+
 
     // MARK: - Notifications Section
 
