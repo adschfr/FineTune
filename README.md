@@ -57,10 +57,14 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 
 ### 🎛 EQ & Correction
 - **10-band EQ** — 20 presets across 5 categories
+- **User EQ presets** — Save, rename, and manage custom EQ configurations per device
 - **AutoEQ headphone correction** — Search thousands of headphone profiles or import your own ParametricEQ.txt files for per-device frequency response correction
+- **Loudness compensation** — Automatic bass and treble correction at low volumes using ISO 226:2023 equal-loudness contours, with real-time level management to keep perceived loudness consistent
 
 ### 🖥 Devices & System
 - **Input device control** — Monitor and adjust microphone levels
+- **Alert volume** — Control macOS notification and alert volume from settings
+- **Software device volume** — Volume control for outputs that don't support hardware volume
 - **Bluetooth device management** — Connect paired devices directly from the menu bar
 - **Monitor speaker control** — Adjust volume on external displays via DDC
 - **Menu bar app** — Lightweight, always accessible
