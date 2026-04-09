@@ -57,7 +57,7 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 
 ### 🎛 EQ & Correction
 - **10-band EQ** — 20 presets across 5 categories
-- **User EQ presets** — Save, rename, and manage custom EQ configurations per device
+- **User EQ presets** — Save, rename, and manage custom EQ configurations per app
 - **AutoEQ headphone correction** — Search thousands of headphone profiles or import your own ParametricEQ.txt files for per-device frequency response correction
 - **Loudness compensation** — Automatic bass and treble correction at low volumes using ISO 226:2023 equal-loudness contours, with real-time level management to keep perceived loudness consistent
 
