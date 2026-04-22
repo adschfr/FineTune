@@ -45,6 +45,18 @@ enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - HUD Style
+
+/// Style of the on-screen HUD shown when media keys drive FineTune's volume.
+/// `.tahoe` renders a small top-right pill; `.classic` renders a center-bottom panel
+/// with 16 segment tiles matching Apple's pre-Tahoe HUD aesthetic.
+enum HUDStyle: String, Codable, CaseIterable, Identifiable {
+    case tahoe
+    case classic
+
+    var id: String { rawValue }
+}
+
 // MARK: - App-Wide Settings Model
 
 struct AppSettings: Codable, Equatable {
@@ -65,6 +77,10 @@ struct AppSettings: Codable, Equatable {
     var loudnessCompensationEnabled: Bool = false  // ISO 226:2023 equal-loudness contour compensation
     var loudnessEqualizationEnabled: Bool = false  // Real-time loudness equalization
 
+    // Media Keys & HUD
+    var hudStyle: HUDStyle = .tahoe                // Visual style of the volume HUD
+    var mediaKeyControlEnabled: Bool = true        // Intercept F10/F11/F12 to drive the default output device
+
     init() {}
 
     mutating func setUnifiedLoudnessEnabled(_ enabled: Bool) {
@@ -81,6 +97,8 @@ struct AppSettings: Codable, Equatable {
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
+        hudStyle = try c.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .tahoe
+        mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
     }
 }
 
