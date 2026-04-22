@@ -131,6 +131,19 @@ enum DesignTokens {
         /// Toggle label text color (Correction / Preamp labels)
         static let autoEQToggleLabel = Color.white.opacity(0.5)
 
+        // MARK: HUD
+
+        /// Active dot in Tahoe HUD tick track
+        static let hudDotActive: Color = .primary.opacity(0.85)
+
+        /// Inactive dot in Tahoe HUD tick track
+        static let hudDotInactive: Color = .primary.opacity(0.18)
+
+        /// Active tile in Classic HUD segment row
+        static let hudTileActive: Color = .primary.opacity(0.7)
+
+        /// Inactive tile in Classic HUD segment row
+        static let hudTileInactive: Color = .primary.opacity(0.2)
     }
 
     // MARK: - Typography
