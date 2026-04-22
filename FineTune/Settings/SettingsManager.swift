@@ -58,9 +58,6 @@ struct AppSettings: Codable, Equatable {
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
 
-    // Device Volume
-    var softwareDeviceVolumeEnabled: Bool = false  // Software volume for unsupported output devices (opt-in)
-
     // Notifications
     var showDeviceDisconnectAlerts: Bool = true
 
@@ -81,7 +78,6 @@ struct AppSettings: Codable, Equatable {
         menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
         defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
-        softwareDeviceVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .softwareDeviceVolumeEnabled) ?? false
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
