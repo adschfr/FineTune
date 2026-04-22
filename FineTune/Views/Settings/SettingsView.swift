@@ -12,6 +12,11 @@ struct SettingsView: View {
     @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
     let outputDevices: [AudioDevice]
 
+    // Media keys & HUD
+    @Bindable var accessibility: AccessibilityPermissionService
+    @Bindable var mediaKeyStatus: MediaKeyStatus
+    let mediaKeyMonitor: MediaKeyMonitor
+
     @State private var showResetConfirmation = false
     @State private var isSupportHovered = false
     @State private var isStarHovered = false
@@ -32,6 +37,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 generalSection
                 audioSection
+                mediaKeysSection
                 notificationsSection
                 dataSection
 
@@ -89,13 +95,6 @@ struct SettingsView: View {
             )
 
             SettingsToggleRow(
-                icon: "speaker.badge.exclamationmark",
-                title: "Software Volume for Unsupported Devices",
-                description: "Add volume sliders for outputs without native controls (e.g. HDMI TVs)",
-                isOn: $settings.softwareDeviceVolumeEnabled
-            )
-
-            SettingsToggleRow(
                 icon: "mic",
                 title: "Lock Input Device",
                 description: "Prevent auto-switching when devices connect",
@@ -141,6 +140,39 @@ struct SettingsView: View {
             SettingsLoudnessCompensationRow(
                 isOn: unifiedLoudnessToggleBinding
             )
+        }
+    }
+
+    // MARK: - Media Keys & HUD Section
+
+    private var mediaKeysSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            SectionHeader(title: "Media Keys & HUD")
+                .padding(.bottom, DesignTokens.Spacing.xs)
+
+            // Toggle + inline permission footer in a single glass container.
+            // The permission strip only appears while untrusted; it collapses
+            // with a brief "granted" flourish when trust flips. Toggle stays
+            // interactive even when untrusted so users can pre-configure —
+            // `MediaKeyMonitor` only installs the tap when both flags are
+            // true, and reconciles automatically on trust flip.
+            MediaKeyControlRow(
+                isOn: $settings.mediaKeyControlEnabled,
+                accessibility: accessibility
+            )
+
+            if mediaKeyStatus.isOffline {
+                MediaKeyOfflineCard {
+                    mediaKeyMonitor.reconcile()
+                }
+            }
+
+            // HUD style only surfaces once the feature is actually live —
+            // hiding it when disabled keeps the section honest about what the
+            // toggle controls.
+            if settings.mediaKeyControlEnabled && accessibility.isTrustedCached {
+                HUDStylePicker(selection: $settings.hudStyle)
+            }
         }
     }
 
@@ -284,6 +316,144 @@ struct SettingsView: View {
         .foregroundStyle(DesignTokens.Colors.textTertiary)
         .frame(maxWidth: .infinity)
         .padding(.top, DesignTokens.Spacing.sm)
+    }
+}
+
+// MARK: - HUD Style Picker
+
+/// Inline picker for `HUDStyle`. Live-applied — no restart required.
+struct HUDStylePicker: View {
+    @Binding var selection: HUDStyle
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Image(systemName: "rectangle.on.rectangle")
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+                .frame(width: DesignTokens.Dimensions.settingsIconWidth)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("HUD Style")
+                    .font(DesignTokens.Typography.rowName)
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
+
+                Text("Choose how the volume indicator looks")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 4) {
+                ForEach(HUDStyle.allCases) { style in
+                    HUDStyleOption(style: style, isSelected: selection == style) {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            selection = style
+                        }
+                    }
+                }
+            }
+        }
+        .hoverableRow()
+    }
+}
+
+/// Individual HUD-style option button. The thumbnail renders a scaled
+/// caricature of the actual HUD geometry (pill-with-slider for Tahoe,
+/// square with glyph+ticks for Classic) so the picker is self-documenting
+/// without needing a separate preview surface.
+private struct HUDStyleOption: View {
+    let style: HUDStyle
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    private var label: String {
+        switch style {
+        case .tahoe: return "Tahoe"
+        case .classic: return "Classic"
+        }
+    }
+
+    var body: some View {
+        Button(action: onSelect) {
+            thumbnail
+                .frame(width: 52, height: 22)
+                .frame(width: 60, height: 26)
+                .contentShape(Rectangle())
+                .background {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isSelected ? DesignTokens.Colors.accentPrimary.opacity(0.15) : Color.clear)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(isSelected ? DesignTokens.Colors.accentPrimary : Color.clear, lineWidth: 1.5)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        switch style {
+        case .tahoe: tahoeThumbnail
+        case .classic: classicThumbnail
+        }
+    }
+
+    private var tahoeThumbnail: some View {
+        // Pill silhouette with a slider-track + thumb at ~55% — the reader
+        // instantly reads "horizontal pill with a slider", matching the
+        // shipped Tahoe HUD geometry at miniature scale.
+        let tint = isSelected ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.textSecondary
+        return RoundedRectangle(cornerRadius: 8)
+            .fill(Color.primary.opacity(0.08))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(tint.opacity(0.5), lineWidth: 0.75)
+            }
+            .overlay(alignment: .leading) {
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(tint.opacity(0.7))
+                        .frame(width: 3, height: 3)
+                    Capsule()
+                        .fill(tint.opacity(0.35))
+                        .frame(height: 1.5)
+                        .overlay(alignment: .leading) {
+                            Capsule()
+                                .fill(tint)
+                                .frame(width: 14, height: 1.5)
+                        }
+                }
+                .padding(.horizontal, 5)
+            }
+    }
+
+    private var classicThumbnail: some View {
+        // Square silhouette with a centered speaker glyph and a row of
+        // segment ticks beneath — mirrors the 200×200 Classic HUD layout.
+        let tint = isSelected ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.textSecondary
+        return RoundedRectangle(cornerRadius: 5)
+            .fill(Color.primary.opacity(0.08))
+            .frame(width: 22, height: 22)
+            .overlay {
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(tint.opacity(0.5), lineWidth: 0.75)
+            }
+            .overlay {
+                VStack(spacing: 2) {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 7, weight: .medium))
+                        .foregroundStyle(tint.opacity(0.8))
+                    HStack(spacing: 1) {
+                        ForEach(0..<4) { idx in
+                            RoundedRectangle(cornerRadius: 0.5)
+                                .fill(idx < 2 ? tint : tint.opacity(0.3))
+                                .frame(width: 2, height: 2)
+                        }
+                    }
+                }
+            }
     }
 }
 
