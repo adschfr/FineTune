@@ -11,39 +11,6 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Ap
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var audioEngine: AudioEngine?
 
-    /// Off-screen, fully transparent NSWindow kept permanently in WindowServer's
-    /// window list. Without this, a pure LSUIElement menu-bar app's cghidEventTap
-    /// plumbing AND NSPanel display pipeline stay partially inactive until the first
-    /// real window (the FluidMenuBarExtra popup) is shown — at which point media
-    /// keys start routing through our tap AND the HUD panel starts rendering.
-    ///
-    /// `orderFront` without a matching `orderOut` is the key: volumeHUD achieves the
-    /// same thing via a SwiftUI `WindowGroup { EmptyView() }` which is likewise
-    /// never ordered out.
-    private var hidPrimerWindow: NSWindow?
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        logger.info("DIAG applicationDidFinishLaunching fired; activationPolicy=\(NSApp.activationPolicy().rawValue) isActive=\(NSApp.isActive) windows=\(NSApp.windows.count)")
-        primeEventTapPipeline()
-    }
-
-    private func primeEventTapPipeline() {
-        let window = NSWindow(
-            contentRect: NSRect(x: -10_000, y: -10_000, width: 1, height: 1),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.alphaValue = 0
-        window.ignoresMouseEvents = true
-        window.isReleasedWhenClosed = false
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .transient]
-        window.level = .floating
-        window.orderFront(nil)
-        hidPrimerWindow = window
-        logger.info("DIAG primer window created; windows=\(NSApp.windows.count) isVisible=\(window.isVisible)")
-    }
-
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let audioEngine = audioEngine else {
             return

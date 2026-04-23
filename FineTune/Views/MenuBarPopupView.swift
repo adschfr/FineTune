@@ -164,10 +164,10 @@ struct MenuBarPopupView: View {
             pairedDevices = audioEngine.bluetoothDeviceMonitor.pairedDevices
             isBluetoothOn = audioEngine.bluetoothDeviceMonitor.isBluetoothOn
             localAppSettings = audioEngine.settingsManager.appSettings
-            popupVisibility.isVisible = true
-        }
-        .onDisappear {
-            popupVisibility.isVisible = false
+            // popupVisibility.isVisible is driven by the filtered NSWindow key
+            // notifications below, not by .onAppear — SwiftUI mounts this view
+            // before the popup is actually shown, and setting isVisible here
+            // would suppress the HUD on the first media key at cold launch.
         }
         .onChange(of: audioEngine.outputDevices) { _, _ in
             if isEditingDevicePriority && !wasEditingInputDevices {
@@ -208,12 +208,22 @@ struct MenuBarPopupView: View {
         .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
             updateSortedDevices()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            // Global notification — fires for every window in the process. Filter to
+            // FluidMenuBarExtra's popup window so unrelated windows (the HID-tap
+            // primer, NSAlert panels, etc.) don't mark the popup as visible and
+            // suppress the HUD.
+            guard let window = notification.object as? NSWindow,
+                  String(describing: type(of: window)).contains("FluidMenuBarExtra")
+            else { return }
             isPopupVisible = true
             popupVisibility.isVisible = true
             audioEngine.bluetoothDeviceMonitor.refresh()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  String(describing: type(of: window)).contains("FluidMenuBarExtra")
+            else { return }
             isPopupVisible = false
             popupVisibility.isVisible = false
         }
