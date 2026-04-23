@@ -11,11 +11,15 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Ap
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var audioEngine: AudioEngine?
 
-    /// Off-screen NSWindow kept alive for the process lifetime so WindowServer wires
-    /// `.cghidEventTap` into our event routing. Without this, a pure LSUIElement menu
-    /// bar app receives no media-key events from the HID tap until the first real
-    /// window (the FluidMenuBarExtra popup) is shown — the "first window primes event
-    /// taps" AppKit activation cycle. See fix/media-key-cold-launch-prime.
+    /// Off-screen, fully transparent NSWindow kept permanently in WindowServer's
+    /// window list. Without this, a pure LSUIElement menu-bar app's cghidEventTap
+    /// plumbing AND NSPanel display pipeline stay partially inactive until the first
+    /// real window (the FluidMenuBarExtra popup) is shown — at which point media
+    /// keys start routing through our tap AND the HUD panel starts rendering.
+    ///
+    /// `orderFront` without a matching `orderOut` is the key: volumeHUD achieves the
+    /// same thing via a SwiftUI `WindowGroup { EmptyView() }` which is likewise
+    /// never ordered out.
     private var hidPrimerWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -32,9 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         window.alphaValue = 0
         window.ignoresMouseEvents = true
         window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .transient]
         window.level = .floating
         window.orderFront(nil)
-        window.orderOut(nil)
         hidPrimerWindow = window
     }
 
