@@ -11,36 +11,74 @@ struct DeviceDetailSheet: View {
     let onOverrideChange: (VolumeControlTier?) -> Void
     let onDismiss: () -> Void
 
+    @State private var viewModel: DeviceInspectorViewModel
+
     private static let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "DeviceDetailSheet")
+
+    init(
+        device: AudioDevice,
+        transportType: TransportType,
+        autoDetectedTier: VolumeControlTier,
+        currentOverride: VolumeControlTier?,
+        onOverrideChange: @escaping (VolumeControlTier?) -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.device = device
+        self.transportType = transportType
+        self.autoDetectedTier = autoDetectedTier
+        self.currentOverride = currentOverride
+        self.onOverrideChange = onOverrideChange
+        self.onDismiss = onDismiss
+        self._viewModel = State(
+            initialValue: DeviceInspectorViewModel(
+                deviceID: device.id,
+                uid: device.uid,
+                transportType: transportType
+            )
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            metadataRow
+            DeviceInspectorInfoGrid(
+                info: viewModel.info,
+                onSampleRateSelected: { rate in
+                    viewModel.selectSampleRate(rate)
+                }
+            )
 
-            divider
+            if let error = viewModel.sampleRateError {
+                errorBanner(error)
+            }
 
-            softwareToggle
+            if let hogLine = DeviceInspectorInfo.formatHogModeOwner(
+                viewModel.info.hogModeOwner,
+                processName: viewModel.hogModeOwnerName
+            ) {
+                separator
+                hogModeRow(hogLine)
+            }
 
-            calloutText
+            if Self.shouldShowToggle(autoTier: autoDetectedTier) {
+                separator
+                softwareToggle
+                calloutText
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(DesignTokens.Colors.recessedBackground)
+        }
+        .padding(.horizontal, 2)
         .padding(.top, DesignTokens.Spacing.xs)
         .padding(.bottom, DesignTokens.Spacing.xs)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { viewModel.start() }
+        .onDisappear { viewModel.stop() }
     }
 
-    // MARK: - Metadata row
-
-    private var metadataRow: some View {
-        HStack(spacing: DesignTokens.Spacing.xs) {
-            Text(transportType.description)
-                .font(DesignTokens.Typography.caption)
-                .foregroundStyle(DesignTokens.Colors.textTertiary)
-
-            Spacer(minLength: DesignTokens.Spacing.xs)
-
-            autoBadge
-        }
-    }
+    // MARK: - Auto badge
 
     private var autoBadge: some View {
         Text("Auto: \(Self.tierDisplayName(autoDetectedTier))")
@@ -52,33 +90,66 @@ struct DeviceDetailSheet: View {
                 Capsule()
                     .fill(.white.opacity(0.1))
             )
+            .accessibilityLabel("Auto-detected volume control: \(Self.tierDisplayName(autoDetectedTier))")
     }
 
-    // MARK: - Divider
+    // MARK: - Separator
 
-    private var divider: some View {
+    private var separator: some View {
         Rectangle()
             .fill(DesignTokens.Colors.separator)
             .frame(height: 0.5)
+    }
+
+    // MARK: - Hog mode row
+
+    private func hogModeRow(_ text: String) -> some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+            Text(text)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(text)
+    }
+
+    // MARK: - Error banner
+
+    private func errorBanner(_ text: String) -> some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DesignTokens.Colors.mutedIndicator)
+            Text(text)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(text)
     }
 
     // MARK: - Software Toggle
 
     @ViewBuilder
     private var softwareToggle: some View {
-        if Self.shouldShowToggle(autoTier: autoDetectedTier) {
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                Text("Use FineTune's software volume")
-                    .font(DesignTokens.Typography.pickerText)
-                    .foregroundStyle(DesignTokens.Colors.textPrimary)
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            autoBadge
 
-                Spacer(minLength: DesignTokens.Spacing.sm)
+            Text("Use FineTune's software volume")
+                .font(DesignTokens.Typography.pickerText)
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
 
-                Toggle("", isOn: useSoftwareBinding)
-                    .toggleStyle(.switch)
-                    .scaleEffect(0.8)
-                    .labelsHidden()
-            }
+            Spacer(minLength: DesignTokens.Spacing.sm)
+
+            Toggle("", isOn: useSoftwareBinding)
+                .toggleStyle(.switch)
+                .scaleEffect(0.8)
+                .labelsHidden()
         }
     }
 
@@ -96,7 +167,7 @@ struct DeviceDetailSheet: View {
     // MARK: - Callout
 
     private var calloutText: some View {
-        Text("FineTune auto-detects how each device controls volume. Turn this on only if your slider doesn't affect the volume — most devices should stay off. This setting is remembered per device.")
+        Text("Turn on only if the volume slider doesn't work. FineTune remembers this for each device.")
             .font(DesignTokens.Typography.caption)
             .foregroundStyle(DesignTokens.Colors.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
