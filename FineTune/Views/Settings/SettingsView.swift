@@ -5,7 +5,6 @@ import SwiftUI
 struct SettingsView: View {
     @Binding var settings: AppSettings
     @ObservedObject var updateManager: UpdateManager
-    let launchIconStyle: MenuBarIconStyle
     let onResetAll: () -> Void
 
     // System sounds control
@@ -64,8 +63,7 @@ struct SettingsView: View {
             SettingsIconPickerRow(
                 icon: "menubar.rectangle",
                 title: "Menu Bar Icon",
-                selection: $settings.menuBarIconStyle,
-                appliedStyle: launchIconStyle
+                selection: $settings.menuBarIconStyle
             )
 
             SettingsUpdateRow(

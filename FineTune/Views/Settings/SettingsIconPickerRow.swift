@@ -6,12 +6,6 @@ struct SettingsIconPickerRow: View {
     let icon: String
     let title: String
     @Binding var selection: MenuBarIconStyle
-    let appliedStyle: MenuBarIconStyle
-
-    /// Whether a restart is needed to apply the selected icon
-    private var needsRestart: Bool {
-        selection != appliedStyle
-    }
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
@@ -24,24 +18,13 @@ struct SettingsIconPickerRow: View {
                     .font(DesignTokens.Typography.rowName)
                     .foregroundStyle(DesignTokens.Colors.textPrimary)
 
-                Text(needsRestart ? "Restart to apply changes" : "Choose your preferred icon style")
+                Text("Choose your preferred icon style")
                     .font(DesignTokens.Typography.caption)
                     .foregroundStyle(DesignTokens.Colors.textTertiary)
             }
 
             Spacer()
 
-            // Restart button when needed
-            if needsRestart {
-                Button("Restart") {
-                    restartApp()
-                }
-                .buttonStyle(.plain)
-                .font(DesignTokens.Typography.pickerText)
-                .foregroundStyle(DesignTokens.Colors.accentPrimary)
-            }
-
-            // Icon options on the right
             HStack(spacing: 4) {
                 ForEach(MenuBarIconStyle.allCases) { style in
                     IconOption(style: style, isSelected: selection == style) {
@@ -53,25 +36,6 @@ struct SettingsIconPickerRow: View {
             }
         }
         .hoverableRow()
-    }
-
-    /// Relaunches the app to apply icon changes
-    private func restartApp() {
-        let url = Bundle.main.bundleURL
-
-        // Use shell to wait for app to quit, then relaunch
-        let script = """
-            sleep 0.5
-            open "\(url.path)"
-            """
-
-        let task = Process()
-        task.launchPath = "/bin/sh"
-        task.arguments = ["-c", script]
-        try? task.run()
-
-        // Quit the app
-        NSApplication.shared.terminate(nil)
     }
 }
 
@@ -114,20 +78,16 @@ private struct IconOption: View {
 
 #Preview("Icon Picker Row") {
     VStack(spacing: DesignTokens.Spacing.sm) {
-        // No restart needed (same selection as applied)
         SettingsIconPickerRow(
             icon: "menubar.rectangle",
             title: "Menu Bar Icon",
-            selection: .constant(.default),
-            appliedStyle: .default
+            selection: .constant(.default)
         )
 
-        // Restart needed (different selection)
         SettingsIconPickerRow(
             icon: "menubar.rectangle",
             title: "Menu Bar Icon",
-            selection: .constant(.speaker),
-            appliedStyle: .default
+            selection: .constant(.speaker)
         )
     }
     .padding(DesignTokens.Spacing.lg)

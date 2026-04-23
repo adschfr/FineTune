@@ -8,9 +8,6 @@ struct MenuBarPopupView: View {
     @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
     @ObservedObject var updateManager: UpdateManager
 
-    /// Icon style that was applied at app launch (for restart-required detection)
-    let launchIconStyle: MenuBarIconStyle
-
     let permission: AudioRecordingPermission
 
     /// Accessibility trust state — passed through to SettingsView for the
@@ -133,7 +130,6 @@ struct MenuBarPopupView: View {
                 SettingsView(
                     settings: $localAppSettings,
                     updateManager: updateManager,
-                    launchIconStyle: launchIconStyle,
                     onResetAll: {
                         audioEngine.handleSettingsReset()
                         localAppSettings = audioEngine.settingsManager.appSettings
