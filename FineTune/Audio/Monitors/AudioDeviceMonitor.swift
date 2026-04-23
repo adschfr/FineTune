@@ -134,12 +134,22 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
                     continue
                 }
 
-                // Allow user-created aggregate devices (e.g. Multi-Output Device from Audio MIDI Setup)
-                // but skip FineTune's own internal aggregates used for process taps
+                // FineTune's own internal aggregates (used for process taps) are
+                // `kAudioAggregateDeviceIsPrivateKey: true`, but still visible to the
+                // creating process. Skip them by name prefix so they don't appear in
+                // our own picker. User-created aggregates (Audio MIDI Setup Multi-Output,
+                // etc.) pass through.
                 if deviceID.isAggregateDevice() && name.hasPrefix("FineTune-") { continue }
 
-                // Output devices - filter virtual devices (avoid clutter from Teams Audio, BlackHole, etc.)
-                if deviceID.hasOutputStreams() && !deviceID.isVirtualDevice() {
+                // Respect the driver's own opt-out. `kAudioDevicePropertyIsHidden` is
+                // how drivers signal "maintenance/utility device, don't show in
+                // pickers" — mirrors what Apple's System Settings does.
+                if deviceID.isHidden() { continue }
+
+                // Output devices. Virtual outputs (BlackHole, Loopback, Teams Audio)
+                // are NOT filtered out here — users who don't want them in their
+                // picker can hide them per-device via the reorder-mode eye toggle.
+                if deviceID.hasOutputStreams() {
                     // Try Core Audio icon first (via LRU cache), fall back to SF Symbol
                     let icon = DeviceIconCache.shared.icon(for: uid) {
                         deviceID.readDeviceIcon()
@@ -155,13 +165,10 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
                     outputDeviceList.append(device)
                 }
 
-                // Input devices - allow virtual devices but filter zombies
+                // Input devices. Zombie virtuals (registered but not alive — e.g.
+                // Teams Audio when Teams isn't running) are no longer filtered
+                // here; the hide toggle provides per-device suppression.
                 if deviceID.hasInputStreams() {
-                    // Skip zombie virtual devices (registered but not functional, e.g., Teams Audio when Teams not running)
-                    if deviceID.isVirtualDevice() && !deviceID.isDeviceAlive() {
-                        continue
-                    }
-
                     // Try Core Audio icon first, fall back to smart detection
                     let icon = DeviceIconCache.shared.icon(for: uid) {
                         deviceID.readDeviceIcon()
