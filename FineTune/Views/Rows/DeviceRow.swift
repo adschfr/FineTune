@@ -175,7 +175,7 @@ struct DeviceRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             // Mute button
-            MuteButton(isMuted: showMutedIcon) {
+            MuteButton(isMuted: showMutedIcon, levelFraction: sliderValue) {
                 if showMutedIcon {
                     // Unmute: restore to default if displayed as 0%
                     if displayedPercentage == 0 {

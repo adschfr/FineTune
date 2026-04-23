@@ -52,7 +52,7 @@ struct AppRowControls: View {
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             // Mute button
-            MuteButton(isMuted: showMutedIcon) {
+            MuteButton(isMuted: showMutedIcon, levelFraction: sliderValue) {
                 if showMutedIcon {
                     if displayedPercentage == 0 {
                         onVolumeChange(1.0)

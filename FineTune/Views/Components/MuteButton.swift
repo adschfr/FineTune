@@ -1,17 +1,25 @@
 // FineTune/Views/Components/MuteButton.swift
 import SwiftUI
 
-/// A mute button with pulse animation on toggle
-/// Shows speaker.wave when unmuted, speaker.slash when muted
+/// A mute button with pulse animation on toggle. Unmuted wave bucket mirrors
+/// TahoeStyleHUD.waveIconName so the popup, menu-bar icon, and on-screen HUD agree.
 struct MuteButton: View {
     let isMuted: Bool
+    let levelFraction: Double
     let action: () -> Void
+
+    init(isMuted: Bool, levelFraction: Double = 1.0, action: @escaping () -> Void) {
+        self.isMuted = isMuted
+        self.levelFraction = levelFraction
+        self.action = action
+    }
 
     var body: some View {
         BaseMuteButton(
             isMuted: isMuted,
             mutedIcon: "speaker.slash.fill",
-            unmutedIcon: "speaker.wave.2.fill",
+            unmutedIcon: VolumeBucket.bucket(for: Float(levelFraction)).symbolName,
+            layoutReferenceIcon: "speaker.wave.3.fill",
             mutedHelp: "Unmute",
             unmutedHelp: "Mute",
             action: action
@@ -30,6 +38,7 @@ struct InputMuteButton: View {
             isMuted: isMuted,
             mutedIcon: "mic.slash.fill",
             unmutedIcon: "mic.fill",
+            layoutReferenceIcon: nil,
             mutedHelp: "Unmute microphone",
             unmutedHelp: "Mute microphone",
             action: action
@@ -44,6 +53,7 @@ private struct BaseMuteButton: View {
     let isMuted: Bool
     let mutedIcon: String
     let unmutedIcon: String
+    let layoutReferenceIcon: String?
     let mutedHelp: String
     let unmutedHelp: String
     let action: () -> Void
@@ -54,10 +64,12 @@ private struct BaseMuteButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                Image(systemName: unmutedIcon)
-                    .opacity(isMuted ? 0 : 1)
-                Image(systemName: mutedIcon)
-                    .opacity(isMuted ? 1 : 0)
+                if let layoutReferenceIcon {
+                    // Keeps the button width stable across wave-bucket changes.
+                    Image(systemName: layoutReferenceIcon)
+                        .opacity(0)
+                }
+                Image(systemName: isMuted ? mutedIcon : unmutedIcon)
             }
             .font(.system(size: 14))
             .symbolRenderingMode(.hierarchical)
