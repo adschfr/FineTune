@@ -219,6 +219,12 @@ struct MenuBarPopupView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
             isPopupVisible = false
             popupVisibility.isVisible = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            // SwiftUI Menu tracking (e.g. sample-rate picker in the device
+            // inspector) makes the popup window resign key without deactivating
+            // the app. Only treat app-level deactivation as a real dismiss so
+            // in-popup pickers don't collapse edit mode.
             exitEditModeSaving()
         }
         .background {
