@@ -72,7 +72,7 @@ final class MenuBarIconCoordinator {
     private func currentDeviceSymbol() -> String {
         let id = deviceVolumeMonitor.defaultDeviceID
         guard id.isValid else { return "hifispeaker" }
-        return id.readTransportType().defaultIconSymbol
+        return id.suggestedIconSymbol()
     }
 
     private func flashDuration() -> TimeInterval {
