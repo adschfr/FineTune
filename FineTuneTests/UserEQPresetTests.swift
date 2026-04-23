@@ -589,7 +589,7 @@ struct UserEQPresetPersistenceTests {
         )
 
         // Wait for debounced save (500ms debounce + margin)
-        try await Task.sleep(for: .milliseconds(1200))
+        manager1.flushSync()
 
         // Phase 2: Re-init from same directory and verify
         let manager2 = SettingsManager(directory: dir)
@@ -611,7 +611,7 @@ struct UserEQPresetPersistenceTests {
         let first = manager1.createUserPreset(name: "First", settings: EQSettings(bandGains: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
         let second = manager1.createUserPreset(name: "Second", settings: EQSettings(bandGains: [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
 
-        try await Task.sleep(for: .milliseconds(1200))
+        manager1.flushSync()
 
         let manager2 = SettingsManager(directory: dir)
         let presets = manager2.getUserPresets()
@@ -631,7 +631,7 @@ struct UserEQPresetPersistenceTests {
         let preset = manager1.createUserPreset(name: "Ephemeral", settings: EQSettings())
         manager1.deleteUserPreset(id: preset.id)
 
-        try await Task.sleep(for: .milliseconds(1200))
+        manager1.flushSync()
 
         let manager2 = SettingsManager(directory: dir)
         #expect(manager2.getUserPresets().isEmpty)
@@ -646,7 +646,7 @@ struct UserEQPresetPersistenceTests {
         let preset = manager1.createUserPreset(name: "Before", settings: EQSettings())
         manager1.updateUserPreset(id: preset.id, name: "After")
 
-        try await Task.sleep(for: .milliseconds(1200))
+        manager1.flushSync()
 
         let manager2 = SettingsManager(directory: dir)
         let loaded = try #require(manager2.getUserPresets().first { $0.id == preset.id })
