@@ -32,15 +32,28 @@ final class MenuBarIconCoordinator {
         guard !started else { return }
         started = true
         lastObservedDeviceID = deviceVolumeMonitor.defaultDeviceID
-        attemptInitialApply(retriesLeft: 10)
+        attemptInitialApply(retriesLeft: 20)
         scheduleApplyTracking()
         scheduleDeviceChangeTracking()
     }
 
+    /// Cancel pending work and drop references. Called on app termination.
+    func stop() {
+        flashWorkItem?.cancel()
+        flashWorkItem = nil
+        cachedButton = nil
+    }
+
     /// Transient device-icon flash. Applies to every style; fires on media keys and device changes.
+    /// If the same symbol is already flashing, extends the timer rather than restarting the fade —
+    /// prevents mid-fade pops when device-change and media-key triggers coincide.
     func flashDevice() {
-        flashActiveSymbol = currentDeviceSymbol()
-        apply()
+        let symbol = currentDeviceSymbol()
+        let alreadyShowingSame = (flashActiveSymbol == symbol)
+        flashActiveSymbol = symbol
+        if !alreadyShowingSame {
+            apply()
+        }
 
         flashWorkItem?.cancel()
         let duration = flashDuration()
@@ -88,7 +101,7 @@ final class MenuBarIconCoordinator {
     private func apply() {
         guard let button = resolveButton() else { return }
         let state = computeState()
-        guard let image = nsImage(for: state.image) else { return }
+        guard let image = state.image.nsImage() else { return }
         addFadeTransition(to: button)
         button.image = image
     }
@@ -99,7 +112,7 @@ final class MenuBarIconCoordinator {
             return
         }
         guard retriesLeft > 0 else {
-            logger.warning("Menu bar button not found after 10 tries; icon will remain at FluidMenuBarExtra default")
+            logger.error("Menu bar button not found after 20 tries (1s); icon will remain at FluidMenuBarExtra placeholder until next state change")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
@@ -114,11 +127,14 @@ final class MenuBarIconCoordinator {
             _ = deviceVolumeMonitor.muteStates[id]
             _ = settings.appSettings.menuBarIconStyle
             _ = settings.appSettings.hudStyle
-        } onChange: {
-            Task { @MainActor [weak self] in
+        } onChange: { [weak self] in
+            // The tracked properties are all @MainActor-isolated, so mutations (and thus this
+            // callback) always land on the main actor. Re-register synchronously before the
+            // setter returns — a Task hop would drop any mutation that lands in the window.
+            MainActor.assumeIsolated {
                 guard let self else { return }
-                self.apply()
                 self.scheduleApplyTracking()
+                self.apply()
             }
         }
     }
@@ -126,15 +142,15 @@ final class MenuBarIconCoordinator {
     private func scheduleDeviceChangeTracking() {
         withObservationTracking {
             _ = deviceVolumeMonitor.defaultDeviceID
-        } onChange: {
-            Task { @MainActor [weak self] in
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated {
                 guard let self else { return }
+                self.scheduleDeviceChangeTracking()
                 let newID = self.deviceVolumeMonitor.defaultDeviceID
                 if let prev = self.lastObservedDeviceID, prev != newID, newID.isValid {
                     self.flashDevice()
                 }
                 self.lastObservedDeviceID = newID
-                self.scheduleDeviceChangeTracking()
             }
         }
     }
@@ -172,16 +188,5 @@ final class MenuBarIconCoordinator {
         transition.duration = 0.18
         transition.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         button.layer?.add(transition, forKey: "iconFade")
-    }
-
-    private func nsImage(for image: MenuBarIconImage) -> NSImage? {
-        switch image {
-        case .systemSymbol(let name):
-            let img = NSImage(systemSymbolName: name, accessibilityDescription: "FineTune")
-            img?.isTemplate = true
-            return img
-        case .asset(let name):
-            return NSImage(named: name)
-        }
     }
 }

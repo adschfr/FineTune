@@ -44,10 +44,12 @@ struct FineTuneApp: App {
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
 
+    /// Snapshot icon computed at launch from the user's chosen style and the current
+    /// default-device volume/mute. The coordinator keeps it in sync afterwards.
+    private let launchIconImage: NSImage
+
     var body: some Scene {
-        // Placeholder icon; MenuBarIconCoordinator replaces it on the next main-thread
-        // tick and keeps it in sync with volume, mute, style, and device changes.
-        FluidMenuBarExtra("FineTune", systemImage: "speaker.wave.2", isInserted: $showMenuBarExtra) {
+        FluidMenuBarExtra("FineTune", image: launchIconImage, isInserted: $showMenuBarExtra) {
             menuBarContent
         }
         .commands {
@@ -132,6 +134,18 @@ struct FineTuneApp: App {
         DispatchQueue.main.async { [coordinator] in coordinator.start() }
         _iconCoordinator = State(initialValue: coordinator)
 
+        // Render the scene's first frame with the user's chosen style instead of a generic
+        // placeholder, so non-speaker styles don't briefly flash a speaker icon at launch.
+        let launchVolumeMonitor = engine.deviceVolumeMonitor
+        let launchID = launchVolumeMonitor.defaultDeviceID
+        let launchState = MenuBarIconState.baseline(
+            style: settings.appSettings.menuBarIconStyle,
+            volume: launchVolumeMonitor.volumes[launchID] ?? 1.0,
+            muted: launchVolumeMonitor.muteStates[launchID] ?? false
+        )
+        launchIconImage = launchState.image.nsImage()
+            ?? NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: "FineTune")!
+
         // Start Accessibility polling immediately so `isTrustedCached` is live
         // before the user first opens Settings. The trust-flip callback wires
         // the monitor to reconcile its tap state whenever trust changes — this
@@ -169,8 +183,9 @@ struct FineTuneApp: App {
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
-        ) { [settings, monitor, accessibilityService, hud] _ in
+        ) { [settings, monitor, accessibilityService, hud, coordinator] _ in
             MainActor.assumeIsolated {
+                coordinator.stop()
                 monitor.stop()
                 accessibilityService.stop()
                 hud.shutdown()

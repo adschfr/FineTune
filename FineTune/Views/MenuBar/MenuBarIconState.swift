@@ -1,6 +1,7 @@
 // FineTune/Views/MenuBar/MenuBarIconState.swift
 // Value types for the menu bar icon. Bucket thresholds mirror
 // TahoeStyleHUD.waveIconName / ClassicStyleHUD.waveIconName.
+// The AppKit NSImage bridge lives in MenuBarIconImage+NSImage.swift.
 
 import Foundation
 
@@ -16,6 +17,9 @@ enum VolumeBucket: Equatable {
     case high
 
     static func bucket(for volume: Float) -> VolumeBucket {
+        // NaN falls through to default in a `..<` switch. Force it to .zero so a
+        // corrupted HAL read doesn't light up the icon at full volume.
+        guard volume.isFinite else { return .zero }
         switch volume {
         case ..<0.01: return .zero
         case ..<0.34: return .low

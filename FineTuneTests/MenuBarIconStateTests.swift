@@ -54,6 +54,21 @@ struct VolumeBucketBoundaryTests {
     func overdrive() {
         #expect(VolumeBucket.bucket(for: 1.5) == .high)
     }
+
+    @Test("NaN falls back to zero (prevents corrupted HAL read from lighting up wave.3.fill)")
+    func notANumber() {
+        #expect(VolumeBucket.bucket(for: .nan) == .zero)
+    }
+
+    @Test("Infinity falls back to zero")
+    func infiniteVolume() {
+        #expect(VolumeBucket.bucket(for: .infinity) == .zero)
+    }
+
+    @Test("Negative volume treated as zero bucket")
+    func negativeVolume() {
+        #expect(VolumeBucket.bucket(for: -1.0) == .zero)
+    }
 }
 
 @Suite("VolumeBucket — symbol names")
