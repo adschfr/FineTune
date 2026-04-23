@@ -157,6 +157,15 @@ struct FineTuneApp: App {
         accessibilityService.start()
         monitor.reconcile()
 
+        // TCC bootstrap race: AXIsProcessTrusted() can return false during the first
+        // few hundred ms of launch even when Accessibility is already granted. The only
+        // retry paths today (com.apple.accessibility.api notification + session activate)
+        // don't fire on a pre-granted cold start, so without this retry the media-key
+        // tap never installs until the user opens the popup. reconcile() is idempotent.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak monitor] in
+            monitor?.reconcile()
+        }
+
         // Pass engine to AppDelegate
         _appDelegate.wrappedValue.audioEngine = engine
 
