@@ -2,8 +2,10 @@
 import SwiftUI
 import AppKit
 
-/// Priority-edit-mode row with drag handle, priority number, icon+name, and DEFAULT badge.
-/// Icon+name+badge is the only tap region for expand — siblings keep their own gestures.
+/// Priority-edit-mode row with drag handle, priority number, icon+name,
+/// DEFAULT badge, hide toggle, and an info/close button that expands the
+/// Device Inspector pane. Icon+name+badge is the only tap region for
+/// expand — siblings keep their own gestures.
 struct DeviceEditRow<ExpandedContent: View>: View {
     let device: AudioDevice
     let priorityIndex: Int
@@ -11,8 +13,10 @@ struct DeviceEditRow<ExpandedContent: View>: View {
     let isInputDevice: Bool
     let deviceCount: Int
     let isExpanded: Bool
+    let isHidden: Bool
     let onReorder: (Int) -> Void
     let onToggleExpand: () -> Void
+    let onToggleHidden: () -> Void
     @ViewBuilder let expandedContent: () -> ExpandedContent
 
     @State private var isInfoButtonHovered = false
@@ -20,6 +24,8 @@ struct DeviceEditRow<ExpandedContent: View>: View {
     var body: some View {
         ExpandableGlassRow(isExpanded: isExpanded) {
             headerRow
+                .opacity(isHidden && !isDefault ? 0.5 : 1.0)
+                .animation(.easeOut(duration: 0.2), value: isHidden)
         } expandedContent: {
             expandedContent()
         }
@@ -86,9 +92,40 @@ struct DeviceEditRow<ExpandedContent: View>: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel(isExpanded ? "Collapse device details" : "Expand device details")
 
+            hideToggleButton
+
             infoButton
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
+    }
+
+    /// Eye / eye-slash toggle. Disabled for the current default device —
+    /// it stays visible while it's the default.
+    private var hideToggleButton: some View {
+        Button {
+            onToggleHidden()
+        } label: {
+            Image(systemName: isHidden ? "eye.slash" : "eye")
+                .font(.system(size: 11))
+                .foregroundStyle(
+                    isDefault
+                        ? DesignTokens.Colors.textTertiary.opacity(0.4)
+                        : (isHidden ? DesignTokens.Colors.mutedIndicator : DesignTokens.Colors.textTertiary)
+                )
+                .contentTransition(.symbolEffect(.replace))
+                .frame(
+                    minWidth: DesignTokens.Dimensions.minTouchTarget,
+                    minHeight: DesignTokens.Dimensions.minTouchTarget
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDefault)
+        .help(isDefault
+            ? "Cannot hide the default device"
+            : (isHidden ? "Show in main view" : "Hide from main view")
+        )
+        .accessibilityLabel(isHidden ? "Show in main view" : "Hide from main view")
     }
 
     private var infoButton: some View {
@@ -278,6 +315,7 @@ struct DeviceEditRowTapCarveoutPreview: View {
                     isInputDevice: false,
                     deviceCount: 3,
                     isExpanded: expandedUID == MockData.sampleDevices[0].uid,
+                    isHidden: false,
                     onReorder: { newIndex in
                         lastEvent = "Reorder to \(newIndex + 1)"
                     },
@@ -287,6 +325,9 @@ struct DeviceEditRowTapCarveoutPreview: View {
                             expandedUID = (expandedUID == uid) ? nil : uid
                             lastEvent = "Toggled expand → \(expandedUID ?? "nil")"
                         }
+                    },
+                    onToggleHidden: {
+                        lastEvent = "Toggle hidden"
                     },
                     expandedContent: {
                         Text("Expanded detail content here")
