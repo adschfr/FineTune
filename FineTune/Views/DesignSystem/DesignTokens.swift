@@ -154,35 +154,38 @@ enum DesignTokens {
             dark: NSColor.white.withAlphaComponent(0.07)
         )
 
-        /// Translucent glass-card fill. Light mode flips to opaque white for
-        /// visible "floating card" hierarchy on the popover material; the
-        /// previous low-opacity black tint vanished on light glass.
+        /// Default row fill. Transparent — rows blend with the popup
+        /// material at rest, like System Settings / Notification Center.
+        /// Hover reveals `hoverSurface` as the meaningful interaction signal.
         static let glassFill = dynamicColor(
             name: "glassFill",
-            light: NSColor.white.withAlphaComponent(0.65),
-            dark: NSColor.white.withAlphaComponent(0.08)
+            light: NSColor.clear,
+            dark: NSColor.clear
         )
 
-        /// Stronger glass-card fill for emphasised rows and sheet inserts.
+        /// Stronger glass-card fill for emphasised badges and sheet inserts
+        /// (DEFAULT pill, AutoEQ search panel, device-detail sheet). Not used
+        /// for default row backgrounds.
         static let glassFillStrong = dynamicColor(
             name: "glassFillStrong",
             light: NSColor.white.withAlphaComponent(0.85),
             dark: NSColor.white.withAlphaComponent(0.1)
         )
 
-        /// Subtle border on glass rows / dropdowns. Light mode is restrained
-        /// because cards are now opaque white and need only a hairline.
+        /// Default row border. Transparent — flat rows have no resting edge.
         static let glassRowBorder = dynamicColor(
             name: "glassRowBorder",
-            light: NSColor.black.withAlphaComponent(0.10),
-            dark: NSColor.white.withAlphaComponent(0.2)
+            light: NSColor.clear,
+            dark: NSColor.clear
         )
 
-        /// Hovered border on glass rows / dropdowns.
+        /// Hovered row edge — soft hairline visible only when the row is
+        /// being interacted with. Pairs with `hoverSurface` to define the
+        /// active row.
         static let glassRowBorderHover = dynamicColor(
             name: "glassRowBorderHover",
-            light: NSColor.black.withAlphaComponent(0.20),
-            dark: NSColor.white.withAlphaComponent(0.35)
+            light: NSColor.black.withAlphaComponent(0.10),
+            dark: NSColor.white.withAlphaComponent(0.15)
         )
 
         /// HUD panel hairline border (Tahoe + Classic).

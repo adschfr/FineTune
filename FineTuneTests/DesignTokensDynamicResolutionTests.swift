@@ -143,14 +143,10 @@ struct DesignTokensDynamicResolutionTests {
                     in: Self.darkAqua)
     }
 
-    @Test("glassFill resolves correctly in light and dark")
+    @Test("glassFill is transparent at rest in both appearances (flat-row design)")
     func glassFill() {
-        expectColor(DesignTokens.Colors.glassFill,
-                    equals: NSColor.white.withAlphaComponent(0.65),
-                    in: Self.aqua)
-        expectColor(DesignTokens.Colors.glassFill,
-                    equals: NSColor.white.withAlphaComponent(0.08),
-                    in: Self.darkAqua)
+        expectColor(DesignTokens.Colors.glassFill, equals: NSColor.clear, in: Self.aqua)
+        expectColor(DesignTokens.Colors.glassFill, equals: NSColor.clear, in: Self.darkAqua)
     }
 
     @Test("glassFillStrong resolves correctly in light and dark")
@@ -163,23 +159,19 @@ struct DesignTokensDynamicResolutionTests {
                     in: Self.darkAqua)
     }
 
-    @Test("glassRowBorder resolves correctly in light and dark")
+    @Test("glassRowBorder is transparent at rest in both appearances (flat-row design)")
     func glassRowBorder() {
-        expectColor(DesignTokens.Colors.glassRowBorder,
-                    equals: NSColor.black.withAlphaComponent(0.10),
-                    in: Self.aqua)
-        expectColor(DesignTokens.Colors.glassRowBorder,
-                    equals: NSColor.white.withAlphaComponent(0.2),
-                    in: Self.darkAqua)
+        expectColor(DesignTokens.Colors.glassRowBorder, equals: NSColor.clear, in: Self.aqua)
+        expectColor(DesignTokens.Colors.glassRowBorder, equals: NSColor.clear, in: Self.darkAqua)
     }
 
     @Test("glassRowBorderHover resolves correctly in light and dark")
     func glassRowBorderHover() {
         expectColor(DesignTokens.Colors.glassRowBorderHover,
-                    equals: NSColor.black.withAlphaComponent(0.20),
+                    equals: NSColor.black.withAlphaComponent(0.10),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.glassRowBorderHover,
-                    equals: NSColor.white.withAlphaComponent(0.35),
+                    equals: NSColor.white.withAlphaComponent(0.15),
                     in: Self.darkAqua)
     }
 
