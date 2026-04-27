@@ -1,0 +1,191 @@
+// FineTuneTests/DesignTokensDynamicResolutionTests.swift
+// Verifies each dynamic DesignTokens.Colors token resolves to the expected
+// NSColor for both `.aqua` (light) and `.darkAqua` (dark) appearances.
+//
+// This test catches three regressions:
+//  1. A token's light or dark RGBA being changed inadvertently.
+//  2. Two tokens accidentally sharing an NSColor.Name, which silently
+//     merges them under NSColor's name cache.
+//  3. The dynamicColor helper resolving the wrong branch for an appearance.
+
+import Testing
+import SwiftUI
+import AppKit
+@testable import FineTune
+
+@Suite("DesignTokens — Dynamic color resolution")
+@MainActor
+struct DesignTokensDynamicResolutionTests {
+
+    // MARK: Helpers
+
+    /// Resolves a SwiftUI Color (backed by an NSColor dynamic provider) to its
+    /// concrete NSColor for the specified appearance, by entering that appearance
+    /// as the drawing context.
+    private func resolve(_ color: Color, appearance: NSAppearance) -> NSColor {
+        var resolved: NSColor = .clear
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
+        }
+        return resolved
+    }
+
+    /// Asserts a SwiftUI Color's resolved RGBA matches the expected NSColor's RGBA
+    /// in the specified appearance, within a tolerance for floating-point drift.
+    private func expectColor(
+        _ token: Color,
+        equals expected: NSColor,
+        in appearance: NSAppearance,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        let actual = resolve(token, appearance: appearance)
+        let actualSRGB = actual.usingColorSpace(.sRGB) ?? actual
+        let expectedSRGB = expected.usingColorSpace(.sRGB) ?? expected
+        let tol: CGFloat = 0.005
+        #expect(
+            abs(actualSRGB.redComponent - expectedSRGB.redComponent) < tol &&
+            abs(actualSRGB.greenComponent - expectedSRGB.greenComponent) < tol &&
+            abs(actualSRGB.blueComponent - expectedSRGB.blueComponent) < tol &&
+            abs(actualSRGB.alphaComponent - expectedSRGB.alphaComponent) < tol,
+            "Token in \(appearance.name.rawValue) resolved to RGBA(\(actualSRGB.redComponent), \(actualSRGB.greenComponent), \(actualSRGB.blueComponent), \(actualSRGB.alphaComponent)) but expected RGBA(\(expectedSRGB.redComponent), \(expectedSRGB.greenComponent), \(expectedSRGB.blueComponent), \(expectedSRGB.alphaComponent))",
+            sourceLocation: sourceLocation
+        )
+    }
+
+    private static let aqua = NSAppearance(named: .aqua)!
+    private static let darkAqua = NSAppearance(named: .darkAqua)!
+
+    // MARK: Per-token resolution
+
+    @Test("popupOverlay resolves correctly in light and dark")
+    func popupOverlay() {
+        expectColor(DesignTokens.Colors.popupOverlay,
+                    equals: NSColor.white.withAlphaComponent(0.55),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.popupOverlay,
+                    equals: NSColor.black.withAlphaComponent(0.4),
+                    in: Self.darkAqua)
+    }
+
+    @Test("recessedBackground resolves correctly in light and dark")
+    func recessedBackground() {
+        expectColor(DesignTokens.Colors.recessedBackground,
+                    equals: NSColor.black.withAlphaComponent(0.06),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.recessedBackground,
+                    equals: NSColor.black.withAlphaComponent(0.3),
+                    in: Self.darkAqua)
+    }
+
+    @Test("menuBorder resolves correctly in light and dark")
+    func menuBorder() {
+        expectColor(DesignTokens.Colors.menuBorder,
+                    equals: NSColor.black.withAlphaComponent(0.12),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.menuBorder,
+                    equals: NSColor.white.withAlphaComponent(0.12),
+                    in: Self.darkAqua)
+    }
+
+    @Test("menuBorderHover resolves correctly in light and dark")
+    func menuBorderHover() {
+        expectColor(DesignTokens.Colors.menuBorderHover,
+                    equals: NSColor.black.withAlphaComponent(0.22),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.menuBorderHover,
+                    equals: NSColor.white.withAlphaComponent(0.25),
+                    in: Self.darkAqua)
+    }
+
+    @Test("autoEQEmptyBorder resolves correctly in light and dark")
+    func autoEQEmptyBorder() {
+        expectColor(DesignTokens.Colors.autoEQEmptyBorder,
+                    equals: NSColor.black.withAlphaComponent(0.12),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.autoEQEmptyBorder,
+                    equals: NSColor.white.withAlphaComponent(0.1),
+                    in: Self.darkAqua)
+    }
+
+    @Test("autoEQEmptyIcon resolves correctly in light and dark")
+    func autoEQEmptyIcon() {
+        expectColor(DesignTokens.Colors.autoEQEmptyIcon,
+                    equals: NSColor(white: 0.55, alpha: 1.0),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.autoEQEmptyIcon,
+                    equals: NSColor(white: 0.267, alpha: 1.0),
+                    in: Self.darkAqua)
+    }
+
+    @Test("autoEQToggleLabel resolves correctly in light and dark")
+    func autoEQToggleLabel() {
+        expectColor(DesignTokens.Colors.autoEQToggleLabel,
+                    equals: NSColor.black.withAlphaComponent(0.55),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.autoEQToggleLabel,
+                    equals: NSColor.white.withAlphaComponent(0.5),
+                    in: Self.darkAqua)
+    }
+
+    // MARK: Shared tokens added in Task 5
+
+    @Test("hoverSurface resolves correctly in light and dark")
+    func hoverSurface() {
+        expectColor(DesignTokens.Colors.hoverSurface,
+                    equals: NSColor.black.withAlphaComponent(0.05),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.hoverSurface,
+                    equals: NSColor.white.withAlphaComponent(0.04),
+                    in: Self.darkAqua)
+    }
+
+    @Test("glassFill resolves correctly in light and dark")
+    func glassFill() {
+        expectColor(DesignTokens.Colors.glassFill,
+                    equals: NSColor.black.withAlphaComponent(0.05),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.glassFill,
+                    equals: NSColor.white.withAlphaComponent(0.08),
+                    in: Self.darkAqua)
+    }
+
+    @Test("glassFillStrong resolves correctly in light and dark")
+    func glassFillStrong() {
+        expectColor(DesignTokens.Colors.glassFillStrong,
+                    equals: NSColor.black.withAlphaComponent(0.08),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.glassFillStrong,
+                    equals: NSColor.white.withAlphaComponent(0.1),
+                    in: Self.darkAqua)
+    }
+
+    @Test("glassRowBorder resolves correctly in light and dark")
+    func glassRowBorder() {
+        expectColor(DesignTokens.Colors.glassRowBorder,
+                    equals: NSColor.black.withAlphaComponent(0.18),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.glassRowBorder,
+                    equals: NSColor.white.withAlphaComponent(0.2),
+                    in: Self.darkAqua)
+    }
+
+    @Test("glassRowBorderHover resolves correctly in light and dark")
+    func glassRowBorderHover() {
+        expectColor(DesignTokens.Colors.glassRowBorderHover,
+                    equals: NSColor.black.withAlphaComponent(0.32),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.glassRowBorderHover,
+                    equals: NSColor.white.withAlphaComponent(0.35),
+                    in: Self.darkAqua)
+    }
+
+    @Test("hudBorder resolves correctly in light and dark")
+    func hudBorder() {
+        expectColor(DesignTokens.Colors.hudBorder,
+                    equals: NSColor.black.withAlphaComponent(0.1),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.hudBorder,
+                    equals: NSColor.white.withAlphaComponent(0.08),
+                    in: Self.darkAqua)
+    }
+}
