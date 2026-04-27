@@ -109,6 +109,17 @@ struct DeviceRow: View {
 
     var body: some View {
         deviceHeader
+            .contentShape(Rectangle())
+            .onTapGesture {
+                // Whole-row tap sets this device as default. Inner controls
+                // (volume slider, mute button, AutoEQ picker, percent field)
+                // are Button/Slider/TextField subviews that capture their
+                // own gestures, so they do not propagate to this handler.
+                // Mirrors the macOS Sound submenu pattern.
+                if !isDefault {
+                    onSetDefault()
+                }
+            }
             .hoverableRow()
     }
 
@@ -116,22 +127,11 @@ struct DeviceRow: View {
 
     private var deviceHeader: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
-            // Default device selector
-            RadioButton(isSelected: isDefault, action: onSetDefault)
-
-            // Device icon (vibrancy-aware)
-            Group {
-                if let icon = device.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } else {
-                    Image(systemName: "speaker.wave.2")
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
+            // Tinted badge replaces the prior leading RadioButton.
+            // Selection is now signalled by accent-colored gradient on the
+            // badge plus bold device name; the row-level gesture in `body`
+            // handles tap-to-set-default.
+            DeviceBadge(icon: device.icon, isSelected: isDefault)
 
             // Device name + optional AutoEQ profile subtitle + AutoEQ picker
             HStack(spacing: DesignTokens.Spacing.xs) {
