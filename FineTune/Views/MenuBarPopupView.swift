@@ -368,7 +368,7 @@ struct MenuBarPopupView: View {
                     .background {
                         if !showingInputDevices {
                             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                                .fill(.white.opacity(0.1))
+                                .fill(DesignTokens.Colors.glassFillStrong)
                                 .matchedGeometryEffect(id: "deviceToggle", in: deviceToggleNamespace)
                         }
                     }
@@ -391,7 +391,7 @@ struct MenuBarPopupView: View {
                     .background {
                         if showingInputDevices {
                             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                                .fill(.white.opacity(0.1))
+                                .fill(DesignTokens.Colors.glassFillStrong)
                                 .matchedGeometryEffect(id: "deviceToggle", in: deviceToggleNamespace)
                         }
                     }
@@ -403,10 +403,10 @@ struct MenuBarPopupView: View {
         .padding(3)
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius + 3)
-                .fill(.white.opacity(0.05))
+                .fill(DesignTokens.Colors.glassFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius + 3)
-                        .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
+                        .strokeBorder(DesignTokens.Colors.glassRowBorder, lineWidth: 0.5)
                 )
         )
     }

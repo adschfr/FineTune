@@ -134,6 +134,50 @@ enum DesignTokens {
         /// Picker hover
         static let pickerHover: Color = .primary.opacity(0.12)
 
+        // MARK: Hover & Glass Surface
+
+        /// Subtle hover background for tappable rows (glass cards, dropdown menus, AutoEQ rows).
+        static let hoverSurface = dynamicColor(
+            name: "hoverSurface",
+            light: NSColor.black.withAlphaComponent(0.05),
+            dark: NSColor.white.withAlphaComponent(0.04)
+        )
+
+        /// Translucent glass-card fill (popup floating rows, sheets, capsule backgrounds).
+        static let glassFill = dynamicColor(
+            name: "glassFill",
+            light: NSColor.black.withAlphaComponent(0.05),
+            dark: NSColor.white.withAlphaComponent(0.08)
+        )
+
+        /// Stronger glass-card fill (used for emphasised rows and sheet inserts).
+        static let glassFillStrong = dynamicColor(
+            name: "glassFillStrong",
+            light: NSColor.black.withAlphaComponent(0.08),
+            dark: NSColor.white.withAlphaComponent(0.1)
+        )
+
+        /// Subtle border on glass rows / dropdowns.
+        static let glassRowBorder = dynamicColor(
+            name: "glassRowBorder",
+            light: NSColor.black.withAlphaComponent(0.18),
+            dark: NSColor.white.withAlphaComponent(0.2)
+        )
+
+        /// Hovered border on glass rows / dropdowns.
+        static let glassRowBorderHover = dynamicColor(
+            name: "glassRowBorderHover",
+            light: NSColor.black.withAlphaComponent(0.32),
+            dark: NSColor.white.withAlphaComponent(0.35)
+        )
+
+        /// HUD panel hairline border (Tahoe + Classic).
+        static let hudBorder = dynamicColor(
+            name: "hudBorder",
+            light: NSColor.black.withAlphaComponent(0.1),
+            dark: NSColor.white.withAlphaComponent(0.08)
+        )
+
         // MARK: VU Meter (Professional audio standard - NOT themed)
 
         /// VU meter green segments (bars 0-3, safe levels)

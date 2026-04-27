@@ -17,7 +17,7 @@ struct HoverableRowModifier: ViewModifier {
             // Hover effect overlay (materials don't have native hover states)
             .overlay(
                 RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                    .fill(isHovered ? Color.white.opacity(0.04) : Color.clear)
+                    .fill(isHovered ? DesignTokens.Colors.hoverSurface : Color.clear)
                     .allowsHitTesting(false)
             )
             .overlay(

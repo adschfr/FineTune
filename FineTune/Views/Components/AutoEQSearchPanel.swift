@@ -496,7 +496,7 @@ struct AutoEQSearchPanel: View {
             .frame(height: itemHeight)
             .background(
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(hoveredID == "_import" ? Color.white.opacity(0.04) : Color.clear)
+                    .fill(hoveredID == "_import" ? DesignTokens.Colors.hoverSurface : Color.clear)
             )
         }
         .buttonStyle(.plain)

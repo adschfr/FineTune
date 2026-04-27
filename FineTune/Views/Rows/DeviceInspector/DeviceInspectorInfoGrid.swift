@@ -131,7 +131,7 @@ private struct SampleRatePickerValue: View {
     private var pickerBorder: some View {
         RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
             .strokeBorder(
-                isHovered ? Color.white.opacity(0.35) : Color.white.opacity(0.2),
+                isHovered ? DesignTokens.Colors.glassRowBorderHover : DesignTokens.Colors.glassRowBorder,
                 lineWidth: 0.5
             )
     }

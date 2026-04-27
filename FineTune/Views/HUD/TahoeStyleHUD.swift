@@ -107,7 +107,7 @@ struct TahoeStyleHUD: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: Self.cornerRadius)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(DesignTokens.Colors.hudBorder, lineWidth: 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         .onHover { hovering in

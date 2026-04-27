@@ -81,7 +81,7 @@ struct DeviceEditRow<ExpandedContent: View>: View {
                         .padding(.vertical, 2)
                         .background(
                             Capsule()
-                                .fill(.white.opacity(0.1))
+                                .fill(DesignTokens.Colors.glassFillStrong)
                         )
                 }
 

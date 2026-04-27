@@ -52,7 +52,7 @@ struct ModeToggle: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius - 1)
-                    .fill(isSelected ? Color.accentColor.opacity(0.15) : (isHovered ? Color.white.opacity(0.05) : Color.clear))
+                    .fill(isSelected ? Color.accentColor.opacity(0.15) : (isHovered ? DesignTokens.Colors.hoverSurface : Color.clear))
             )
             .contentShape(Rectangle())
         }

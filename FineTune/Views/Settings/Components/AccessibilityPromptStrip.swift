@@ -76,7 +76,7 @@ struct AccessibilityPromptStrip: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background(Capsule().fill(.white.opacity(0.08)))
+        .background(Capsule().fill(DesignTokens.Colors.glassFill))
     }
 
     private var iconColor: Color {

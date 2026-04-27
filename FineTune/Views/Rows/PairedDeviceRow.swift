@@ -74,7 +74,7 @@ struct PairedDeviceRow: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                        .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
+                        .strokeBorder(DesignTokens.Colors.glassRowBorder, lineWidth: 0.5)
                 )
             }
         }

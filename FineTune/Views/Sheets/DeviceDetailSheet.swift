@@ -88,7 +88,7 @@ struct DeviceDetailSheet: View {
             .padding(.vertical, 2)
             .background(
                 Capsule()
-                    .fill(.white.opacity(0.1))
+                    .fill(DesignTokens.Colors.glassFillStrong)
             )
             .accessibilityLabel("Auto-detected volume control: \(Self.tierDisplayName(autoDetectedTier))")
     }

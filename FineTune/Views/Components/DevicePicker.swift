@@ -178,7 +178,7 @@ struct DevicePicker: View {
         .overlay {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                 .strokeBorder(
-                    isButtonHovered ? Color.white.opacity(0.35) : Color.white.opacity(0.2),
+                    isButtonHovered ? DesignTokens.Colors.glassRowBorderHover : DesignTokens.Colors.glassRowBorder,
                     lineWidth: 0.5
                 )
         }

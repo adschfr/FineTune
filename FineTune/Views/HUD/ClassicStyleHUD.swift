@@ -62,7 +62,7 @@ struct ClassicStyleHUD: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: Self.cornerRadius)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(DesignTokens.Colors.hudBorder, lineWidth: 1)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityDescription)
