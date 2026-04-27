@@ -49,27 +49,50 @@ extension View {
             .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow))
     }
 
-    /// Applies EQ panel glass background (recessed style)
-    func eqPanelBackground() -> some View {
-        modifier(EQPanelBackgroundModifier())
+    /// Applies the lifted-card background used by the EQ panel.
+    /// Light reads as a white card on the popup glass; dark reads as a
+    /// translucent surface on the dark glass. Replaces the prior recessed
+    /// treatment which read as a heavy gray block on whiter light glass.
+    func eqCardBackground() -> some View {
+        modifier(LiftedCardBackgroundModifier())
+    }
+
+    /// Applies the lifted-card background used by Settings sections.
+    /// Same modifier as `eqCardBackground()`; aliased so call sites read
+    /// clearly. Split into a separate modifier if the families diverge.
+    func settingsCardBackground() -> some View {
+        modifier(LiftedCardBackgroundModifier())
     }
 }
 
-// MARK: - EQ Panel Background Modifier
+// MARK: - Lifted Card Background Modifier (EQ + Settings sections)
 
-/// Modifier that applies glass background to EQ panel
-/// Locked to recessed style: dark overlay with subtle border
-struct EQPanelBackgroundModifier: ViewModifier {
+/// Lifted-card background used by the EQ panel and Settings sections.
+/// Light: opaque-ish white card on the popup glass with a hairline edge
+/// and a soft shadow that lifts the card off the surface. Dark: translucent
+/// white on the dark glass with a slightly stronger hairline. Tokens come
+/// from `DesignTokens.Colors.eqCardBackground` and `eqCardBorder`.
+///
+/// The shadow uses a literal `Color.black.opacity(0.06)`. Shadows are a
+/// depth cue, not a chromatic surface, and remain readable in both modes
+/// without an appearance-aware token.
+struct LiftedCardBackgroundModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background {
-                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                    .fill(DesignTokens.Colors.recessedBackground)
+                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
+                    .fill(DesignTokens.Colors.eqCardBackground)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                    .strokeBorder(DesignTokens.Colors.glassBorder, lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
+                    .strokeBorder(DesignTokens.Colors.eqCardBorder, lineWidth: 0.5)
             }
+            .shadow(
+                color: Color.black.opacity(0.06),
+                radius: 1.5,
+                x: 0,
+                y: 0.5
+            )
     }
 }
 
@@ -89,9 +112,9 @@ struct EQPanelBackgroundModifier: ViewModifier {
     .environment(\.colorScheme, .dark)
 }
 
-#Preview("EQ Panel - Recessed") {
+#Preview("EQ Card - Lifted") {
     VStack(spacing: 8) {
-        Text("EQ Panel - Recessed")
+        Text("EQ Card - Lifted")
             .foregroundStyle(.secondary)
         HStack {
             ForEach(0..<5) { _ in
@@ -102,8 +125,7 @@ struct EQPanelBackgroundModifier: ViewModifier {
         }
     }
     .padding()
-    .eqPanelBackground()
+    .eqCardBackground()
     .padding()
     .darkGlassBackground()
-    .environment(\.colorScheme, .dark)
 }
