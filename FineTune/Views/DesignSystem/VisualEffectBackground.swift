@@ -2,11 +2,16 @@
 import SwiftUI
 import AppKit
 
-/// A dark frosted glass background using NSVisualEffectView
-/// Provides deeper vibrancy than SwiftUI's built-in materials
-/// Updated for macOS 26+ Liquid Glass aesthetic
+/// A frosted glass background using NSVisualEffectView, Apple's documented
+/// translucent material primitive. The default `.popover` material renders
+/// as proper light/dark glass and matches the platform Control Center and
+/// Notification Center surfaces.
 struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .hudWindow
+    /// Apple's documented material for popover and menu-bar panels. Renders
+    /// vibrant translucency in both appearances. The previous `.hudWindow`
+    /// default was designed for dark floating overlays and washed out badly
+    /// in light mode.
+    var material: NSVisualEffectView.Material = .popover
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
 
     func makeNSView(context: Context) -> NSVisualEffectView {
@@ -34,12 +39,14 @@ extension Color {
 // MARK: - View Extensions
 
 extension View {
-    /// Applies a dark glass background using NSVisualEffectView
-    /// The primary popup container style - darker to make floating rows pop
+    /// Applies the popup's translucent glass background. Adapts to light and
+    /// dark via DesignTokens; the underlying NSVisualEffectView uses the
+    /// `.popover` material so it tracks system appearance natively.
+    /// Name kept for source compatibility; rename pending a follow-up sweep.
     func darkGlassBackground() -> some View {
         self
             .background(Color.popupBackgroundOverlay)
-            .background(VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow))
+            .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow))
     }
 
     /// Applies EQ panel glass background (recessed style)

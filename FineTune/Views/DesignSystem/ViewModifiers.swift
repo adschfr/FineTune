@@ -38,7 +38,7 @@ struct SectionHeaderStyleModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .font(DesignTokens.Typography.sectionHeader)
-            .foregroundStyle(DesignTokens.Colors.textTertiary)
+            .foregroundStyle(DesignTokens.Colors.sectionHeaderText)
             .tracking(DesignTokens.Typography.sectionHeaderTracking)
             .textCase(.uppercase)
     }

@@ -60,7 +60,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("popupOverlay resolves correctly in light and dark")
     func popupOverlay() {
         expectColor(DesignTokens.Colors.popupOverlay,
-                    equals: NSColor.white.withAlphaComponent(0.55),
+                    equals: NSColor.white.withAlphaComponent(0.10),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.popupOverlay,
                     equals: NSColor.black.withAlphaComponent(0.4),
@@ -70,7 +70,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("recessedBackground resolves correctly in light and dark")
     func recessedBackground() {
         expectColor(DesignTokens.Colors.recessedBackground,
-                    equals: NSColor.black.withAlphaComponent(0.06),
+                    equals: NSColor.black.withAlphaComponent(0.04),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.recessedBackground,
                     equals: NSColor.black.withAlphaComponent(0.3),
@@ -80,7 +80,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("menuBorder resolves correctly in light and dark")
     func menuBorder() {
         expectColor(DesignTokens.Colors.menuBorder,
-                    equals: NSColor.black.withAlphaComponent(0.12),
+                    equals: NSColor.black.withAlphaComponent(0.18),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.menuBorder,
                     equals: NSColor.white.withAlphaComponent(0.12),
@@ -90,7 +90,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("menuBorderHover resolves correctly in light and dark")
     func menuBorderHover() {
         expectColor(DesignTokens.Colors.menuBorderHover,
-                    equals: NSColor.black.withAlphaComponent(0.22),
+                    equals: NSColor.black.withAlphaComponent(0.32),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.menuBorderHover,
                     equals: NSColor.white.withAlphaComponent(0.25),
@@ -100,7 +100,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("autoEQEmptyBorder resolves correctly in light and dark")
     func autoEQEmptyBorder() {
         expectColor(DesignTokens.Colors.autoEQEmptyBorder,
-                    equals: NSColor.black.withAlphaComponent(0.12),
+                    equals: NSColor.black.withAlphaComponent(0.22),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.autoEQEmptyBorder,
                     equals: NSColor.white.withAlphaComponent(0.1),
@@ -110,7 +110,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("autoEQEmptyIcon resolves correctly in light and dark")
     func autoEQEmptyIcon() {
         expectColor(DesignTokens.Colors.autoEQEmptyIcon,
-                    equals: NSColor(white: 0.55, alpha: 1.0),
+                    equals: NSColor(white: 0.45, alpha: 1.0),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.autoEQEmptyIcon,
                     equals: NSColor(white: 0.267, alpha: 1.0),
@@ -120,7 +120,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("autoEQToggleLabel resolves correctly in light and dark")
     func autoEQToggleLabel() {
         expectColor(DesignTokens.Colors.autoEQToggleLabel,
-                    equals: NSColor.black.withAlphaComponent(0.55),
+                    equals: NSColor.black.withAlphaComponent(0.65),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.autoEQToggleLabel,
                     equals: NSColor.white.withAlphaComponent(0.5),
@@ -132,7 +132,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("hoverSurface resolves correctly in light and dark")
     func hoverSurface() {
         expectColor(DesignTokens.Colors.hoverSurface,
-                    equals: NSColor.black.withAlphaComponent(0.05),
+                    equals: NSColor.black.withAlphaComponent(0.06),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.hoverSurface,
                     equals: NSColor.white.withAlphaComponent(0.04),
@@ -142,7 +142,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("glassFill resolves correctly in light and dark")
     func glassFill() {
         expectColor(DesignTokens.Colors.glassFill,
-                    equals: NSColor.black.withAlphaComponent(0.05),
+                    equals: NSColor.white.withAlphaComponent(0.65),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.glassFill,
                     equals: NSColor.white.withAlphaComponent(0.08),
@@ -152,7 +152,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("glassFillStrong resolves correctly in light and dark")
     func glassFillStrong() {
         expectColor(DesignTokens.Colors.glassFillStrong,
-                    equals: NSColor.black.withAlphaComponent(0.08),
+                    equals: NSColor.white.withAlphaComponent(0.85),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.glassFillStrong,
                     equals: NSColor.white.withAlphaComponent(0.1),
@@ -162,7 +162,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("glassRowBorder resolves correctly in light and dark")
     func glassRowBorder() {
         expectColor(DesignTokens.Colors.glassRowBorder,
-                    equals: NSColor.black.withAlphaComponent(0.18),
+                    equals: NSColor.black.withAlphaComponent(0.10),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.glassRowBorder,
                     equals: NSColor.white.withAlphaComponent(0.2),
@@ -172,7 +172,7 @@ struct DesignTokensDynamicResolutionTests {
     @Test("glassRowBorderHover resolves correctly in light and dark")
     func glassRowBorderHover() {
         expectColor(DesignTokens.Colors.glassRowBorderHover,
-                    equals: NSColor.black.withAlphaComponent(0.32),
+                    equals: NSColor.black.withAlphaComponent(0.20),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.glassRowBorderHover,
                     equals: NSColor.white.withAlphaComponent(0.35),
@@ -182,10 +182,20 @@ struct DesignTokensDynamicResolutionTests {
     @Test("hudBorder resolves correctly in light and dark")
     func hudBorder() {
         expectColor(DesignTokens.Colors.hudBorder,
-                    equals: NSColor.black.withAlphaComponent(0.1),
+                    equals: NSColor.black.withAlphaComponent(0.15),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.hudBorder,
                     equals: NSColor.white.withAlphaComponent(0.08),
+                    in: Self.darkAqua)
+    }
+
+    @Test("sectionHeaderText resolves correctly in light and dark")
+    func sectionHeaderText() {
+        expectColor(DesignTokens.Colors.sectionHeaderText,
+                    equals: NSColor.black.withAlphaComponent(0.55),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.sectionHeaderText,
+                    equals: NSColor.white.withAlphaComponent(0.40),
                     in: Self.darkAqua)
     }
 }

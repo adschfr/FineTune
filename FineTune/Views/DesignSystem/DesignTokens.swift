@@ -95,17 +95,20 @@ enum DesignTokens {
 
         // MARK: Glass Effects
 
-        /// Popup background overlay (dark-mode dim / light-mode bright wash)
+        /// Popup background overlay. Sits over NSVisualEffectView, so light
+        /// mode keeps a very low alpha to let the material's translucency show
+        /// (the previous 0.55 wash killed vibrancy and produced a flat panel).
         static let popupOverlay = dynamicColor(
             name: "popupOverlay",
-            light: NSColor.white.withAlphaComponent(0.55),
+            light: NSColor.white.withAlphaComponent(0.10),
             dark: NSColor.black.withAlphaComponent(0.4)
         )
 
-        /// Recessed panel background (EQ panel)
+        /// Recessed panel background (EQ panel). Light mode is nearly flush
+        /// with the surrounding glass; opaque cards do the floating instead.
         static let recessedBackground = dynamicColor(
             name: "recessedBackground",
-            light: NSColor.black.withAlphaComponent(0.06),
+            light: NSColor.black.withAlphaComponent(0.04),
             dark: NSColor.black.withAlphaComponent(0.3)
         )
 
@@ -114,17 +117,18 @@ enum DesignTokens {
         /// Menu button background
         static let menuBackground: Color = .clear
 
-        /// Menu button border
+        /// Menu button border. Light bumped for visible edge on glass surface.
         static let menuBorder = dynamicColor(
             name: "menuBorder",
-            light: NSColor.black.withAlphaComponent(0.12),
+            light: NSColor.black.withAlphaComponent(0.18),
             dark: NSColor.white.withAlphaComponent(0.12)
         )
 
-        /// Menu button border on hover
+        /// Menu button border on hover. Strong contrast in light mode so the
+        /// hover state reads at a glance.
         static let menuBorderHover = dynamicColor(
             name: "menuBorderHover",
-            light: NSColor.black.withAlphaComponent(0.22),
+            light: NSColor.black.withAlphaComponent(0.32),
             dark: NSColor.white.withAlphaComponent(0.25)
         )
 
@@ -139,43 +143,56 @@ enum DesignTokens {
         /// Subtle hover background for tappable rows (glass cards, dropdown menus, AutoEQ rows).
         static let hoverSurface = dynamicColor(
             name: "hoverSurface",
-            light: NSColor.black.withAlphaComponent(0.05),
+            light: NSColor.black.withAlphaComponent(0.06),
             dark: NSColor.white.withAlphaComponent(0.04)
         )
 
-        /// Translucent glass-card fill (popup floating rows, sheets, capsule backgrounds).
+        /// Translucent glass-card fill. Light mode flips to opaque white for
+        /// visible "floating card" hierarchy on the popover material; the
+        /// previous low-opacity black tint vanished on light glass.
         static let glassFill = dynamicColor(
             name: "glassFill",
-            light: NSColor.black.withAlphaComponent(0.05),
+            light: NSColor.white.withAlphaComponent(0.65),
             dark: NSColor.white.withAlphaComponent(0.08)
         )
 
-        /// Stronger glass-card fill (used for emphasised rows and sheet inserts).
+        /// Stronger glass-card fill for emphasised rows and sheet inserts.
         static let glassFillStrong = dynamicColor(
             name: "glassFillStrong",
-            light: NSColor.black.withAlphaComponent(0.08),
+            light: NSColor.white.withAlphaComponent(0.85),
             dark: NSColor.white.withAlphaComponent(0.1)
         )
 
-        /// Subtle border on glass rows / dropdowns.
+        /// Subtle border on glass rows / dropdowns. Light mode is restrained
+        /// because cards are now opaque white and need only a hairline.
         static let glassRowBorder = dynamicColor(
             name: "glassRowBorder",
-            light: NSColor.black.withAlphaComponent(0.18),
+            light: NSColor.black.withAlphaComponent(0.10),
             dark: NSColor.white.withAlphaComponent(0.2)
         )
 
         /// Hovered border on glass rows / dropdowns.
         static let glassRowBorderHover = dynamicColor(
             name: "glassRowBorderHover",
-            light: NSColor.black.withAlphaComponent(0.32),
+            light: NSColor.black.withAlphaComponent(0.20),
             dark: NSColor.white.withAlphaComponent(0.35)
         )
 
         /// HUD panel hairline border (Tahoe + Classic).
         static let hudBorder = dynamicColor(
             name: "hudBorder",
-            light: NSColor.black.withAlphaComponent(0.1),
+            light: NSColor.black.withAlphaComponent(0.15),
             dark: NSColor.white.withAlphaComponent(0.08)
+        )
+
+        /// Section-header text ("APPS", "GENERAL", etc.). The system
+        /// `tertiaryLabelColor` is too faint as a section divider in light
+        /// mode; this token gives the headers Apple-app-style readability
+        /// without changing the dark appearance.
+        static let sectionHeaderText = dynamicColor(
+            name: "sectionHeaderText",
+            light: NSColor.black.withAlphaComponent(0.55),
+            dark: NSColor.white.withAlphaComponent(0.40)
         )
 
         // MARK: VU Meter (Professional audio standard - NOT themed)
@@ -200,24 +217,26 @@ enum DesignTokens {
 
         // MARK: AutoEQ
 
-        /// AutoEQ empty-state dashed border
+        /// AutoEQ empty-state dashed border. Light bumped so the dashed
+        /// outline reads on a translucent panel.
         static let autoEQEmptyBorder = dynamicColor(
             name: "autoEQEmptyBorder",
-            light: NSColor.black.withAlphaComponent(0.12),
+            light: NSColor.black.withAlphaComponent(0.22),
             dark: NSColor.white.withAlphaComponent(0.1)
         )
 
-        /// AutoEQ empty-state icon color
+        /// AutoEQ empty-state icon color. Light made darker so the icon is
+        /// visible on a near-white background.
         static let autoEQEmptyIcon = dynamicColor(
             name: "autoEQEmptyIcon",
-            light: NSColor(white: 0.55, alpha: 1.0),
+            light: NSColor(white: 0.45, alpha: 1.0),
             dark: NSColor(white: 0.267, alpha: 1.0)
         )
 
-        /// AutoEQ toggle label text color (Correction / Preamp labels)
+        /// AutoEQ toggle label text color (Correction / Preamp labels).
         static let autoEQToggleLabel = dynamicColor(
             name: "autoEQToggleLabel",
-            light: NSColor.black.withAlphaComponent(0.55),
+            light: NSColor.black.withAlphaComponent(0.65),
             dark: NSColor.white.withAlphaComponent(0.5)
         )
 
