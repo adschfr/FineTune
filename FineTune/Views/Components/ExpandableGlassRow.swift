@@ -28,22 +28,10 @@ struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
         .padding(.vertical, DesignTokens.Spacing.xs)
+        // Flat at rest, hover reveals hoverSurface (System Settings pattern).
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
-                .fill(.ultraThinMaterial)
-        }
-        // Hover effect overlay (materials don't have native hover states)
-        .overlay {
-            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
                 .fill(isHovered ? DesignTokens.Colors.hoverSurface : Color.clear)
-                .allowsHitTesting(false)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
-                .strokeBorder(
-                    isHovered ? DesignTokens.Colors.glassBorderHover : DesignTokens.Colors.glassBorder,
-                    lineWidth: 0.5
-                )
                 .allowsHitTesting(false)
         }
         .onHover { hovering in

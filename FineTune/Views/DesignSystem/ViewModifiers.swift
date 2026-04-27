@@ -1,7 +1,7 @@
 // FineTune/Views/DesignSystem/ViewModifiers.swift
 import SwiftUI
 
-// MARK: - Hoverable Row Modifier (solid colors for reliable rendering)
+// MARK: - Hoverable Row Modifier (flat-rest, hover-active per System Settings pattern)
 
 struct HoverableRowModifier: ViewModifier {
     @State private var isHovered = false
@@ -10,19 +10,11 @@ struct HoverableRowModifier: ViewModifier {
         content
             .padding(.horizontal, DesignTokens.Spacing.sm)
             .padding(.vertical, DesignTokens.Spacing.xs)
+            // Flat at rest: no fill, no border. Hover reveals hoverSurface
+            // as the meaningful "this row is active" affordance.
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                    .fill(.ultraThinMaterial)
-            )
-            // Hover effect overlay (materials don't have native hover states)
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                     .fill(isHovered ? DesignTokens.Colors.hoverSurface : Color.clear)
-                    .allowsHitTesting(false)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                    .stroke(DesignTokens.Colors.glassBorder, lineWidth: 0.5)
                     .allowsHitTesting(false)
             )
             .onHover { hovering in
