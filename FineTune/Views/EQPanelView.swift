@@ -124,10 +124,7 @@ struct EQPanelView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(DesignTokens.Colors.recessedBackground)
-        }
+        .eqCardBackground()
         .padding(.horizontal, 2)
         .padding(.vertical, 4)
         .animation(DesignTokens.Animation.quick, value: isSaving)
@@ -334,13 +331,10 @@ struct EQPanelView: View {
     }
     .padding(.horizontal, DesignTokens.Spacing.sm)
     .padding(.vertical, DesignTokens.Spacing.xs)
-    .background {
-        RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
-            .fill(DesignTokens.Colors.recessedBackground)
-    }
+    .eqCardBackground()
     .frame(width: 550)
     .padding()
-    .background(Color.black)
+    .background(Color.black.opacity(0.4))
 }
 
 #Preview("Custom Curve - Save Visible") {
