@@ -59,8 +59,10 @@ struct DesignTokensDynamicResolutionTests {
 
     @Test("popupOverlay resolves correctly in light and dark")
     func popupOverlay() {
+        // Light bumped from 0.10 → 0.50: lifts the popup from muddy gray
+        // to crisp white-tilted glass over the .popover material.
         expectColor(DesignTokens.Colors.popupOverlay,
-                    equals: NSColor.white.withAlphaComponent(0.10),
+                    equals: NSColor.white.withAlphaComponent(0.50),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.popupOverlay,
                     equals: NSColor.black.withAlphaComponent(0.4),
@@ -131,11 +133,13 @@ struct DesignTokensDynamicResolutionTests {
 
     @Test("hoverSurface resolves correctly in light and dark")
     func hoverSurface() {
+        // Light bumped from 0.08 → 0.115: clearly visible row hover wash
+        // on the new whiter glass without competing with the selected row.
         expectColor(DesignTokens.Colors.hoverSurface,
-                    equals: NSColor.black.withAlphaComponent(0.06),
+                    equals: NSColor.black.withAlphaComponent(0.115),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.hoverSurface,
-                    equals: NSColor.white.withAlphaComponent(0.04),
+                    equals: NSColor.white.withAlphaComponent(0.07),
                     in: Self.darkAqua)
     }
 
@@ -191,11 +195,55 @@ struct DesignTokensDynamicResolutionTests {
 
     @Test("sectionHeaderText resolves correctly in light and dark")
     func sectionHeaderText() {
+        // Light bumped from 0.55 → 0.65: stronger section anchor on
+        // whiter glass without changing tracking or weight.
         expectColor(DesignTokens.Colors.sectionHeaderText,
-                    equals: NSColor.black.withAlphaComponent(0.55),
+                    equals: NSColor.black.withAlphaComponent(0.65),
                     in: Self.aqua)
         expectColor(DesignTokens.Colors.sectionHeaderText,
                     equals: NSColor.white.withAlphaComponent(0.40),
+                    in: Self.darkAqua)
+    }
+
+    // MARK: Card & badge tokens (light-mode polish)
+
+    @Test("eqCardBackground resolves correctly in light and dark")
+    func eqCardBackground() {
+        expectColor(DesignTokens.Colors.eqCardBackground,
+                    equals: NSColor.white.withAlphaComponent(0.78),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.eqCardBackground,
+                    equals: NSColor.white.withAlphaComponent(0.07),
+                    in: Self.darkAqua)
+    }
+
+    @Test("eqCardBorder resolves correctly in light and dark")
+    func eqCardBorder() {
+        expectColor(DesignTokens.Colors.eqCardBorder,
+                    equals: NSColor.black.withAlphaComponent(0.06),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.eqCardBorder,
+                    equals: NSColor.white.withAlphaComponent(0.10),
+                    in: Self.darkAqua)
+    }
+
+    @Test("deviceBadgeMonoFill resolves correctly in light and dark")
+    func deviceBadgeMonoFill() {
+        expectColor(DesignTokens.Colors.deviceBadgeMonoFill,
+                    equals: NSColor.black.withAlphaComponent(0.10),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.deviceBadgeMonoFill,
+                    equals: NSColor.white.withAlphaComponent(0.10),
+                    in: Self.darkAqua)
+    }
+
+    @Test("deviceBadgeMonoForeground resolves correctly in light and dark")
+    func deviceBadgeMonoForeground() {
+        expectColor(DesignTokens.Colors.deviceBadgeMonoForeground,
+                    equals: NSColor.black.withAlphaComponent(0.65),
+                    in: Self.aqua)
+        expectColor(DesignTokens.Colors.deviceBadgeMonoForeground,
+                    equals: NSColor.white.withAlphaComponent(0.70),
                     in: Self.darkAqua)
     }
 }

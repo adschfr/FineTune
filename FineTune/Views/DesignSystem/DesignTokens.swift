@@ -95,12 +95,14 @@ enum DesignTokens {
 
         // MARK: Glass Effects
 
-        /// Popup background overlay. Sits over NSVisualEffectView, so light
-        /// mode keeps a very low alpha to let the material's translucency show
-        /// (the previous 0.55 wash killed vibrancy and produced a flat panel).
+        /// Popup background overlay. Sits over NSVisualEffectView's `.popover`
+        /// material. Light bumped from 0.10 → 0.50 so the popup reads as
+        /// crisp white-tilted glass over arbitrary wallpapers (Control Center
+        /// sweet spot) instead of muddy gray. The earlier 0.55 wash killed
+        /// vibrancy entirely; 0.50 keeps a hint of desktop tint.
         static let popupOverlay = dynamicColor(
             name: "popupOverlay",
-            light: NSColor.white.withAlphaComponent(0.10),
+            light: NSColor.white.withAlphaComponent(0.50),
             dark: NSColor.black.withAlphaComponent(0.4)
         )
 
@@ -140,11 +142,16 @@ enum DesignTokens {
 
         // MARK: Hover & Glass Surface
 
-        /// Subtle hover background for tappable rows (glass cards, dropdown menus, AutoEQ rows).
+        /// Hover background for tappable rows. With flat-row design (no
+        /// resting fill or border), this is the primary "this row is active"
+        /// affordance, so it needs to read clearly without being heavy.
+        /// Light bumped from 0.08 → 0.115 to remain unambiguous on the
+        /// new whiter glass without competing with the selected-row
+        /// indicator. Matches the macOS-native System Settings pattern.
         static let hoverSurface = dynamicColor(
             name: "hoverSurface",
-            light: NSColor.black.withAlphaComponent(0.06),
-            dark: NSColor.white.withAlphaComponent(0.04)
+            light: NSColor.black.withAlphaComponent(0.115),
+            dark: NSColor.white.withAlphaComponent(0.07)
         )
 
         /// Translucent glass-card fill. Light mode flips to opaque white for
@@ -185,13 +192,60 @@ enum DesignTokens {
             dark: NSColor.white.withAlphaComponent(0.08)
         )
 
+        // MARK: Cards & Badges
+
+        /// Lifted-card fill used by the EQ panel and Settings sections.
+        /// Light reads as a white card on the popup glass; dark reads as
+        /// a subtle translucent surface on the dark glass. Pairs with
+        /// `eqCardBorder` for the hairline edge.
+        static let eqCardBackground = dynamicColor(
+            name: "eqCardBackground",
+            light: NSColor.white.withAlphaComponent(0.78),
+            dark: NSColor.white.withAlphaComponent(0.07)
+        )
+
+        /// Hairline border for the lifted card. Visible enough to define
+        /// the edge, quiet enough to read as part of the glass family.
+        static let eqCardBorder = dynamicColor(
+            name: "eqCardBorder",
+            light: NSColor.black.withAlphaComponent(0.06),
+            dark: NSColor.white.withAlphaComponent(0.10)
+        )
+
+        /// Settings cards use the same family as the EQ card. Aliased for
+        /// call-site clarity; if values diverge later, split into a
+        /// separate dynamic color.
+        static let settingsCardBackground: Color = eqCardBackground
+
+        /// Settings card border. Same family as `eqCardBorder`.
+        static let settingsCardBorder: Color = eqCardBorder
+
+        /// Monochrome circular badge fill used on non-selected device rows.
+        /// The selected state uses a `Color.accentColor` gradient inline in
+        /// `DeviceBadge`; that does not need a token.
+        static let deviceBadgeMonoFill = dynamicColor(
+            name: "deviceBadgeMonoFill",
+            light: NSColor.black.withAlphaComponent(0.10),
+            dark: NSColor.white.withAlphaComponent(0.10)
+        )
+
+        /// Foreground color for the device-badge SF symbol on a non-selected
+        /// row. Selected rows use white directly inside `DeviceBadge`.
+        static let deviceBadgeMonoForeground = dynamicColor(
+            name: "deviceBadgeMonoForeground",
+            light: NSColor.black.withAlphaComponent(0.65),
+            dark: NSColor.white.withAlphaComponent(0.70)
+        )
+
         /// Section-header text ("APPS", "GENERAL", etc.). The system
         /// `tertiaryLabelColor` is too faint as a section divider in light
         /// mode; this token gives the headers Apple-app-style readability
-        /// without changing the dark appearance.
+        /// without changing the dark appearance. Light bumped from 0.55
+        /// → 0.65 so headers anchor each section on the whiter glass
+        /// without changing tracking or weight.
         static let sectionHeaderText = dynamicColor(
             name: "sectionHeaderText",
-            light: NSColor.black.withAlphaComponent(0.55),
+            light: NSColor.black.withAlphaComponent(0.65),
             dark: NSColor.white.withAlphaComponent(0.40)
         )
 
