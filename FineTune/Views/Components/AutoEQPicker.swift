@@ -20,6 +20,8 @@ struct AutoEQPicker: View {
     @State private var isExpanded = false
     @State private var isButtonHovered = false
 
+    @Environment(\.appearancePreference) private var appearancePreference
+
     // MARK: - Layout Constants
 
     private let popoverWidth: CGFloat = 260
@@ -45,7 +47,11 @@ struct AutoEQPicker: View {
     var body: some View {
         triggerButton
             .background(
-                PopoverHost(isPresented: $isExpanded) {
+                PopoverHost(
+                    isPresented: $isExpanded,
+                    preferredColorScheme: appearancePreference.swiftUIColorScheme,
+                    nsAppearance: appearancePreference.nsAppearance
+                ) {
                     popoverContent
                 }
             )

@@ -114,8 +114,13 @@ struct MenuBarPopupView: View {
         }
         .padding(DesignTokens.Spacing.lg)
         .frame(width: DesignTokens.Dimensions.popupWidth)
+        .background(
+            WindowAppearanceBridge(appearance: localAppSettings.appearance.nsAppearance)
+                .frame(width: 0, height: 0)
+        )
         .darkGlassBackground()
-        .environment(\.colorScheme, .dark)
+        .preferredColorScheme(localAppSettings.appearance.swiftUIColorScheme)
+        .environment(\.appearancePreference, localAppSettings.appearance)
         .onAppear {
             updateSortedDevices()
             updateSortedInputDevices()

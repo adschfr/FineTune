@@ -15,6 +15,8 @@ struct DropdownMenu<Item: Identifiable, Label: View, ItemContent: View>: View wh
     @State private var isExpanded = false
     @State private var isButtonHovered = false
 
+    @Environment(\.appearancePreference) private var appearancePreference
+
     // Configuration
     private let itemHeight: CGFloat = 26
     private let itemSpacing: CGFloat = 2
@@ -82,7 +84,11 @@ struct DropdownMenu<Item: Identifiable, Label: View, ItemContent: View>: View wh
     var body: some View {
         triggerButton
             .background(
-                PopoverHost(isPresented: $isExpanded) {
+                PopoverHost(
+                    isPresented: $isExpanded,
+                    preferredColorScheme: appearancePreference.swiftUIColorScheme,
+                    nsAppearance: appearancePreference.nsAppearance
+                ) {
                     DropdownContentView(
                         items: items,
                         selectedItem: selectedItem,
@@ -201,6 +207,8 @@ struct GroupedDropdownMenu<Section: Identifiable & Hashable, Item: Identifiable,
     @State private var isExpanded = false
     @State private var isButtonHovered = false
 
+    @Environment(\.appearancePreference) private var appearancePreference
+
     // Configuration
     private let itemHeight: CGFloat = 22
     private let sectionHeaderHeight: CGFloat = 24
@@ -256,7 +264,11 @@ struct GroupedDropdownMenu<Section: Identifiable & Hashable, Item: Identifiable,
     var body: some View {
         triggerButton
             .background(
-                PopoverHost(isPresented: $isExpanded) {
+                PopoverHost(
+                    isPresented: $isExpanded,
+                    preferredColorScheme: appearancePreference.swiftUIColorScheme,
+                    nsAppearance: appearancePreference.nsAppearance
+                ) {
                     GroupedDropdownContentView(
                         sections: sections,
                         itemsForSection: itemsForSection,

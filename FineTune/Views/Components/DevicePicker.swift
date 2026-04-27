@@ -18,6 +18,8 @@ struct DevicePicker: View {
     @State private var isExpanded = false
     @State private var isButtonHovered = false
 
+    @Environment(\.appearancePreference) private var appearancePreference
+
     // Local state mirrors props for popover reactivity
     @State private var currentMode: DeviceSelectionMode = .single
     @State private var currentSelectedUIDs: Set<String> = []
@@ -125,7 +127,11 @@ struct DevicePicker: View {
     var body: some View {
         triggerButton
             .background(
-                PopoverHost(isPresented: $isExpanded) {
+                PopoverHost(
+                    isPresented: $isExpanded,
+                    preferredColorScheme: appearancePreference.swiftUIColorScheme,
+                    nsAppearance: appearancePreference.nsAppearance
+                ) {
                     dropdownContent
                 }
             )

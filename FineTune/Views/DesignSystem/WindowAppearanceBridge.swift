@@ -39,3 +39,23 @@ final class WindowAppearanceTrackerView: NSView {
         window?.appearance = desiredAppearance
     }
 }
+
+// MARK: - Environment
+
+/// Environment key carrying the app's resolved `AppearancePreference` down to
+/// descendant views so child popovers / panels can mirror the preference to
+/// their own `NSPanel.appearance` and `.preferredColorScheme(...)`.
+///
+/// Set at popup / HUD roots (`MenuBarPopupView`, `HUDWindowController`) so
+/// nested pickers (`PopoverHost` consumers) can wire it through without each
+/// intermediate view threading a binding to `appSettings`.
+private struct AppearancePreferenceKey: EnvironmentKey {
+    static let defaultValue: AppearancePreference = .system
+}
+
+extension EnvironmentValues {
+    var appearancePreference: AppearancePreference {
+        get { self[AppearancePreferenceKey.self] }
+        set { self[AppearancePreferenceKey.self] = newValue }
+    }
+}

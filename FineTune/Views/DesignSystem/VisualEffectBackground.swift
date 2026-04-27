@@ -14,8 +14,6 @@ struct VisualEffectBackground: NSViewRepresentable {
         view.material = material
         view.blendingMode = blendingMode
         view.state = .active
-        // Force dark appearance for consistency
-        view.appearance = NSAppearance(named: .darkAqua)
         return view
     }
 

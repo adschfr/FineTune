@@ -12,6 +12,12 @@ private class KeyablePanel: NSPanel {
 /// Uses child window relationship for proper dismissal behavior
 struct PopoverHost<Content: View>: NSViewRepresentable {
     @Binding var isPresented: Bool
+    /// SwiftUI color-scheme override applied to the hosted root view. `nil`
+    /// means "follow environment" (System mode).
+    let preferredColorScheme: ColorScheme?
+    /// AppKit appearance applied to the panel itself. `nil` inherits from the
+    /// application's effective appearance (System mode).
+    let nsAppearance: NSAppearance?
     @ViewBuilder let content: () -> Content
 
     func makeNSView(context: Context) -> NSView {
@@ -26,10 +32,19 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         if isPresented {
             if context.coordinator.panel == nil {
-                context.coordinator.showPanel(from: nsView, content: content)
+                context.coordinator.showPanel(
+                    from: nsView,
+                    content: content,
+                    preferredColorScheme: preferredColorScheme,
+                    nsAppearance: nsAppearance
+                )
             } else {
                 // Update content when state changes while panel is open
-                context.coordinator.updateContent(content)
+                context.coordinator.updateContent(
+                    content,
+                    preferredColorScheme: preferredColorScheme,
+                    nsAppearance: nsAppearance
+                )
             }
         } else {
             context.coordinator.dismissPanel()
@@ -53,7 +68,12 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             self._isPresented = isPresented
         }
 
-        func showPanel<V: View>(from parentView: NSView, content: () -> V) {
+        func showPanel<V: View>(
+            from parentView: NSView,
+            content: () -> V,
+            preferredColorScheme: ColorScheme?,
+            nsAppearance: NSAppearance?
+        ) {
             guard let parentWindow = parentView.window else { return }
             self.parentWindow = parentWindow
 
@@ -69,12 +89,15 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             panel.level = .popUpMenu
             panel.hasShadow = true
             panel.collectionBehavior = [.fullScreenAuxiliary]
+            // Apply appearance before any drawing so NSVisualEffectView picks
+            // it up on first render. `nil` inherits from the application.
+            panel.appearance = nsAppearance
 
             panel.becomesKeyOnlyIfNeeded = false
 
-            // Create hosting view with content, forcing dark color scheme
-            // Use AnyView to allow rootView updates without replacing the hosting view
-            let hosting: NSHostingView<AnyView> = NSHostingView(rootView: AnyView(content().preferredColorScheme(.dark)))
+            // Create hosting view with content, applying the resolved color scheme.
+            // Use AnyView to allow rootView updates without replacing the hosting view.
+            let hosting: NSHostingView<AnyView> = NSHostingView(rootView: AnyView(content().preferredColorScheme(preferredColorScheme)))
             hosting.frame.size = hosting.fittingSize
             panel.contentView = hosting
             panel.setContentSize(hosting.fittingSize)
@@ -134,11 +157,18 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             }
         }
 
-        func updateContent<V: View>(_ content: () -> V) {
+        func updateContent<V: View>(
+            _ content: () -> V,
+            preferredColorScheme: ColorScheme?,
+            nsAppearance: NSAppearance?
+        ) {
             guard let hostingView = hostingView else { return }
+            // Re-apply appearance in case the preference changed while the
+            // panel is open. Setting to the same value is a no-op.
+            panel?.appearance = nsAppearance
             // Update existing hosting view's rootView instead of replacing it
             // This allows SwiftUI to perform efficient diffing without flickering
-            hostingView.rootView = AnyView(content().preferredColorScheme(.dark))
+            hostingView.rootView = AnyView(content().preferredColorScheme(preferredColorScheme))
             // Resize panel if content size changed
             let newSize = hostingView.fittingSize
             if let panel = panel, panel.frame.size != newSize {

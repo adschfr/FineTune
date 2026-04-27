@@ -83,12 +83,17 @@ final class HUDWindowController {
         }
 
         let style = settingsManager.appSettings.hudStyle
+        let appearance = settingsManager.appSettings.appearance
         styleAtLastShow = style
         let panel = ensurePanel()
+        // Refresh on every show so a preference change between invocations
+        // takes effect immediately.
+        panel.appearance = appearance.nsAppearance
 
         // Classic is click-through; Tahoe takes mouse events for drag + hover.
         panel.ignoresMouseEvents = (style == .classic)
 
+        let scheme = appearance.swiftUIColorScheme
         let root: AnyView
         let size: NSSize
         switch style {
@@ -105,10 +110,14 @@ final class HUDWindowController {
                         self?.handleHoverChange(hovering)
                     }
                 )
+                .preferredColorScheme(scheme)
             )
             size = NSSize(width: 300, height: 72)
         case .classic:
-            root = AnyView(ClassicStyleHUD(volume: volume, mute: mute))
+            root = AnyView(
+                ClassicStyleHUD(volume: volume, mute: mute)
+                    .preferredColorScheme(scheme)
+            )
             size = NSSize(width: 200, height: 200)
         }
 
@@ -221,6 +230,9 @@ final class HUDWindowController {
         p.hidesOnDeactivate = false
         p.isMovable = false
         p.isReleasedWhenClosed = false
+        // Initial appearance; refreshed on every show() so preference flips
+        // between invocations propagate.
+        p.appearance = settingsManager.appSettings.appearance.nsAppearance
 
         panel = p
         return p
