@@ -1,9 +1,27 @@
 // FineTune/Views/DesignSystem/DesignTokens.swift
 import SwiftUI
+import AppKit
 
 /// Design System tokens for FineTune UI
 /// Centralized values for colors, typography, spacing, dimensions, and animations
 enum DesignTokens {
+
+    // MARK: - Internal helpers
+
+    /// Builds a SwiftUI Color that resolves to `light` or `dark` based on the
+    /// effective NSAppearance at draw time. SwiftUI re-resolves automatically
+    /// when the appearance changes (system toggle or override change) because
+    /// `Color(nsColor:)` preserves the underlying NSColor's adaptability.
+    ///
+    /// `name` is NSColor's caching key. Pass a unique name per token; two
+    /// dynamic colors sharing a name silently resolve to the same instance.
+    /// `DesignTokensDynamicResolutionTests` enforces uniqueness by asserting
+    /// per-token RGBA values.
+    static func dynamicColor(name: String, light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: NSColor.Name(name)) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        })
+    }
 
     // MARK: - Colors
 
