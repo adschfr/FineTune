@@ -435,7 +435,7 @@ struct MenuBarPopupView: View {
     }
 
     private var devicesContent: some View {
-        VStack(spacing: DesignTokens.Spacing.xs) {
+        VStack(spacing: 0) {
             if isEditingDevicePriority {
                 // Edit mode: drag-and-drop reordering (works for both output and input)
                 let defaultDeviceID = showingInputDevices
@@ -773,7 +773,7 @@ struct MenuBarPopupView: View {
 
     private func appsContent(scrollProxy: ScrollViewProxy) -> some View {
         let presets = audioEngine.settingsManager.getUserPresets()
-        return VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(audioEngine.displayableApps) { displayableApp in
                 switch displayableApp {
                 case .active(let app):

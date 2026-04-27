@@ -27,8 +27,9 @@ struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
             }
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, DesignTokens.Spacing.xs)
+        .padding(.vertical, 6)
         // Flat at rest, hover reveals hoverSurface (System Settings pattern).
+        // Adjacent hover rectangles touch at 0 inter-row spacing.
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
                 .fill(isHovered ? DesignTokens.Colors.hoverSurface : Color.clear)

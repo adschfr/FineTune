@@ -9,9 +9,10 @@ struct HoverableRowModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, DesignTokens.Spacing.sm)
-            .padding(.vertical, DesignTokens.Spacing.xs)
+            .padding(.vertical, 6)
             // Flat at rest: no fill, no border. Hover reveals hoverSurface
-            // as the meaningful "this row is active" affordance.
+            // as the meaningful "this row is active" affordance. Adjacent
+            // hover rectangles touch at 0 inter-row spacing.
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                     .fill(isHovered ? DesignTokens.Colors.hoverSurface : Color.clear)
