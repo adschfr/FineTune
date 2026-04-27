@@ -95,11 +95,19 @@ enum DesignTokens {
 
         // MARK: Glass Effects
 
-        /// Popup background overlay
-        static let popupOverlay: Color = .black.opacity(0.4)
+        /// Popup background overlay (dark-mode dim / light-mode bright wash)
+        static let popupOverlay = dynamicColor(
+            name: "popupOverlay",
+            light: NSColor.white.withAlphaComponent(0.55),
+            dark: NSColor.black.withAlphaComponent(0.4)
+        )
 
         /// Recessed panel background (EQ panel)
-        static let recessedBackground: Color = .black.opacity(0.3)
+        static let recessedBackground = dynamicColor(
+            name: "recessedBackground",
+            light: NSColor.black.withAlphaComponent(0.06),
+            dark: NSColor.black.withAlphaComponent(0.3)
+        )
 
         // MARK: Menu/Picker
 
@@ -107,10 +115,18 @@ enum DesignTokens {
         static let menuBackground: Color = .clear
 
         /// Menu button border
-        static let menuBorder: Color = .white.opacity(0.12)
+        static let menuBorder = dynamicColor(
+            name: "menuBorder",
+            light: NSColor.black.withAlphaComponent(0.12),
+            dark: NSColor.white.withAlphaComponent(0.12)
+        )
 
         /// Menu button border on hover
-        static let menuBorderHover: Color = .white.opacity(0.25)
+        static let menuBorderHover = dynamicColor(
+            name: "menuBorderHover",
+            light: NSColor.black.withAlphaComponent(0.22),
+            dark: NSColor.white.withAlphaComponent(0.25)
+        )
 
         /// Picker background
         static let pickerBackground: Color = .primary.opacity(0.08)
@@ -140,14 +156,26 @@ enum DesignTokens {
 
         // MARK: AutoEQ
 
-        /// Empty state dashed border
-        static let autoEQEmptyBorder = Color.white.opacity(0.1)
+        /// AutoEQ empty-state dashed border
+        static let autoEQEmptyBorder = dynamicColor(
+            name: "autoEQEmptyBorder",
+            light: NSColor.black.withAlphaComponent(0.12),
+            dark: NSColor.white.withAlphaComponent(0.1)
+        )
 
-        /// Empty state icon color
-        static let autoEQEmptyIcon = Color(white: 0.267)
+        /// AutoEQ empty-state icon color
+        static let autoEQEmptyIcon = dynamicColor(
+            name: "autoEQEmptyIcon",
+            light: NSColor(white: 0.55, alpha: 1.0),
+            dark: NSColor(white: 0.267, alpha: 1.0)
+        )
 
-        /// Toggle label text color (Correction / Preamp labels)
-        static let autoEQToggleLabel = Color.white.opacity(0.5)
+        /// AutoEQ toggle label text color (Correction / Preamp labels)
+        static let autoEQToggleLabel = dynamicColor(
+            name: "autoEQToggleLabel",
+            light: NSColor.black.withAlphaComponent(0.55),
+            dark: NSColor.white.withAlphaComponent(0.5)
+        )
 
         // MARK: HUD
 
