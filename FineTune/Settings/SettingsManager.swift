@@ -2,6 +2,8 @@
 import Foundation
 import os
 import ServiceManagement
+import SwiftUI
+import AppKit
 
 // MARK: - Pinned App Info
 
@@ -73,6 +75,30 @@ enum AppearancePreference: String, Codable, CaseIterable, Identifiable, CustomSt
         case .system: return "System"
         case .light: return "Light"
         case .dark: return "Dark"
+        }
+    }
+}
+
+extension AppearancePreference {
+    /// SwiftUI color-scheme override. `nil` means "follow the environment".
+    /// Apply via `.preferredColorScheme(value)` at the root of any `NSHostingView`.
+    var swiftUIColorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+
+    /// AppKit appearance override. `nil` means "inherit from window or app".
+    /// Apply via `nsView.window?.appearance = value` for any `NSWindow`/`NSPanel`
+    /// the app hosts (popup, popover, HUD).
+    /// `.aqua` available since macOS 10.9; `.darkAqua` since 10.14.
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
         }
     }
 }
