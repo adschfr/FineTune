@@ -57,6 +57,26 @@ enum HUDStyle: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+// MARK: - Appearance Preference
+
+/// User preference for app appearance. `.system` follows macOS appearance live;
+/// `.light` and `.dark` lock the override regardless of system setting.
+enum AppearancePreference: String, Codable, CaseIterable, Identifiable, CustomStringConvertible {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var description: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+}
+
 // MARK: - App-Wide Settings Model
 
 struct AppSettings: Codable, Equatable {
@@ -86,6 +106,9 @@ struct AppSettings: Codable, Equatable {
     // its UserDefaults; settings.json is the source of truth.
     var customShortcuts: [String: ShortcutCodable] = [:]
 
+    // Appearance
+    var appearance: AppearancePreference = .system  // Follow system appearance, or lock light/dark
+
     init() {}
 
     mutating func setUnifiedLoudnessEnabled(_ enabled: Bool) {
@@ -105,6 +128,7 @@ struct AppSettings: Codable, Equatable {
         hudStyle = try c.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .tahoe
         mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
         customShortcuts = try c.decodeIfPresent([String: ShortcutCodable].self, forKey: .customShortcuts) ?? [:]
+        appearance = try c.decodeIfPresent(AppearancePreference.self, forKey: .appearance) ?? .system
     }
 }
 
