@@ -81,6 +81,11 @@ struct AppSettings: Codable, Equatable {
     var hudStyle: HUDStyle = .tahoe                // Visual style of the volume HUD
     var mediaKeyControlEnabled: Bool = true        // Intercept F10/F11/F12 to drive the default output device
 
+    // Global Hotkeys
+    // Keyed by ShortcutAction.rawValue. Values mirror what KeyboardShortcuts persists in
+    // its UserDefaults; settings.json is the source of truth.
+    var customShortcuts: [String: ShortcutCodable] = [:]
+
     init() {}
 
     mutating func setUnifiedLoudnessEnabled(_ enabled: Bool) {
@@ -99,6 +104,7 @@ struct AppSettings: Codable, Equatable {
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
         hudStyle = try c.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .tahoe
         mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
+        customShortcuts = try c.decodeIfPresent([String: ShortcutCodable].self, forKey: .customShortcuts) ?? [:]
     }
 }
 
