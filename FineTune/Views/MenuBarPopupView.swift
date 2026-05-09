@@ -79,7 +79,7 @@ struct MenuBarPopupView: View {
     /// Namespace for device toggle animation
     @Namespace private var deviceToggleNamespace
 
-    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     // MARK: - Scroll Thresholds
 
@@ -247,13 +247,9 @@ struct MenuBarPopupView: View {
 
     private func openSettingsWindow() {
         exitEditModeSaving()
-        NSApp.keyWindow?.resignKey()  // Dismiss the popup so the Settings window takes focus.
-        // Activate BEFORE the open call so this agent app is the frontmost
-        // process when the window is created. Calling activate after is
-        // unreliable because the window orders in behind whichever app was
-        // frontmost when openWindow() ran.
+        NSApp.keyWindow?.resignKey()
         NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: SettingsWindowID)
+        openSettings()
     }
 
     // MARK: - Main Content

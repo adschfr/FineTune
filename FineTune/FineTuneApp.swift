@@ -7,20 +7,6 @@ import os
 
 private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "App")
 
-let SettingsWindowID = "FineTuneSettings"
-
-struct SettingsCommand: View {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button("Settings…") {
-            NSApp.activate(ignoringOtherApps: true)
-            openWindow(id: SettingsWindowID)
-        }
-        .keyboardShortcut(",", modifiers: .command)
-    }
-}
-
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var audioEngine: AudioEngine?
@@ -68,12 +54,10 @@ struct FineTuneApp: App {
     private let launchIconImage: NSImage
 
     var body: some Scene {
-        FluidMenuBarExtra("FineTune", image: launchIconImage, isInserted: $showMenuBarExtra) {
-            menuBarContent
-        }
-        // FluidMenuBarExtra returns Settings {} from its body; declaring our
-        // own Settings scene collides with it. Use Window(id:) and wire ⌘, below.
-        Window("Settings", id: SettingsWindowID) {
+        // Declared before FluidMenuBarExtra so this Settings scene wins over
+        // FluidMenuBarExtra's `Settings {}` placeholder. Both ⌘, and the
+        // gear button route here via openSettings().
+        Settings {
             SettingsRootView(
                 settings: audioEngine.settingsManager,
                 audioEngine: audioEngine,
@@ -87,11 +71,8 @@ struct FineTuneApp: App {
             .background(Color(nsColor: .windowBackgroundColor))
             .ignoresSafeArea()
         }
-        .windowResizability(.contentSize)
-        .commands {
-            CommandGroup(replacing: .appSettings) {
-                SettingsCommand()
-            }
+        FluidMenuBarExtra("FineTune", image: launchIconImage, isInserted: $showMenuBarExtra) {
+            menuBarContent
         }
     }
 
