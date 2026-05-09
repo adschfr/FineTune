@@ -46,6 +46,7 @@ struct FineTuneApp: App {
     @State private var hudController: HUDWindowController
     @State private var mediaKeyMonitor: MediaKeyMonitor
     @State private var iconCoordinator: MenuBarIconCoordinator
+    @State private var menuBarPopupController = MenuBarPopupController()
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
 
