@@ -86,7 +86,9 @@ final class MenuBarPopupController: MenuBarPopupControlling {
         return "NSStatusItem"
     }
 
-    private func findStatusItem() -> NSStatusItem? {
+    /// Exposed `internal` so tests can verify discovery without depending on
+    /// `NSApp.postEvent` delivery, which is flaky in a unit-test process.
+    func findStatusItem() -> NSStatusItem? {
         let concreteName = Self.concreteStatusItemClassName
 
         return NSApp.windows

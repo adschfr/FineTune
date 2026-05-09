@@ -46,7 +46,8 @@ struct FineTuneApp: App {
     @State private var hudController: HUDWindowController
     @State private var mediaKeyMonitor: MediaKeyMonitor
     @State private var iconCoordinator: MenuBarIconCoordinator
-    @State private var menuBarPopupController = MenuBarPopupController()
+    @State private var menuBarPopupController: MenuBarPopupController
+    @State private var shortcutsRegistry: ShortcutsRegistry
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
 
@@ -93,6 +94,10 @@ struct FineTuneApp: App {
             hudController: hudController,
             mediaKeyMonitor: mediaKeyMonitor
         )
+        .task {
+            // Idempotent: subsequent task runs (popup re-open) are no-ops inside start().
+            shortcutsRegistry.start()
+        }
     }
 
     init() {
@@ -176,6 +181,15 @@ struct FineTuneApp: App {
         }
         accessibilityService.start()
         monitor.reconcile()
+
+        // Global hotkeys (KeyboardShortcuts SPM, Carbon-backed; no Accessibility
+        // permission required for the hotkey itself). Registry start() is deferred
+        // to a SwiftUI `.task` on the popup content so the FluidMenuBarExtra
+        // status item has been materialized before any hotkey can fire.
+        let popupController = MenuBarPopupController()
+        let registry = ShortcutsRegistry(settings: settings, popupController: popupController)
+        _menuBarPopupController = State(initialValue: popupController)
+        _shortcutsRegistry = State(initialValue: registry)
 
         // Pass engine to AppDelegate
         _appDelegate.wrappedValue.audioEngine = engine
