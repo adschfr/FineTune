@@ -790,7 +790,8 @@ final class SettingsManager {
     // MARK: - App-Wide Settings
 
     var appSettings: AppSettings {
-        settings.appSettings
+        get { settings.appSettings }
+        set { updateAppSettings(newValue) }
     }
 
     func updateAppSettings(_ newSettings: AppSettings) {
