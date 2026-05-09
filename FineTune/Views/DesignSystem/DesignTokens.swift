@@ -178,6 +178,12 @@ enum DesignTokens {
 
         /// AutoEQ card source/measuredBy
         static let cardSource = Font.system(size: 9, weight: .regular)
+
+        /// Settings card header (sentence case, 13pt semibold)
+        static let cardHeader = Font.system(size: 13, weight: .semibold)
+
+        /// Settings row description (11pt regular, tertiary)
+        static let rowDescription = Font.system(size: 11, weight: .regular)
     }
 
     // MARK: - Spacing (standard 1× multiplier)

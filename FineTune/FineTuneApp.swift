@@ -7,6 +7,20 @@ import os
 
 private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "App")
 
+let SettingsWindowID = "FineTuneSettings"
+
+struct SettingsCommand: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Settings…") {
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: SettingsWindowID)
+        }
+        .keyboardShortcut(",", modifiers: .command)
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var audioEngine: AudioEngine?
@@ -28,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner])
+    }
+
+    /// LSUIElement agent — closing the Settings window must not terminate the app.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 }
 
@@ -52,8 +71,27 @@ struct FineTuneApp: App {
         FluidMenuBarExtra("FineTune", image: launchIconImage, isInserted: $showMenuBarExtra) {
             menuBarContent
         }
+        // FluidMenuBarExtra returns Settings {} from its body; declaring our
+        // own Settings scene collides with it. Use Window(id:) and wire ⌘, below.
+        Window("Settings", id: SettingsWindowID) {
+            SettingsRootView(
+                settings: audioEngine.settingsManager,
+                audioEngine: audioEngine,
+                deviceVolumeMonitor: audioEngine.deviceVolumeMonitor as! DeviceVolumeMonitor,
+                accessibility: accessibility,
+                mediaKeyStatus: mediaKeyStatus,
+                mediaKeyMonitor: mediaKeyMonitor,
+                updateManager: updateManager
+            )
+            .frame(minWidth: 720, minHeight: 540)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .ignoresSafeArea()
+        }
+        .windowResizability(.contentSize)
         .commands {
-            CommandGroup(replacing: .appSettings) { }
+            CommandGroup(replacing: .appSettings) {
+                SettingsCommand()
+            }
         }
     }
 

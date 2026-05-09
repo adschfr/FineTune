@@ -10,7 +10,7 @@ struct MenuBarPopupView: View {
 
     let permission: AudioRecordingPermission
 
-    /// Accessibility trust state — passed through to SettingsView for the
+    /// Accessibility trust state — forwarded to the Settings window for the
     /// media-keys section. Bindable so live re-renders occur when trust flips.
     @Bindable var accessibility: AccessibilityPermissionService
 
@@ -54,15 +54,6 @@ struct MenuBarPopupView: View {
     /// Task that auto-clears the import error after 3 seconds
     @State private var importErrorClearTask: Task<Void, Never>?
 
-    /// Track whether settings panel is open
-    @State private var isSettingsOpen = false
-
-    /// Debounce settings toggle to prevent rapid clicks during animation
-    @State private var isSettingsAnimating = false
-
-    /// Local copy of app settings for binding
-    @State private var localAppSettings: AppSettings = AppSettings()
-
     /// Memoized paired Bluetooth devices
     @State private var pairedDevices: [PairedBluetoothDevice] = []
 
@@ -88,6 +79,8 @@ struct MenuBarPopupView: View {
     /// Namespace for device toggle animation
     @Namespace private var deviceToggleNamespace
 
+    @Environment(\.openWindow) private var openWindow
+
     // MARK: - Scroll Thresholds
 
     /// Number of devices before scroll kicks in
@@ -101,58 +94,23 @@ struct MenuBarPopupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            // Header row - always visible, shows tabs or Settings title
             HStack(alignment: .top) {
-                if isSettingsOpen {
-                    Text("Settings")
-                        .sectionHeaderStyle()
+                deviceTabsHeader
+                Spacer()
+                if isEditingDevicePriority {
+                    Text("Drag or type a number to set priority")
+                        .font(.system(size: 11))
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
                 } else {
-                    deviceTabsHeader
-                    Spacer()
-                    if isEditingDevicePriority {
-                        Text("Drag or type a number to set priority")
-                            .font(.system(size: 11))
-                            .foregroundStyle(DesignTokens.Colors.textSecondary)
-                    } else {
-                        defaultDevicesStatus
-                    }
+                    defaultDevicesStatus
                 }
                 Spacer()
-                if !isSettingsOpen {
-                    editPriorityButton
-                }
+                editPriorityButton
                 settingsButton
             }
             .padding(.bottom, DesignTokens.Spacing.xs)
 
-            // Conditional content with slide transition
-            if isSettingsOpen {
-                SettingsView(
-                    settings: $localAppSettings,
-                    updateManager: updateManager,
-                    onResetAll: {
-                        audioEngine.handleSettingsReset()
-                        localAppSettings = audioEngine.settingsManager.appSettings
-                        // Sync Core Audio: system sounds should follow default after reset
-                        deviceVolumeMonitor.setSystemFollowDefault()
-                    },
-                    deviceVolumeMonitor: deviceVolumeMonitor,
-                    outputDevices: sortedDevices,
-                    accessibility: accessibility,
-                    mediaKeyStatus: mediaKeyStatus,
-                    mediaKeyMonitor: mediaKeyMonitor
-                )
-                .transition(.asymmetric(
-                    insertion: .move(edge: .trailing).combined(with: .opacity),
-                    removal: .move(edge: .trailing).combined(with: .opacity)
-                ))
-            } else {
-                mainContent
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .leading).combined(with: .opacity),
-                        removal: .move(edge: .leading).combined(with: .opacity)
-                    ))
-            }
+            mainContent
         }
         .padding(DesignTokens.Spacing.lg)
         .frame(width: DesignTokens.Dimensions.popupWidth)
@@ -163,7 +121,6 @@ struct MenuBarPopupView: View {
             updateSortedInputDevices()
             pairedDevices = audioEngine.bluetoothDeviceMonitor.pairedDevices
             isBluetoothOn = audioEngine.bluetoothDeviceMonitor.isBluetoothOn
-            localAppSettings = audioEngine.settingsManager.appSettings
             // popupVisibility.isVisible is driven by the filtered NSWindow key
             // notifications below, not by .onAppear — SwiftUI mounts this view
             // before the popup is actually shown, and setting isVisible here
@@ -183,21 +140,6 @@ struct MenuBarPopupView: View {
         }
         .onChange(of: showingInputDevices) { _, _ in
             exitEditModeSaving()
-        }
-        .onChange(of: localAppSettings) { oldValue, newValue in
-            audioEngine.settingsManager.updateAppSettings(newValue)
-            if !oldValue.lockInputDevice && newValue.lockInputDevice {
-                audioEngine.handleInputLockEnabled()
-            }
-            if oldValue.loudnessCompensationEnabled != newValue.loudnessCompensationEnabled {
-                audioEngine.setLoudnessCompensationEnabled(newValue.loudnessCompensationEnabled)
-            }
-            if oldValue.loudnessEqualizationEnabled != newValue.loudnessEqualizationEnabled {
-                audioEngine.setLoudnessEqualizationEnabled(newValue.loudnessEqualizationEnabled)
-            }
-            if oldValue.mediaKeyControlEnabled != newValue.mediaKeyControlEnabled {
-                mediaKeyMonitor.reconcile()
-            }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
             pairedDevices = newValue
@@ -235,11 +177,6 @@ struct MenuBarPopupView: View {
             exitEditModeSaving()
         }
         .background {
-            // Hidden button to handle ⌘, keyboard shortcut for toggling settings
-            Button("") { toggleSettings() }
-                .keyboardShortcut(",", modifiers: .command)
-                .hidden()
-            // Hidden button to handle Escape key to dismiss popup
             Button("") { handleEscape() }
                 .keyboardShortcut(.escape, modifiers: [])
                 .hidden()
@@ -270,35 +207,29 @@ struct MenuBarPopupView: View {
 
     // MARK: - Settings Button
 
-    /// Settings button with gear ↔ X morphing animation
     private var settingsButton: some View {
-        Button(isSettingsOpen ? "Close Settings" : "Settings",
-               systemImage: isSettingsOpen ? "xmark" : "gearshape.fill") {
-            toggleSettings()
+        Button("Settings", systemImage: "gearshape.fill") {
+            openSettingsWindow()
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.plain)
-        .font(.system(size: 12, weight: isSettingsOpen ? .bold : .regular))
+        .font(.system(size: 12))
         .symbolRenderingMode(.hierarchical)
         .foregroundStyle(DesignTokens.Colors.interactiveDefault)
-        .rotationEffect(.degrees(isSettingsOpen ? 90 : 0))
         .frame(
             minWidth: DesignTokens.Dimensions.minTouchTarget,
             minHeight: DesignTokens.Dimensions.minTouchTarget
         )
         .contentShape(Rectangle())
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isSettingsOpen)
     }
 
-    /// Handles Escape key: closes settings/EQ first, then dismisses the popup.
-    /// Escape order: settings → expanded device detail → edit mode → expanded
-    /// app EQ → popup dismiss. Expanded device detail is checked before
+    /// Handles Escape key: closes EQ first, then dismisses the popup.
+    /// Escape order: expanded device detail → edit mode → expanded app EQ →
+    /// popup dismiss. Expanded device detail is checked before
     /// `isEditingDevicePriority` so Escape collapses the row first rather than
     /// tearing down edit mode entirely.
     private func handleEscape() {
-        if isSettingsOpen {
-            toggleSettings()
-        } else if expandedDeviceUID != nil {
+        if expandedDeviceUID != nil {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                 expandedDeviceUID = nil
             }
@@ -314,19 +245,15 @@ struct MenuBarPopupView: View {
         }
     }
 
-    private func toggleSettings() {
-        guard !isSettingsAnimating else { return }
+    private func openSettingsWindow() {
         exitEditModeSaving()
-        isSettingsAnimating = true
-
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            isSettingsOpen.toggle()
-        }
-
-        Task {
-            try? await Task.sleep(for: .seconds(0.4))
-            isSettingsAnimating = false
-        }
+        NSApp.keyWindow?.resignKey()  // Dismiss the popup so the Settings window takes focus.
+        // Activate BEFORE the open call so this agent app is the frontmost
+        // process when the window is created. Calling activate after is
+        // unreliable because the window orders in behind whichever app was
+        // frontmost when openWindow() ran.
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: SettingsWindowID)
     }
 
     // MARK: - Main Content
