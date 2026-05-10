@@ -76,6 +76,15 @@ final class ShortcutsRegistry {
     /// Returns a closure suitable for `KeyboardShortcuts.Recorder(for:onChange:)`.
     /// When the user records or clears a chord, the closure mirrors the change
     /// into `SettingsManager.appSettings.customShortcuts`.
+    ///
+    /// The return type carries `@MainActor` even though the library's parameter
+    /// type does not — this works today because `KeyboardShortcuts.Recorder` is
+    /// SwiftUI-presented and its `Coordinator.handleChange(_:)` runs on the
+    /// MainActor, so passing a more-isolated function value satisfies the
+    /// less-isolated parameter via implicit conversion. If a future library
+    /// version dispatches `onChange` from a non-MainActor context, that becomes
+    /// a runtime crash; the annotation is the contract that makes it surface
+    /// loudly rather than silently corrupt MainActor-isolated state.
     func recordCallback(for action: ShortcutAction) -> @MainActor (KeyboardShortcuts.Shortcut?) -> Void {
         return { [weak self] shortcut in
             self?.handleRecorderChange(shortcut: shortcut, for: action)
