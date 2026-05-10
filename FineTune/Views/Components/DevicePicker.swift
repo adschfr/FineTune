@@ -118,7 +118,7 @@ struct DevicePicker: View {
                 // Multi mode set but nothing valid selected — show the multi glyph
                 // so the user can always tell the app is on multi-routing.
                 Image(systemName: "hifispeaker.2.fill")
-                    .font(.system(size: 18))
+                    .font(.system(size: 16))
                     .symbolRenderingMode(.hierarchical)
             }
         }
