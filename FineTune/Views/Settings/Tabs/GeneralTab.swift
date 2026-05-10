@@ -12,6 +12,7 @@ struct GeneralTab: View {
     var body: some View {
         VStack(spacing: 20) {
             startupCard
+            appearanceCard
             menuBarCard
             notificationsCard
             dataCard
@@ -31,6 +32,27 @@ struct GeneralTab: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
+            }
+        }
+    }
+
+    // MARK: - Appearance
+
+    private var appearanceCard: some View {
+        SettingsCard(title: "Appearance") {
+            CardRow(
+                icon: "circle.lefthalf.filled",
+                title: "Theme",
+                description: "Match macOS, or lock to Light or Dark"
+            ) {
+                Picker("", selection: $settings.appSettings.appearance) {
+                    ForEach(AppearancePreference.allCases) { preference in
+                        Text(preference.description).tag(preference)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
             }
         }
     }
