@@ -102,8 +102,7 @@ struct EQPanelView: View {
             }
             .zIndex(1)  // Ensure dropdown renders above sliders
 
-            // 10-band sliders
-            HStack(spacing: 18) {
+            HStack(spacing: 0) {
                 ForEach(0..<10, id: \.self) { index in
                     EQSliderView(
                         frequency: frequencyLabels[index],
@@ -116,6 +115,7 @@ struct EQPanelView: View {
                         )
                     )
                     .frame(width: 26, height: 100)
+                    .frame(maxWidth: .infinity)
                 }
             }
             .opacity(settings.isEnabled ? 1.0 : 0.3)
