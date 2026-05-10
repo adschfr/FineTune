@@ -2,12 +2,17 @@
 import AppKit
 import Foundation
 
+@MainActor
+protocol FrontmostAppResolving: AnyObject {
+    func resolveTargetBundleID() -> String?
+}
+
 /// Activation notifications must be observed on `NSWorkspace.shared.notificationCenter`,
 /// not `NotificationCenter.default`. Registering on the default center is a silent
 /// no-op (`AppKit/NSWorkspace.h`).
 @MainActor
 @Observable
-final class FrontmostAppResolver {
+final class FrontmostAppResolver: FrontmostAppResolving {
     private let ownBundleID: String
     private let frontmostBundleIDProvider: @MainActor () -> String?
     private var lastNonFineTuneFrontmostBundleID: String?

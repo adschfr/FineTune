@@ -48,6 +48,7 @@ struct FineTuneApp: App {
     @State private var iconCoordinator: MenuBarIconCoordinator
     @State private var menuBarPopupController: MenuBarPopupController
     @State private var shortcutsRegistry: ShortcutsRegistry
+    @State private var frontmostResolver: FrontmostAppResolver
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
 
@@ -188,9 +189,20 @@ struct FineTuneApp: App {
         // to a SwiftUI `.task` on the popup content so the FluidMenuBarExtra
         // status item has been materialized before any hotkey can fire.
         let popupController = MenuBarPopupController()
-        let registry = ShortcutsRegistry(settings: settings, popupController: popupController)
+        let resolver = FrontmostAppResolver(
+            ownBundleID: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune"
+        )
+        resolver.start()
+        let registry = ShortcutsRegistry(
+            settings: settings,
+            popupController: popupController,
+            frontmostResolver: resolver,
+            audioEngine: engine,
+            hud: hud
+        )
         _menuBarPopupController = State(initialValue: popupController)
         _shortcutsRegistry = State(initialValue: registry)
+        _frontmostResolver = State(initialValue: resolver)
 
         // Pass engine to AppDelegate
         _appDelegate.wrappedValue.audioEngine = engine

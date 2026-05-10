@@ -13,25 +13,108 @@ struct ShortcutsRegistryTests {
     @Test("dispatch(.togglePopup) calls popupController.toggle() exactly once")
     func dispatchTogglePopup() {
         let recorder = RecordingPopupController()
-        let registry = ShortcutsRegistry(
-            settings: makeIsolatedSettings(),
-            popupController: recorder
-        )
+        let registry = makeRegistry(popupController: recorder)
 
         registry.dispatch(.togglePopup)
 
         #expect(recorder.toggleCount == 1)
     }
 
+    @Test("dispatch(.frontmostAppVolumeUp) raises volume on the matched app")
+    func dispatchFrontmostVolumeUpHappyPath() {
+        let app = makeAudioApp(id: 1, bundleID: "com.test.app")
+        let resolver = StubFrontmostResolver(target: "com.test.app")
+        let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.5)
+        let hud = RecordingHUDController()
+        let registry = makeRegistry(
+            frontmostResolver: resolver,
+            audioEngine: engine,
+            hud: hud
+        )
+
+        registry.dispatch(.frontmostAppVolumeUp)
+
+        let expected: Float = 0.5 + 1.0 / 16.0
+        #expect(engine.setVolumeCalls.count == 1)
+        #expect(engine.setVolumeCalls.first?.app.bundleID == "com.test.app")
+        #expect(engine.setVolumeCalls.first?.volume == expected)
+        #expect(hud.successCalls == 1)
+        #expect(hud.failureCalls == 0)
+    }
+
+    @Test("dispatch(.frontmostAppVolumeDown) clamps at 0")
+    func dispatchFrontmostVolumeDownClampsAtZero() {
+        let app = makeAudioApp(id: 1, bundleID: "com.test.app")
+        let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.0)
+        let registry = makeRegistry(
+            frontmostResolver: StubFrontmostResolver(target: "com.test.app"),
+            audioEngine: engine,
+            hud: RecordingHUDController()
+        )
+
+        registry.dispatch(.frontmostAppVolumeDown)
+
+        #expect(engine.setVolumeCalls.first?.volume == 0.0)
+    }
+
+    @Test("dispatch(.frontmostAppMuteToggle) calls toggleMute and reports new mute state")
+    func dispatchFrontmostMuteHappyPath() {
+        let app = makeAudioApp(id: 1, bundleID: "com.test.app")
+        let engine = RecordingAudioEngine(apps: [app], initialMuted: false)
+        let hud = RecordingHUDController()
+        let registry = makeRegistry(
+            frontmostResolver: StubFrontmostResolver(target: "com.test.app"),
+            audioEngine: engine,
+            hud: hud
+        )
+
+        registry.dispatch(.frontmostAppMuteToggle)
+
+        #expect(engine.toggleMuteCalls.count == 1)
+        #expect(hud.successCalls == 1)
+    }
+
+    @Test("dispatch falls through to failure HUD when resolver returns nil")
+    func dispatchNoTarget() {
+        let engine = RecordingAudioEngine(apps: [])
+        let hud = RecordingHUDController()
+        let registry = makeRegistry(
+            frontmostResolver: StubFrontmostResolver(target: nil),
+            audioEngine: engine,
+            hud: hud
+        )
+
+        registry.dispatch(.frontmostAppVolumeUp)
+
+        #expect(engine.setVolumeCalls.isEmpty)
+        #expect(hud.failureCalls == 1)
+    }
+
+    @Test("dispatch falls through to failure HUD when no matching AudioApp exists")
+    func dispatchNoMatchingApp() {
+        let engine = RecordingAudioEngine(apps: [])
+        let hud = RecordingHUDController()
+        let registry = makeRegistry(
+            frontmostResolver: StubFrontmostResolver(target: "com.test.notap"),
+            audioEngine: engine,
+            hud: hud
+        )
+
+        registry.dispatch(.frontmostAppVolumeDown)
+
+        #expect(engine.setVolumeCalls.isEmpty)
+        #expect(hud.failureCalls == 1)
+    }
+
     // MARK: - name
 
     @Test("name(for: .togglePopup) is the stable persistence identifier")
     func nameStable() {
-        let registry = ShortcutsRegistry(
-            settings: makeIsolatedSettings(),
-            popupController: RecordingPopupController()
-        )
+        let registry = makeRegistry()
         #expect(registry.name(for: .togglePopup).rawValue == "toggle-popup")
+        #expect(registry.name(for: .frontmostAppVolumeUp).rawValue == "frontmost-app-volume-up")
+        #expect(registry.name(for: .frontmostAppVolumeDown).rawValue == "frontmost-app-volume-down")
+        #expect(registry.name(for: .frontmostAppMuteToggle).rawValue == "frontmost-app-mute-toggle")
     }
 
     // MARK: - start: load path
@@ -44,39 +127,31 @@ struct ShortcutsRegistryTests {
         app.customShortcuts[ShortcutAction.togglePopup.rawValue] = stored
         settings.appSettings = app
 
-        let registry = ShortcutsRegistry(settings: settings, popupController: RecordingPopupController())
+        let registry = makeRegistry(settings: settings)
         registry.start()
 
         let resolved = KeyboardShortcuts.getShortcut(for: registry.name(for: .togglePopup))
         #expect(resolved?.carbonKeyCode == stored.keyCode)
-        // KeyboardShortcuts normalizes the carbon modifier bits at construction time, so
-        // compare via the same normalization rather than raw equality.
         #expect(resolved?.carbonModifiers == stored.keyboardShortcut.carbonModifiers)
 
-        // Cleanup so the next test in this process starts with a known state.
         KeyboardShortcuts.setShortcut(nil, for: registry.name(for: .togglePopup))
     }
 
     @Test("start() is idempotent")
     func startIsIdempotent() {
         let settings = makeIsolatedSettings()
-        let registry = ShortcutsRegistry(settings: settings, popupController: RecordingPopupController())
+        let registry = makeRegistry(settings: settings)
 
         registry.start()
-        registry.start()  // must not crash, must not double-register
+        registry.start()
 
-        // We can't directly assert handler count, but a duplicate handler would cause two
-        // dispatches per fired event. Drive dispatch manually and assert single fire.
         let recorder = RecordingPopupController()
-        // Replace popup controller for this assertion isn't possible (let-bound), so use
-        // a dedicated registry to confirm dispatch count when we call dispatch directly.
-        let registryWithRecorder = ShortcutsRegistry(settings: settings, popupController: recorder)
+        let registryWithRecorder = makeRegistry(settings: settings, popupController: recorder)
         registryWithRecorder.start()
         registryWithRecorder.start()
         registryWithRecorder.dispatch(.togglePopup)
         #expect(recorder.toggleCount == 1)
 
-        // Cleanup
         KeyboardShortcuts.setShortcut(nil, for: registry.name(for: .togglePopup))
     }
 
@@ -85,7 +160,7 @@ struct ShortcutsRegistryTests {
     @Test("recordCallback writes the new shortcut into AppSettings")
     func recordCallbackWritesBack() {
         let settings = makeIsolatedSettings()
-        let registry = ShortcutsRegistry(settings: settings, popupController: RecordingPopupController())
+        let registry = makeRegistry(settings: settings)
 
         let callback = registry.recordCallback(for: .togglePopup)
         let newShortcut = KeyboardShortcuts.Shortcut(carbonKeyCode: 11, carbonModifiers: 0x12_0000)
@@ -103,7 +178,7 @@ struct ShortcutsRegistryTests {
         app.customShortcuts[ShortcutAction.togglePopup.rawValue] = ShortcutCodable(keyCode: 9, modifiers: 0)
         settings.appSettings = app
 
-        let registry = ShortcutsRegistry(settings: settings, popupController: RecordingPopupController())
+        let registry = makeRegistry(settings: settings)
         let callback = registry.recordCallback(for: .togglePopup)
         callback(nil)
 
@@ -112,17 +187,89 @@ struct ShortcutsRegistryTests {
 
     // MARK: - Helpers
 
+    private func makeRegistry(
+        settings: SettingsManager? = nil,
+        popupController: (any MenuBarPopupControlling)? = nil,
+        frontmostResolver: (any FrontmostAppResolving)? = nil,
+        audioEngine: (any AudioEngineDispatching)? = nil,
+        hud: (any PerAppHUDPresenting)? = nil
+    ) -> ShortcutsRegistry {
+        ShortcutsRegistry(
+            settings: settings ?? makeIsolatedSettings(),
+            popupController: popupController ?? RecordingPopupController(),
+            frontmostResolver: frontmostResolver ?? StubFrontmostResolver(target: nil),
+            audioEngine: audioEngine ?? RecordingAudioEngine(apps: []),
+            hud: hud ?? RecordingHUDController()
+        )
+    }
+
     private func makeIsolatedSettings() -> SettingsManager {
-        // Hermetic per-test directory so we don't touch ~/Library/Application Support/FineTune.
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("FineTuneTests-\(UUID().uuidString)")
         return SettingsManager(directory: dir)
     }
+
+    private func makeAudioApp(id: pid_t, bundleID: String?) -> AudioApp {
+        AudioApp(
+            id: id,
+            processObjectIDs: [],
+            name: "Test \(id)",
+            icon: NSImage(systemSymbolName: "speaker", accessibilityDescription: nil) ?? NSImage(),
+            bundleID: bundleID
+        )
+    }
 }
 
-// MARK: - Test double
+// MARK: - Test doubles
 
 @MainActor
 final class RecordingPopupController: MenuBarPopupControlling {
     var toggleCount = 0
     func toggle() { toggleCount += 1 }
+}
+
+@MainActor
+final class StubFrontmostResolver: FrontmostAppResolving {
+    var target: String?
+    init(target: String?) { self.target = target }
+    func resolveTargetBundleID() -> String? { target }
+}
+
+@MainActor
+final class RecordingAudioEngine: AudioEngineDispatching {
+    var apps: [AudioApp]
+    private var volume: Float
+    private var muted: Bool
+    var setVolumeCalls: [(app: AudioApp, volume: Float)] = []
+    var toggleMuteCalls: [AudioApp] = []
+
+    init(apps: [AudioApp], initialVolume: Float = 0.5, initialMuted: Bool = false) {
+        self.apps = apps
+        self.volume = initialVolume
+        self.muted = initialMuted
+    }
+
+    func setVolume(for app: AudioApp, to volume: Float) {
+        self.volume = volume
+        setVolumeCalls.append((app, volume))
+    }
+
+    func toggleMute(for app: AudioApp) {
+        muted.toggle()
+        toggleMuteCalls.append(app)
+    }
+
+    func currentVolume(for app: AudioApp) -> Float { volume }
+    func isMuted(for app: AudioApp) -> Bool { muted }
+}
+
+@MainActor
+final class RecordingHUDController: PerAppHUDPresenting {
+    var successCalls = 0
+    var failureCalls = 0
+
+    func showPerAppVolumeHUD(app: AudioApp, level: Float) { successCalls += 1 }
+    func showPerAppMuteHUD(app: AudioApp, isMuted: Bool) { successCalls += 1 }
+    func showPerAppNotControlledHUD(displayName: String?, bundleID: String?, icon: NSImage?) {
+        failureCalls += 1
+    }
 }

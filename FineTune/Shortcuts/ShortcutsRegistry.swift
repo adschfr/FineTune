@@ -1,7 +1,24 @@
 // FineTune/Shortcuts/ShortcutsRegistry.swift
+import AppKit
 import Foundation
 import KeyboardShortcuts
 import os
+
+@MainActor
+protocol AudioEngineDispatching: AnyObject {
+    var apps: [AudioApp] { get }
+    func setVolume(for app: AudioApp, to volume: Float)
+    func toggleMute(for app: AudioApp)
+    func currentVolume(for app: AudioApp) -> Float
+    func isMuted(for app: AudioApp) -> Bool
+}
+
+@MainActor
+protocol PerAppHUDPresenting: AnyObject {
+    func showPerAppVolumeHUD(app: AudioApp, level: Float)
+    func showPerAppMuteHUD(app: AudioApp, isMuted: Bool)
+    func showPerAppNotControlledHUD(displayName: String?, bundleID: String?, icon: NSImage?)
+}
 
 /// Bridges `KeyboardShortcuts` (Carbon-backed global hotkey library, MIT) to
 /// FineTune's settings layer.
@@ -30,11 +47,27 @@ final class ShortcutsRegistry {
 
     private let settings: SettingsManager
     private let popupController: any MenuBarPopupControlling
+    private let frontmostResolver: any FrontmostAppResolving
+    private let audioEngine: any AudioEngineDispatching
+    private let hud: any PerAppHUDPresenting
     private var didStart = false
 
-    init(settings: SettingsManager, popupController: any MenuBarPopupControlling) {
+    /// Matches the macOS media-key step (1/16). Replicated here because
+    /// `MediaKeyMonitor.volumeStep` is `private`.
+    private static let volumeStep: Float = 1.0 / 16.0
+
+    init(
+        settings: SettingsManager,
+        popupController: any MenuBarPopupControlling,
+        frontmostResolver: any FrontmostAppResolving,
+        audioEngine: any AudioEngineDispatching,
+        hud: any PerAppHUDPresenting
+    ) {
         self.settings = settings
         self.popupController = popupController
+        self.frontmostResolver = frontmostResolver
+        self.audioEngine = audioEngine
+        self.hud = hud
     }
 
     /// Stable `KeyboardShortcuts.Name` per action. The raw string is part of
@@ -49,7 +82,46 @@ final class ShortcutsRegistry {
         switch action {
         case .togglePopup:
             popupController.toggle()
+        case .frontmostAppVolumeUp:
+            adjustFrontmostVolume(delta: Self.volumeStep)
+        case .frontmostAppVolumeDown:
+            adjustFrontmostVolume(delta: -Self.volumeStep)
+        case .frontmostAppMuteToggle:
+            toggleFrontmostMute()
         }
+    }
+
+    // MARK: - Per-app dispatch
+
+    private func adjustFrontmostVolume(delta: Float) {
+        guard let app = resolveFrontmostAudioApp() else { return }
+        let current = audioEngine.currentVolume(for: app)
+        let next = max(0.0, min(1.0, current + delta))
+        audioEngine.setVolume(for: app, to: next)
+        hud.showPerAppVolumeHUD(app: app, level: next)
+    }
+
+    private func toggleFrontmostMute() {
+        guard let app = resolveFrontmostAudioApp() else { return }
+        audioEngine.toggleMute(for: app)
+        hud.showPerAppMuteHUD(app: app, isMuted: audioEngine.isMuted(for: app))
+    }
+
+    private func resolveFrontmostAudioApp() -> AudioApp? {
+        guard let bundleID = frontmostResolver.resolveTargetBundleID() else {
+            hud.showPerAppNotControlledHUD(displayName: nil, bundleID: nil, icon: nil)
+            return nil
+        }
+        if let app = audioEngine.apps.first(where: { $0.bundleID == bundleID }) {
+            return app
+        }
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
+        hud.showPerAppNotControlledHUD(
+            displayName: running?.localizedName,
+            bundleID: bundleID,
+            icon: running?.icon
+        )
+        return nil
     }
 
     /// Idempotent. Subsequent calls are no-ops. Safe to call from a SwiftUI
@@ -104,6 +176,12 @@ final class ShortcutsRegistry {
     private func stableID(for action: ShortcutAction) -> String {
         switch action {
         case .togglePopup: "toggle-popup"
+        case .frontmostAppVolumeUp: "frontmost-app-volume-up"
+        case .frontmostAppVolumeDown: "frontmost-app-volume-down"
+        case .frontmostAppMuteToggle: "frontmost-app-mute-toggle"
         }
     }
 }
+
+extension AudioEngine: AudioEngineDispatching {}
+extension HUDWindowController: PerAppHUDPresenting {}

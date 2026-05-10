@@ -740,6 +740,14 @@ final class AudioEngine {
         setMute(for: app, to: !current)
     }
 
+    func currentVolume(for app: AudioApp) -> Float {
+        volumeState.getVolume(for: app.id)
+    }
+
+    func isMuted(for app: AudioApp) -> Bool {
+        volumeState.getMute(for: app.id)
+    }
+
     func setMute(for app: AudioApp, to muted: Bool) {
         volumeState.setMute(for: app.id, to: muted, identifier: app.persistenceIdentifier)
         taps[app.id]?.isMuted = muted
