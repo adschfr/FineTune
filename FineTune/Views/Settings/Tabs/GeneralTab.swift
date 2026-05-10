@@ -14,6 +14,7 @@ struct GeneralTab: View {
             startupCard
             appearanceCard
             menuBarCard
+            popupSizeCard
             notificationsCard
             dataCard
         }
@@ -67,6 +68,27 @@ struct GeneralTab: View {
                 description: "How FineTune appears in your menu bar"
             ) {
                 IconStyleSegmentedControl(selection: $settings.appSettings.menuBarIconStyle)
+            }
+        }
+    }
+
+    // MARK: - Popup Size
+
+    private var popupSizeCard: some View {
+        SettingsCard(title: "Popup Size") {
+            CardRow(
+                icon: "rectangle.compress.vertical",
+                title: "Size",
+                description: "Width, padding, and how many rows show before scrolling"
+            ) {
+                Picker("", selection: $settings.appSettings.popupSize) {
+                    ForEach(MenuBarPopupSize.allCases) { size in
+                        Text(size.description).tag(size)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
             }
         }
     }

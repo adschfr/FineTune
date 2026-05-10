@@ -103,6 +103,68 @@ extension AppearancePreference {
     }
 }
 
+// MARK: - Menu Bar Popup Size
+
+enum MenuBarPopupSize: String, Codable, CaseIterable, Identifiable, CustomStringConvertible {
+    case compact
+    case comfortable
+    case spacious
+
+    var id: String { rawValue }
+
+    var description: String {
+        switch self {
+        case .compact: return "Compact"
+        case .comfortable: return "Comfortable"
+        case .spacious: return "Spacious"
+        }
+    }
+}
+
+struct PopupDimensions: Equatable {
+    let width: CGFloat
+    let contentPadding: CGFloat
+    let deviceScrollThreshold: Int
+    let deviceScrollHeight: CGFloat
+    let appScrollThreshold: Int
+    let appScrollHeight: CGFloat
+}
+
+extension MenuBarPopupSize {
+    /// `.comfortable` is pinned by tests to the prior MenuBarPopupView numbers.
+    var dimensions: PopupDimensions {
+        switch self {
+        case .compact:
+            return PopupDimensions(
+                width: 470,
+                contentPadding: 12,
+                deviceScrollThreshold: 3,
+                deviceScrollHeight: 130,
+                appScrollThreshold: 4,
+                appScrollHeight: 180
+            )
+        case .comfortable:
+            return PopupDimensions(
+                width: 510,
+                contentPadding: 16,
+                deviceScrollThreshold: 4,
+                deviceScrollHeight: 160,
+                appScrollThreshold: 5,
+                appScrollHeight: 220
+            )
+        case .spacious:
+            return PopupDimensions(
+                width: 560,
+                contentPadding: 20,
+                deviceScrollThreshold: 5,
+                deviceScrollHeight: 195,
+                appScrollThreshold: 6,
+                appScrollHeight: 270
+            )
+        }
+    }
+}
+
 // MARK: - App-Wide Settings Model
 
 struct AppSettings: Codable, Equatable {
@@ -135,6 +197,9 @@ struct AppSettings: Codable, Equatable {
     // Appearance
     var appearance: AppearancePreference = .system  // Follow system appearance, or lock light/dark
 
+    // Popup
+    var popupSize: MenuBarPopupSize = .comfortable  // Overall menu bar popup size and density
+
     init() {}
 
     mutating func setUnifiedLoudnessEnabled(_ enabled: Bool) {
@@ -155,6 +220,7 @@ struct AppSettings: Codable, Equatable {
         mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
         customShortcuts = try c.decodeIfPresent([String: ShortcutCodable].self, forKey: .customShortcuts) ?? [:]
         appearance = try c.decodeIfPresent(AppearancePreference.self, forKey: .appearance) ?? .system
+        popupSize = try c.decodeIfPresent(MenuBarPopupSize.self, forKey: .popupSize) ?? .comfortable
     }
 }
 

@@ -81,16 +81,15 @@ struct MenuBarPopupView: View {
 
     @Environment(\.openSettings) private var openSettings
 
-    // MARK: - Scroll Thresholds
+    // MARK: - Resolved Dimensions
 
-    /// Number of devices before scroll kicks in
-    private let deviceScrollThreshold = 4
-    /// Max height for devices scroll area
-    private let deviceScrollHeight: CGFloat = 160
-    /// Number of apps before scroll kicks in
-    private let appScrollThreshold = 5
-    /// Max height for apps scroll area
-    private let appScrollHeight: CGFloat = 220
+    private var popupDimensions: PopupDimensions {
+        audioEngine.settingsManager.appSettings.popupSize.dimensions
+    }
+    private var deviceScrollThreshold: Int { popupDimensions.deviceScrollThreshold }
+    private var deviceScrollHeight: CGFloat { popupDimensions.deviceScrollHeight }
+    private var appScrollThreshold: Int { popupDimensions.appScrollThreshold }
+    private var appScrollHeight: CGFloat { popupDimensions.appScrollHeight }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
@@ -112,8 +111,8 @@ struct MenuBarPopupView: View {
 
             mainContent
         }
-        .padding(DesignTokens.Spacing.lg)
-        .frame(width: DesignTokens.Dimensions.popupWidth)
+        .padding(popupDimensions.contentPadding)
+        .frame(width: popupDimensions.width)
         .background(
             WindowAppearanceBridge(appearance: audioEngine.settingsManager.appSettings.appearance.nsAppearance)
                 .frame(width: 0, height: 0)
