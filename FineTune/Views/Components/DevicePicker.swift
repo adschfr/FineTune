@@ -523,10 +523,6 @@ private struct DevicePickerRow: View {
 // MARK: - Routing Subtitle Helper
 
 extension DevicePicker {
-    /// Returns the short device-name subtitle for an app row, or `nil` when the
-    /// app is on system default (in which case the row hides the subtitle).
-    /// Mirrors the picker's own `triggerText` logic so the subtitle and the
-    /// icon button stay in lockstep.
     static func routingSubtitle(
         devices: [AudioDevice],
         selectedDeviceUID: String,
@@ -540,8 +536,11 @@ extension DevicePicker {
             return devices.first(where: { $0.uid == selectedDeviceUID })?.name
         case .multi:
             let valid = devices.filter { selectedDeviceUIDs.contains($0.uid) }
-            if valid.count >= 2 { return nil }
-            return valid.first?.name
+            switch valid.count {
+            case 0:  return "Multi"
+            case 1:  return "Multi · \(valid[0].name)"
+            default: return "Multi · \(valid.count) devices"
+            }
         }
     }
 }
