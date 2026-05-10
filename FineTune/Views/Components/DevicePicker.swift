@@ -114,7 +114,7 @@ struct DevicePicker: View {
     private var singleModeIcon: some View {
         if isFollowingDefault {
             Image(systemName: "globe")
-                .font(.system(size: 18))
+                .font(.system(size: 15))
                 .symbolRenderingMode(.hierarchical)
         } else if let device = devices.first(where: { $0.uid == selectedDeviceUID }),
                   let icon = device.icon {
@@ -124,7 +124,7 @@ struct DevicePicker: View {
                 .frame(width: 20, height: 20)
         } else {
             Image(systemName: "speaker.wave.2")
-                .font(.system(size: 18))
+                .font(.system(size: 15))
                 .symbolRenderingMode(.hierarchical)
         }
     }

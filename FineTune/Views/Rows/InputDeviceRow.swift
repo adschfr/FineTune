@@ -50,23 +50,29 @@ struct InputDeviceRow: View {
     }
 
     var body: some View {
-        HStack(spacing: DesignTokens.Spacing.sm) {
-            // Default device selector
-            RadioButton(isSelected: isDefault, action: onSetDefault)
-
-            // Device icon - use mic as fallback for input devices
-            Group {
-                if let icon = device.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } else {
-                    Image(systemName: "mic")
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(.secondary)
+        deviceHeader
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if !isDefault {
+                    onSetDefault()
                 }
             }
-            .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
+            .hoverableRow()
+            .onChange(of: volume) { _, newValue in
+                // Skip external sync mid-drag.
+                guard !isEditing else { return }
+                let newSlider = Double(newValue)
+                guard newSlider != sliderValue else { return }
+                isUpdatingSliderFromDevice = true
+                sliderValue = newSlider
+            }
+    }
+
+    // MARK: - Device Header
+
+    private var deviceHeader: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            DeviceBadge(icon: device.icon, isSelected: isDefault, fallbackSymbol: "mic")
 
             // Device name
             Text(device.name)
@@ -121,15 +127,6 @@ struct InputDeviceRow: View {
             )
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
-        .hoverableRow()
-        .onChange(of: volume) { _, newValue in
-            // Only sync from external changes when user is NOT dragging
-            guard !isEditing else { return }
-            let newSlider = Double(newValue)
-            guard newSlider != sliderValue else { return }
-            isUpdatingSliderFromDevice = true
-            sliderValue = newSlider
-        }
     }
 }
 

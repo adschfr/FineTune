@@ -104,9 +104,6 @@ struct AppRowControls: View {
             // Boost chevrons
             BoostChevrons(level: boost, onTap: { onBoostChange(boost.next) })
 
-            // Device picker — icon-only in app rows; the routed device name
-            // lives in the row's subtitle slot, so the trigger carries only
-            // the icon and matches the EQ button's visual weight.
             DevicePicker(
                 devices: devices,
                 selectedDeviceUID: selectedDeviceUID,

@@ -11,10 +11,14 @@ import AppKit
 /// via a row-level `TapGesture` so the click target spans the whole row, mirroring
 /// the macOS Sound submenu pattern.
 struct DeviceBadge: View {
-    /// The device's icon image, if available. Falls back to a generic SF symbol.
+    /// The device's icon image, if available. Falls back to `fallbackSymbol`.
     let icon: NSImage?
     /// Whether this row is the current default device.
     let isSelected: Bool
+    /// SF Symbol name used when `icon` is nil. Defaults to a speaker glyph for
+    /// output devices; input device rows pass `"mic"` so the fallback matches
+    /// the row's domain.
+    var fallbackSymbol: String = "speaker.wave.2.fill"
 
     private static let badgeSize: CGFloat = 28
     private static let glyphSize: CGFloat = 20
@@ -39,14 +43,14 @@ struct DeviceBadge: View {
                     .fill(DesignTokens.Colors.deviceBadgeMonoFill)
             }
 
-            // Glyph — device icon when present, generic speaker symbol otherwise.
+            // Glyph — device icon when present, fallback SF Symbol otherwise.
             Group {
                 if let icon {
                     Image(nsImage: icon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 } else {
-                    Image(systemName: "speaker.wave.2.fill")
+                    Image(systemName: fallbackSymbol)
                         .symbolRenderingMode(.hierarchical)
                 }
             }
