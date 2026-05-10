@@ -115,12 +115,12 @@ struct MenuBarPopupView: View {
         .padding(DesignTokens.Spacing.lg)
         .frame(width: DesignTokens.Dimensions.popupWidth)
         .background(
-            WindowAppearanceBridge(appearance: localAppSettings.appearance.nsAppearance)
+            WindowAppearanceBridge(appearance: audioEngine.settingsManager.appSettings.appearance.nsAppearance)
                 .frame(width: 0, height: 0)
         )
         .darkGlassBackground()
-        .preferredColorScheme(localAppSettings.appearance.swiftUIColorScheme)
-        .environment(\.appearancePreference, localAppSettings.appearance)
+        .preferredColorScheme(audioEngine.settingsManager.appSettings.appearance.swiftUIColorScheme)
+        .environment(\.appearancePreference, audioEngine.settingsManager.appSettings.appearance)
         .onAppear {
             updateSortedDevices()
             updateSortedInputDevices()
