@@ -28,3 +28,4 @@ __Snapshots__/
 .mcp.json
 .xcodebuildmcp/
 launch-team.sh
+*.profraw
