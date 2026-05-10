@@ -96,38 +96,65 @@ struct DevicePicker: View {
         return "Select"
     }
 
-    /// Icon for trigger button
     @ViewBuilder
     private var triggerIcon: some View {
         switch mode {
         case .single:
             singleModeIcon
         case .multi:
-            if selectedDeviceUIDs.isEmpty {
-                // No multi selections - show single-mode icon
-                singleModeIcon
+            if selectedDeviceUIDs.count >= 2 {
+                multiModeIcon(count: selectedDeviceUIDs.count)
             } else {
-                Image(systemName: "speaker.wave.2.fill")
-                    .font(.system(size: 13))
+                singleModeIcon
             }
         }
     }
 
-    /// Icon for single-mode display (also used as fallback for empty multi-mode)
     @ViewBuilder
     private var singleModeIcon: some View {
         if isFollowingDefault {
             Image(systemName: "globe")
-                .font(.system(size: 13))
+                .font(.system(size: 18))
+                .symbolRenderingMode(.hierarchical)
         } else if let device = devices.first(where: { $0.uid == selectedDeviceUID }),
                   let icon = device.icon {
             Image(nsImage: icon)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 16, height: 16)
+                .frame(width: 20, height: 20)
         } else {
             Image(systemName: "speaker.wave.2")
-                .font(.system(size: 13))
+                .font(.system(size: 18))
+                .symbolRenderingMode(.hierarchical)
+        }
+    }
+
+    @ViewBuilder
+    private func multiModeIcon(count: Int) -> some View {
+        let firstSelected = devices.first(where: { selectedDeviceUIDs.contains($0.uid) })
+
+        Group {
+            if let icon = firstSelected?.icon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 20, height: 20)
+            } else {
+                Image(systemName: "hifispeaker.2.fill")
+                    .font(.system(size: 18))
+                    .symbolRenderingMode(.hierarchical)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            Text("\(count)")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 0.5)
+                .background(
+                    Capsule().fill(DesignTokens.Colors.accentPrimary)
+                )
+                .offset(x: 4, y: 3)
         }
     }
 
@@ -222,7 +249,7 @@ struct DevicePicker: View {
             }
         } label: {
             triggerIcon
-                .frame(width: 22, height: 22)
+                .frame(width: 28, height: 28)
                 .background(
                     RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                         .fill(iconOnlyBackgroundFill)
@@ -497,12 +524,14 @@ extension DevicePicker {
             if isFollowingDefault { return nil }
             return devices.first(where: { $0.uid == selectedDeviceUID })?.name
         case .multi:
-            let count = selectedDeviceUIDs.count
-            if count == 0 {
-                if isFollowingDefault { return nil }
-                return devices.first(where: { $0.uid == selectedDeviceUID })?.name
-            }
-            return "\(count) device\(count == 1 ? "" : "s")"
+            // Multi-mode signals routing through the picker icon's count badge,
+            // not the row subtitle. With 2+ devices the names wouldn't fit in
+            // the subtitle anyway and "3 devices" duplicates what the badge
+            // already says. Fall back to the active single device when the
+            // multi set is empty / has 1 entry, mirroring the picker's icon.
+            if selectedDeviceUIDs.count >= 2 { return nil }
+            if isFollowingDefault { return nil }
+            return devices.first(where: { $0.uid == selectedDeviceUID })?.name
         }
     }
 }
