@@ -9,6 +9,7 @@ struct SettingsRootView: View {
     @Bindable var accessibility: AccessibilityPermissionService
     @Bindable var mediaKeyStatus: MediaKeyStatus
     let mediaKeyMonitor: MediaKeyMonitor
+    let shortcutsRegistry: ShortcutsRegistry
     @ObservedObject var updateManager: UpdateManager
 
     enum Section: String, Hashable, CaseIterable, Identifiable {
@@ -82,7 +83,8 @@ struct SettingsRootView: View {
                 settings: settings,
                 accessibility: accessibility,
                 mediaKeyStatus: mediaKeyStatus,
-                mediaKeyMonitor: mediaKeyMonitor
+                mediaKeyMonitor: mediaKeyMonitor,
+                shortcutsRegistry: shortcutsRegistry
             )
         case .updates:
             UpdatesTab(updateManager: updateManager)

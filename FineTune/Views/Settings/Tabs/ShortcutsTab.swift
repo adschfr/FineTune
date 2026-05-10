@@ -1,5 +1,6 @@
 // FineTune/Views/Settings/Tabs/ShortcutsTab.swift
 import SwiftUI
+import KeyboardShortcuts
 
 @MainActor
 struct ShortcutsTab: View {
@@ -7,6 +8,7 @@ struct ShortcutsTab: View {
     @Bindable var accessibility: AccessibilityPermissionService
     @Bindable var mediaKeyStatus: MediaKeyStatus
     let mediaKeyMonitor: MediaKeyMonitor
+    let shortcutsRegistry: ShortcutsRegistry
 
     var body: some View {
         VStack(spacing: 20) {
@@ -62,20 +64,25 @@ struct ShortcutsTab: View {
         }
     }
 
-    // MARK: - Hotkeys (placeholder)
+    // MARK: - Hotkeys
 
     private var hotkeysCard: some View {
         SettingsCard(title: "Hotkeys") {
-            CardRow(
-                icon: "keyboard",
-                title: "Custom hotkeys",
-                description: "Coming in a future update"
-            ) {
-                Text("Soon")
-                    .font(DesignTokens.Typography.rowDescription)
-                    .foregroundStyle(.tertiary)
+            VStack(spacing: 0) {
+                ForEach(Array(ShortcutAction.allCases.enumerated()), id: \.element) { index, action in
+                    if index > 0 { CardRowDivider() }
+                    CardRow(
+                        icon: "keyboard",
+                        title: action.displayName,
+                        description: "Press a key combination to record"
+                    ) {
+                        KeyboardShortcuts.Recorder(
+                            for: shortcutsRegistry.name(for: action),
+                            onChange: shortcutsRegistry.recordCallback(for: action)
+                        )
+                    }
+                }
             }
-            .opacity(0.6)
         }
     }
 }

@@ -67,6 +67,7 @@ struct FineTuneApp: App {
                 accessibility: accessibility,
                 mediaKeyStatus: mediaKeyStatus,
                 mediaKeyMonitor: mediaKeyMonitor,
+                shortcutsRegistry: shortcutsRegistry,
                 updateManager: updateManager
             )
             .frame(minWidth: 720, minHeight: 540)
