@@ -112,12 +112,14 @@ struct DevicePicker: View {
             singleModeIcon
         case .multi:
             let valid = validMultiSelections
-            if valid.count >= 2 {
-                multiModeIcon(firstDevice: valid[0], count: valid.count)
-            } else if let only = valid.first {
-                deviceIcon(only)
+            if let first = valid.first {
+                multiModeIcon(firstDevice: first, count: valid.count)
             } else {
-                singleModeIcon
+                // Multi mode set but nothing valid selected — show the multi glyph
+                // so the user can always tell the app is on multi-routing.
+                Image(systemName: "hifispeaker.2.fill")
+                    .font(.system(size: 18))
+                    .symbolRenderingMode(.hierarchical)
             }
         }
     }
@@ -539,9 +541,7 @@ extension DevicePicker {
         case .multi:
             let valid = devices.filter { selectedDeviceUIDs.contains($0.uid) }
             if valid.count >= 2 { return nil }
-            if let only = valid.first { return only.name }
-            if isFollowingDefault { return nil }
-            return devices.first(where: { $0.uid == selectedDeviceUID })?.name
+            return valid.first?.name
         }
     }
 }
