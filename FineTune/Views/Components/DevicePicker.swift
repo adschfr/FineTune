@@ -71,18 +71,27 @@ struct DevicePicker: View {
         [.systemAudio] + devices.map { .device($0) }
     }
 
+    /// Selected devices intersected with the currently-rendered list.
+    /// Filters out stale UIDs (disconnected device, sentinel) so the trigger
+    /// badge stays in sync with what the popover actually shows.
+    private var validMultiSelections: [AudioDevice] {
+        devices.filter { selectedDeviceUIDs.contains($0.uid) }
+    }
+
     /// Display text for trigger button
     private var triggerText: String {
         switch mode {
         case .single:
             return singleModeText
         case .multi:
-            let count = selectedDeviceUIDs.count
+            let count = validMultiSelections.count
             if count == 0 {
-                // No multi selections - show single-mode device (what's actually playing)
                 return singleModeText
             }
-            return "\(count) device\(count == 1 ? "" : "s")"
+            if count == 1 {
+                return validMultiSelections[0].name
+            }
+            return "\(count) devices"
         }
     }
 
@@ -102,11 +111,28 @@ struct DevicePicker: View {
         case .single:
             singleModeIcon
         case .multi:
-            if selectedDeviceUIDs.count >= 2 {
-                multiModeIcon(count: selectedDeviceUIDs.count)
+            let valid = validMultiSelections
+            if valid.count >= 2 {
+                multiModeIcon(firstDevice: valid[0], count: valid.count)
+            } else if let only = valid.first {
+                deviceIcon(only)
             } else {
                 singleModeIcon
             }
+        }
+    }
+
+    @ViewBuilder
+    private func deviceIcon(_ device: AudioDevice) -> some View {
+        if let icon = device.icon {
+            Image(nsImage: icon)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 20, height: 20)
+        } else {
+            Image(systemName: "speaker.wave.2")
+                .font(.system(size: 18))
+                .symbolRenderingMode(.hierarchical)
         }
     }
 
@@ -130,32 +156,19 @@ struct DevicePicker: View {
     }
 
     @ViewBuilder
-    private func multiModeIcon(count: Int) -> some View {
-        let firstSelected = devices.first(where: { selectedDeviceUIDs.contains($0.uid) })
-
-        Group {
-            if let icon = firstSelected?.icon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 20, height: 20)
-            } else {
-                Image(systemName: "hifispeaker.2.fill")
-                    .font(.system(size: 18))
-                    .symbolRenderingMode(.hierarchical)
+    private func multiModeIcon(firstDevice: AudioDevice, count: Int) -> some View {
+        deviceIcon(firstDevice)
+            .overlay(alignment: .bottomTrailing) {
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 0.5)
+                    .background(
+                        Capsule().fill(DesignTokens.Colors.accentPrimary)
+                    )
+                    .offset(x: 4, y: 3)
             }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            Text("\(count)")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 0.5)
-                .background(
-                    Capsule().fill(DesignTokens.Colors.accentPrimary)
-                )
-                .offset(x: 4, y: 3)
-        }
     }
 
     // MARK: - Body
@@ -524,12 +537,9 @@ extension DevicePicker {
             if isFollowingDefault { return nil }
             return devices.first(where: { $0.uid == selectedDeviceUID })?.name
         case .multi:
-            // Multi-mode signals routing through the picker icon's count badge,
-            // not the row subtitle. With 2+ devices the names wouldn't fit in
-            // the subtitle anyway and "3 devices" duplicates what the badge
-            // already says. Fall back to the active single device when the
-            // multi set is empty / has 1 entry, mirroring the picker's icon.
-            if selectedDeviceUIDs.count >= 2 { return nil }
+            let valid = devices.filter { selectedDeviceUIDs.contains($0.uid) }
+            if valid.count >= 2 { return nil }
+            if let only = valid.first { return only.name }
             if isFollowingDefault { return nil }
             return devices.first(where: { $0.uid == selectedDeviceUID })?.name
         }
