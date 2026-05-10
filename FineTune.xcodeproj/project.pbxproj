@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		140F6FF7C7CD8F6C1D73121E /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 75DA616DEB24648C4BDE9092 /* KeyboardShortcuts */; };
 		7980FFE92F261AA200AF5F85 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 79SPARK012F0600000008D52 /* Sparkle */; };
 		7988AE522F1CC55900E6D086 /* fineTuneIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 7988AE512F1CC55900E6D086 /* fineTuneIcon.icon */; };
 		79B1000B2F35000000000002 /* IOBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79B1000A2F35000000000001 /* IOBluetooth.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
@@ -42,16 +43,22 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		79A607B12F05C9E00008D52A /* FineTune */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = FineTune;
 			sourceTree = "<group>";
 		};
 		79A607BF2F05C9E10008D52A /* FineTuneTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = FineTuneTests;
 			sourceTree = "<group>";
 		};
 		79A607C92F05C9E10008D52A /* FineTuneUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = FineTuneUITests;
 			sourceTree = "<group>";
 		};
@@ -65,6 +72,7 @@
 				79B1000B2F35000000000002 /* IOBluetooth.framework in Frameworks */,
 				7980FFE92F261AA200AF5F85 /* Sparkle in Frameworks */,
 				79FLUID0012F0600000008D52 /* FluidMenuBarExtra in Frameworks */,
+				140F6FF7C7CD8F6C1D73121E /* KeyboardShortcuts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -138,6 +146,7 @@
 			packageProductDependencies = (
 				79FLUID0022F0600000008D52 /* FluidMenuBarExtra */,
 				79SPARK012F0600000008D52 /* Sparkle */,
+				75DA616DEB24648C4BDE9092 /* KeyboardShortcuts */,
 			);
 			productName = FineTune;
 			productReference = 79A607AF2F05C9E00008D52A /* FineTune.app */;
@@ -184,8 +193,6 @@
 				79A607C92F05C9E10008D52A /* FineTuneUITests */,
 			);
 			name = FineTuneUITests;
-			packageProductDependencies = (
-			);
 			productName = FineTuneUITests;
 			productReference = 79A607C62F05C9E10008D52A /* FineTuneUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -226,6 +233,7 @@
 				79SNAP0002F0600000008D52A /* XCRemoteSwiftPackageReference "swift-snapshot-testing" */,
 				79FLUID0002F0600000008D52 /* XCRemoteSwiftPackageReference "FluidMenuBarExtra" */,
 				79SPARK002F0600000008D52 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				25AD8733711702DDEA8EAD12 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 79A607B02F05C9E00008D52A /* Products */;
@@ -622,6 +630,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		25AD8733711702DDEA8EAD12 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
 		79FLUID0002F0600000008D52 /* XCRemoteSwiftPackageReference "FluidMenuBarExtra" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/wadetregaskis/FluidMenuBarExtra";
@@ -649,6 +665,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		75DA616DEB24648C4BDE9092 /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 25AD8733711702DDEA8EAD12 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
 		79FLUID0022F0600000008D52 /* FluidMenuBarExtra */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 79FLUID0002F0600000008D52 /* XCRemoteSwiftPackageReference "FluidMenuBarExtra" */;

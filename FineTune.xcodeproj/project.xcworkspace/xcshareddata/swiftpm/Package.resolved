@@ -1,5 +1,5 @@
 {
-  "originHash" : "d523804ff54f10a55bc8d98cf81f261a66fc51e6e6fa959bc979d9c395393d66",
+  "originHash" : "58d3b4b42a01d98e76e1a3d71c8ca6b0a7143d833645756b2124a814b9d6f38f",
   "pins" : [
     {
       "identity" : "fluidmenubarextra",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "3ce81bd0e5ab0ae5b027076482f4bd86be30162c",
         "version" : "1.5.1"
+      }
+    },
+    {
+      "identity" : "keyboardshortcuts",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sindresorhus/KeyboardShortcuts",
+      "state" : {
+        "revision" : "1aef85578fdd4f9eaeeb8d53b7b4fc31bf08fe27",
+        "version" : "2.4.0"
       }
     },
     {
