@@ -151,6 +151,86 @@ final class HUDWindowController {
         postAccessibilityAnnouncement(panel: panel, volume: volume, mute: mute, deviceName: deviceName)
     }
 
+    func showPerAppVolumeHUD(app: AudioApp, level: Float) {
+        presentPerApp(
+            icon: app.icon,
+            title: app.name,
+            content: .volume(level: max(0, min(1, level)))
+        )
+    }
+
+    func showPerAppMuteHUD(app: AudioApp, isMuted: Bool) {
+        presentPerApp(
+            icon: app.icon,
+            title: app.name,
+            content: .mute(isMuted: isMuted)
+        )
+    }
+
+    func showPerAppNotControlledHUD(displayName: String?, bundleID: String?, icon: NSImage?) {
+        let title = displayName?.nilIfEmpty
+            ?? bundleID?.nilIfEmpty
+            ?? "FineTune isn't controlling this app yet"
+        presentPerApp(
+            icon: icon,
+            title: title,
+            content: .notControlled
+        )
+    }
+
+    /// Hotkey-triggered per-app HUDs bypass the fullscreen guard because the user explicitly invoked them.
+    private func presentPerApp(icon: NSImage?, title: String, content: PerAppHUDContent) {
+        showCallCount += 1
+        showDidUpdatePanel = false
+
+        guard !popupVisibility.isVisible else {
+            logger.debug("Skipping per-app HUD: popup is visible")
+            return
+        }
+
+        let appearance = settingsManager.appSettings.appearance
+        styleAtLastShow = .tahoe
+        let panel = ensurePanel()
+        panel.appearance = appearance.nsAppearance
+        panel.ignoresMouseEvents = true
+
+        let scheme = appearance.swiftUIColorScheme
+        let root = AnyView(
+            PerAppHUD(icon: icon, title: title, content: content)
+                .preferredColorScheme(scheme)
+        )
+        let size = NSSize(width: 300, height: 72)
+
+        if let existing = hostingView {
+            existing.rootView = root
+        } else {
+            let hv = NSHostingView(rootView: root)
+            hv.frame = NSRect(origin: .zero, size: size)
+            panel.contentView = hv
+            hostingView = hv
+        }
+        showDidUpdatePanel = true
+
+        panel.setContentSize(size)
+        panel.setFrameOrigin(position(for: .tahoe, size: size))
+
+        if panel.isVisible {
+            panel.orderFrontRegardless()
+        } else {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            let duration = reduceMotionEnabled() ? 0.08 : 0.12
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = duration
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1.0
+            }
+        }
+
+        scheduleHide(for: .tahoe)
+        postPerAppAccessibilityAnnouncement(panel: panel, title: title, content: content)
+    }
+
     /// Called when the monitor swallows a keypress; used to detect if the native HUD still fired.
     func swallowObserved() {
         lastSwallowedKeyTime = DispatchTime.now()
@@ -278,6 +358,26 @@ final class HUDWindowController {
         return "\(device), volume \(Int((clamped * 100).rounded())) percent"
     }
 
+    private func postPerAppAccessibilityAnnouncement(panel: NSPanel, title: String, content: PerAppHUDContent) {
+        let description: String
+        switch content {
+        case .volume(let level):
+            description = "\(title), volume \(Int((level * 100).rounded())) percent"
+        case .mute(let isMuted):
+            description = isMuted ? "\(title), muted" : "\(title), unmuted"
+        case .notControlled:
+            description = "\(title), not controlled by FineTune"
+        }
+        NSAccessibility.post(
+            element: panel,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: description,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue
+            ]
+        )
+    }
+
     private func reduceMotionEnabled() -> Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
@@ -329,4 +429,178 @@ final class HUDWindowController {
             logger.warning("Suppression degraded: native sound handler fired within \(elapsedMs)ms of our swallow")
         }
     }
+}
+
+// MARK: - Per-app HUD content
+
+private enum PerAppHUDContent {
+    case volume(level: Float)
+    case mute(isMuted: Bool)
+    case notControlled
+}
+
+private struct PerAppHUD: View {
+    let icon: NSImage?
+    let title: String
+    let content: PerAppHUDContent
+
+    private static let frameWidth: CGFloat = 300
+    private static let frameHeight: CGFloat = 72
+    private static let cornerRadius: CGFloat = 22
+    private static let percentageWidth: CGFloat = 36
+    private static let iconSize: CGFloat = 28
+    private static let barHeight: CGFloat = 4
+
+    private var subtitleText: String? {
+        if case .notControlled = content { return "Not controlled by FineTune" }
+        return nil
+    }
+
+    private var displayLevel: Float {
+        switch content {
+        case .volume(let level): return max(0, min(1, level))
+        case .mute(let isMuted): return isMuted ? 0 : 1
+        case .notControlled: return 0
+        }
+    }
+
+    private var isMutedDisplay: Bool {
+        switch content {
+        case .mute(let isMuted): return isMuted
+        case .volume(let level): return level <= 0.001
+        case .notControlled: return false
+        }
+    }
+
+    private var waveIconName: String {
+        switch displayLevel {
+        case ..<0.01:  return "speaker.fill"
+        case ..<0.34:  return "speaker.wave.1.fill"
+        case ..<0.67:  return "speaker.wave.2.fill"
+        default:       return "speaker.wave.3.fill"
+        }
+    }
+
+    private var percentageText: String {
+        "\(Int((displayLevel * 100).rounded()))%"
+    }
+
+    private var accessibilityDescription: String {
+        switch content {
+        case .volume:
+            return "\(title), volume \(Int((displayLevel * 100).rounded())) percent"
+        case .mute(let isMuted):
+            return isMuted ? "\(title), muted" : "\(title), unmuted"
+        case .notControlled:
+            return "\(title), not controlled by FineTune"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            iconView
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(TahoeStyleHUD.nameFont)
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                trailingRow
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .frame(width: Self.frameWidth, height: Self.frameHeight)
+        .background {
+            RoundedRectangle(cornerRadius: Self.cornerRadius)
+                .fill(.regularMaterial)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.cornerRadius)
+                .strokeBorder(DesignTokens.Colors.hudBorder, lineWidth: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityDescription)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if let icon {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: Self.iconSize, height: Self.iconSize)
+        } else {
+            Image(systemName: "app.dashed")
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+                .frame(width: Self.iconSize, height: Self.iconSize)
+        }
+    }
+
+    @ViewBuilder
+    private var trailingRow: some View {
+        switch content {
+        case .volume:
+            HStack(spacing: 8) {
+                Image(systemName: isMutedDisplay ? "speaker.slash.fill" : waveIconName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(isMutedDisplay
+                                     ? DesignTokens.Colors.mutedIndicator
+                                     : DesignTokens.Colors.hudTileActive)
+                    .frame(width: 18, height: 18, alignment: .center)
+
+                progressBar
+                    .opacity(isMutedDisplay ? 0.5 : 1.0)
+
+                Text(percentageText)
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    .frame(width: Self.percentageWidth, alignment: .trailing)
+            }
+        case .mute(let isMuted):
+            HStack(spacing: 8) {
+                Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(isMuted
+                                     ? DesignTokens.Colors.mutedIndicator
+                                     : DesignTokens.Colors.hudTileActive)
+                    .frame(width: 18, height: 18, alignment: .center)
+                Text(isMuted ? "Muted" : "Unmuted")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                Spacer(minLength: 0)
+            }
+        case .notControlled:
+            if let subtitleText {
+                Text(subtitleText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(DesignTokens.Colors.textSecondary.opacity(0.25))
+                    .frame(height: Self.barHeight)
+                Capsule()
+                    .fill(DesignTokens.Colors.hudTileActive)
+                    .frame(width: geo.size.width * CGFloat(displayLevel), height: Self.barHeight)
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .frame(height: Self.barHeight + 8)
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
