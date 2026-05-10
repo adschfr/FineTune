@@ -735,6 +735,11 @@ final class AudioEngine {
         }
     }
 
+    func toggleMute(for app: AudioApp) {
+        let current = volumeState.getMute(for: app.id)
+        setMute(for: app, to: !current)
+    }
+
     func setMute(for app: AudioApp, to muted: Bool) {
         volumeState.setMute(for: app.id, to: muted, identifier: app.persistenceIdentifier)
         taps[app.id]?.isMuted = muted
