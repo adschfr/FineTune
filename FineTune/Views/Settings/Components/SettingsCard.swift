@@ -18,14 +18,7 @@ struct SettingsCard<Content: View>: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.cornerRadius)
-                .fill(.white.opacity(0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.cornerRadius)
-                .strokeBorder(DesignTokens.Colors.glassBorder, lineWidth: 0.5)
-        )
+        .settingsCardBackground()
     }
 }
 
