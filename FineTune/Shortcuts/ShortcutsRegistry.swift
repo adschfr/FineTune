@@ -58,6 +58,13 @@ final class ShortcutsRegistry {
     /// `MediaKeyMonitor.volumeStep` is `private`.
     private static let volumeStep: Float = 1.0 / 16.0
 
+    /// Software-emulated key-repeat timing. Carbon hot keys don't auto-repeat,
+    /// so holding the chord runs this loop. Values match macOS keyboard defaults.
+    private static let repeatInitialDelay: Duration = .milliseconds(450)
+    private static let repeatInterval: Duration = .milliseconds(60)
+
+    private var repeatTasks: [ShortcutAction: Task<Void, Never>] = [:]
+
     init(
         settings: SettingsManager,
         popupController: any MenuBarPopupControlling,
@@ -123,6 +130,24 @@ final class ShortcutsRegistry {
         hud.showPerAppMuteHUD(app: app, isMuted: audioEngine.isMuted(for: app))
     }
 
+    private func startRepeating(action: ShortcutAction) {
+        guard action.supportsRepeat else { return }
+        repeatTasks[action]?.cancel()
+        repeatTasks[action] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.repeatInitialDelay)
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.dispatch(action)
+                try? await Task.sleep(for: Self.repeatInterval)
+            }
+        }
+    }
+
+    private func stopRepeating(action: ShortcutAction) {
+        repeatTasks[action]?.cancel()
+        repeatTasks[action] = nil
+    }
+
     private func resolveTargetAudioApp() -> AudioApp? {
         let candidates = audioEngine.apps
             .compactMap { $0.bundleID }
@@ -159,6 +184,10 @@ final class ShortcutsRegistry {
 
             KeyboardShortcuts.onKeyDown(for: actionName) { [weak self] in
                 self?.dispatch(action)
+                self?.startRepeating(action: action)
+            }
+            KeyboardShortcuts.onKeyUp(for: actionName) { [weak self] in
+                self?.stopRepeating(action: action)
             }
         }
 

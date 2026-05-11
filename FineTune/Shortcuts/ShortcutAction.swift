@@ -20,4 +20,14 @@ enum ShortcutAction: String, CaseIterable, Codable, Sendable {
         case .targetAppMuteToggle: "App Mute Toggle"
         }
     }
+
+    /// Whether holding the chord should keep firing the action while held,
+    /// matching macOS media-key auto-repeat. Toggles must not repeat
+    /// (would flip-flop state every interval).
+    var supportsRepeat: Bool {
+        switch self {
+        case .targetAppVolumeUp, .targetAppVolumeDown: true
+        case .togglePopup, .targetAppMuteToggle: false
+        }
+    }
 }

@@ -171,6 +171,14 @@ struct ShortcutsRegistryTests {
 
     // MARK: - name
 
+    @Test("supportsRepeat is true only for volume up/down")
+    func supportsRepeatFlag() {
+        #expect(ShortcutAction.targetAppVolumeUp.supportsRepeat == true)
+        #expect(ShortcutAction.targetAppVolumeDown.supportsRepeat == true)
+        #expect(ShortcutAction.targetAppMuteToggle.supportsRepeat == false)
+        #expect(ShortcutAction.togglePopup.supportsRepeat == false)
+    }
+
     @Test("name(for: .togglePopup) is the stable persistence identifier")
     func nameStable() {
         let registry = makeRegistry()
