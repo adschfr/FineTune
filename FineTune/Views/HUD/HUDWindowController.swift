@@ -152,11 +152,11 @@ final class HUDWindowController {
         postAccessibilityAnnouncement(panel: panel, sliderFraction: sliderFraction, mute: mute, deviceName: deviceName)
     }
 
-    func showPerAppVolumeHUD(app: AudioApp, level: Float) {
+    func showPerAppVolumeHUD(app: AudioApp, sliderFraction: Double) {
         presentPerApp(
             icon: app.icon,
             title: app.name,
-            content: .volume(level: max(0, min(1, level)))
+            content: .volume(sliderFraction: max(0, min(1, sliderFraction)))
         )
     }
 
@@ -362,8 +362,8 @@ final class HUDWindowController {
     private func postPerAppAccessibilityAnnouncement(panel: NSPanel, title: String, content: PerAppHUDContent) {
         let description: String
         switch content {
-        case .volume(let level):
-            description = "\(title), volume \(Int((level * 100).rounded())) percent"
+        case .volume(let sliderFraction):
+            description = "\(title), volume \(Int((sliderFraction * 100).rounded())) percent"
         case .mute(let isMuted):
             description = isMuted ? "\(title), muted" : "\(title), unmuted"
         case .notControlled:
@@ -435,7 +435,7 @@ final class HUDWindowController {
 // MARK: - Per-app HUD content
 
 private enum PerAppHUDContent {
-    case volume(level: Float)
+    case volume(sliderFraction: Double)
     case mute(isMuted: Bool)
     case notControlled
 }
@@ -457,9 +457,9 @@ private struct PerAppHUD: View {
         return nil
     }
 
-    private var displayLevel: Float {
+    private var displayLevel: Double {
         switch content {
-        case .volume(let level): return max(0, min(1, level))
+        case .volume(let sliderFraction): return max(0, min(1, sliderFraction))
         case .mute(let isMuted): return isMuted ? 0 : 1
         case .notControlled: return 0
         }
@@ -468,7 +468,7 @@ private struct PerAppHUD: View {
     private var isMutedDisplay: Bool {
         switch content {
         case .mute(let isMuted): return isMuted
-        case .volume(let level): return level <= 0.001
+        case .volume(let sliderFraction): return sliderFraction <= 0.001
         case .notControlled: return false
         }
     }

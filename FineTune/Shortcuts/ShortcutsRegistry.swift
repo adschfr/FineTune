@@ -17,7 +17,7 @@ protocol AudioEngineDispatching: AnyObject {
 
 @MainActor
 protocol PerAppHUDPresenting: AnyObject {
-    func showPerAppVolumeHUD(app: AudioApp, level: Float)
+    func showPerAppVolumeHUD(app: AudioApp, sliderFraction: Double)
     func showPerAppMuteHUD(app: AudioApp, isMuted: Bool)
     func showPerAppNotControlledHUD(displayName: String?, bundleID: String?, icon: NSImage?)
 }
@@ -121,7 +121,7 @@ final class ShortcutsRegistry {
             }
         }
         audioEngine.setVolume(for: app, to: next)
-        hud.showPerAppVolumeHUD(app: app, level: next)
+        hud.showPerAppVolumeHUD(app: app, sliderFraction: VolumeMapping.gainToSlider(next))
     }
 
     private func toggleTargetMute() {

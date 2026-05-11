@@ -347,7 +347,7 @@ final class RecordingHUDController: PerAppHUDPresenting {
     var successCalls = 0
     var failureCalls = 0
 
-    func showPerAppVolumeHUD(app: AudioApp, level: Float) { successCalls += 1 }
+    func showPerAppVolumeHUD(app: AudioApp, sliderFraction: Double) { successCalls += 1 }
     func showPerAppMuteHUD(app: AudioApp, isMuted: Bool) { successCalls += 1 }
     func showPerAppNotControlledHUD(displayName: String?, bundleID: String?, icon: NSImage?) {
         failureCalls += 1
