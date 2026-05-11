@@ -265,6 +265,28 @@ struct AppSettingsDefaultTests {
         #expect(manager.appSettings.loudnessEqualizationEnabled == true)
     }
 
+    @Test("volumeHotkeyStep defaults to .normal")
+    func volumeHotkeyStepDefault() {
+        let settings = AppSettings()
+        #expect(settings.volumeHotkeyStep == .normal)
+    }
+
+    @Test("volumeHotkeyStep round-trips through JSON")
+    func volumeHotkeyStepRoundTrip() throws {
+        var settings = AppSettings()
+        settings.volumeHotkeyStep = .fine
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.volumeHotkeyStep == .fine)
+    }
+
+    @Test("Missing volumeHotkeyStep key decodes to .normal")
+    func volumeHotkeyStepMissingKeyDefault() throws {
+        let json = "{}".data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.volumeHotkeyStep == .normal)
+    }
+
 }
 
 // MARK: - Hidden Devices
