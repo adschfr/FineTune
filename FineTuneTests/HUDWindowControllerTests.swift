@@ -143,9 +143,9 @@ struct HUDWindowControllerTimerTests {
     func showCallCountIncrements() {
         let hud = makeController()
         #expect(hud.showCallCount == 0)
-        hud.show(volume: 0.5, mute: false, deviceName: "")
+        hud.show(sliderFraction: 0.5, mute: false, deviceName: "")
         #expect(hud.showCallCount == 1)
-        hud.show(volume: 0.6, mute: false, deviceName: "")
+        hud.show(sliderFraction: 0.6, mute: false, deviceName: "")
         #expect(hud.showCallCount == 2)
     }
 
@@ -154,16 +154,16 @@ struct HUDWindowControllerTimerTests {
         // showCallCount is incremented before the fullscreen + popup guards, so
         // it records every attempt regardless of whether the panel is actually shown.
         let hud = makeController()
-        hud.show(volume: 0.5, mute: false, deviceName: "")
-        hud.show(volume: 0.5, mute: false, deviceName: "")
+        hud.show(sliderFraction: 0.5, mute: false, deviceName: "")
+        hud.show(sliderFraction: 0.5, mute: false, deviceName: "")
         #expect(hud.showCallCount == 2)
     }
 
     @Test("Two rapid show() calls result in exactly two increments")
     func twoRapidShowsIncrementTwice() {
         let hud = makeController()
-        hud.show(volume: 0.3, mute: false, deviceName: "")
-        hud.show(volume: 0.4, mute: true, deviceName: "")
+        hud.show(sliderFraction: 0.3, mute: false, deviceName: "")
+        hud.show(sliderFraction: 0.4, mute: true, deviceName: "")
         #expect(hud.showCallCount == 2)
     }
 
@@ -189,7 +189,7 @@ struct HUDWindowControllerTimerTests {
     @Test("popupGuardSuppressesShow: popup visible ⇒ show() does not update panel")
     func popupGuardSuppressesShow() {
         let hud = makeController(popupVisible: true)
-        hud.show(volume: 0.5, mute: false, deviceName: "Test Device")
+        hud.show(sliderFraction: 0.5, mute: false, deviceName: "Test Device")
         // Attempt is counted, but panel was not updated.
         #expect(hud.showCallCount == 1)
         #expect(hud.showDidUpdatePanel == false)
@@ -198,7 +198,7 @@ struct HUDWindowControllerTimerTests {
     @Test("Popup hidden ⇒ show() updates panel")
     func popupHiddenShowUpdatesPanel() {
         let hud = makeController(popupVisible: false)
-        hud.show(volume: 0.5, mute: false, deviceName: "Test Device")
+        hud.show(sliderFraction: 0.5, mute: false, deviceName: "Test Device")
         #expect(hud.showCallCount == 1)
         #expect(hud.showDidUpdatePanel == true)
     }

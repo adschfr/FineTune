@@ -3,10 +3,10 @@ import SwiftUI
 
 /// 300×72 interactive volume pill with device name, slider, and percentage.
 struct TahoeStyleHUD: View {
-    let volume: Float
+    let sliderFraction: Float
     let mute: Bool
     let deviceName: String
-    var onVolumeChange: ((Float) -> Void)? = nil
+    var onSliderChange: ((Float) -> Void)? = nil
     var onHoverChange: ((Bool) -> Void)? = nil
 
     // MARK: - Constants
@@ -26,7 +26,7 @@ struct TahoeStyleHUD: View {
 
     private var displayFloat: Float {
         if let dragValue { return Float(max(0, min(1, dragValue))) }
-        return max(0, min(1, volume))
+        return max(0, min(1, sliderFraction))
     }
 
     private var displayMute: Bool {
@@ -59,7 +59,7 @@ struct TahoeStyleHUD: View {
             get: { Double(displayFloat) },
             set: { newValue in
                 dragValue = newValue
-                onVolumeChange?(Float(newValue))
+                onSliderChange?(Float(newValue))
             }
         )
     }
@@ -113,7 +113,7 @@ struct TahoeStyleHUD: View {
         .onHover { hovering in
             onHoverChange?(hovering)
         }
-        .onChange(of: volume) { _, _ in
+        .onChange(of: sliderFraction) { _, _ in
             // External source pushed a value; drop the sticky drag snapshot.
             dragValue = nil
         }
@@ -126,44 +126,44 @@ struct TahoeStyleHUD: View {
 }
 
 #Preview("Tahoe — mid volume") {
-    TahoeStyleHUD(volume: 0.5, mute: false, deviceName: "Ronit's AirPods Pro")
+    TahoeStyleHUD(sliderFraction: 0.5, mute: false, deviceName: "Ronit's AirPods Pro")
         .padding()
         .background(Color.black)
 }
 
 #Preview("Tahoe — muted") {
-    TahoeStyleHUD(volume: 0.5, mute: true, deviceName: "Ronit's AirPods Pro")
+    TahoeStyleHUD(sliderFraction: 0.5, mute: true, deviceName: "Ronit's AirPods Pro")
         .padding()
         .background(Color.black)
 }
 
 #Preview("Tahoe — long name") {
-    TahoeStyleHUD(volume: 0.75, mute: false,
+    TahoeStyleHUD(sliderFraction: 0.75, mute: false,
                   deviceName: "Ronit's MacBook Pro Speakers (Built-in Audio Output)")
         .padding()
         .background(Color.black)
 }
 
 #Preview("Tahoe — empty name") {
-    TahoeStyleHUD(volume: 0.25, mute: false, deviceName: "")
+    TahoeStyleHUD(sliderFraction: 0.25, mute: false, deviceName: "")
         .padding()
         .background(Color.black)
 }
 
 #Preview("Tahoe — max volume") {
-    TahoeStyleHUD(volume: 1.0, mute: false, deviceName: "Ronit's AirPods Pro")
+    TahoeStyleHUD(sliderFraction: 1.0, mute: false, deviceName: "Ronit's AirPods Pro")
         .padding()
         .background(Color.black)
 }
 
 #Preview("Tahoe — zero volume") {
-    TahoeStyleHUD(volume: 0.0, mute: false, deviceName: "Ronit's AirPods Pro")
+    TahoeStyleHUD(sliderFraction: 0.0, mute: false, deviceName: "Ronit's AirPods Pro")
         .padding()
         .background(Color.black)
 }
 
 #Preview("Tahoe — light washout") {
-    TahoeStyleHUD(volume: 0.5, mute: false, deviceName: "Ronit's AirPods Pro")
+    TahoeStyleHUD(sliderFraction: 0.5, mute: false, deviceName: "Ronit's AirPods Pro")
         .padding()
         .background(Color.white)
 }

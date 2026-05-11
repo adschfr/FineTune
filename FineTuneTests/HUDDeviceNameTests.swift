@@ -47,14 +47,14 @@ struct HUDDeviceNameSmokeTests {
     @Test("show() with a short device name completes without crashing")
     func shortNameSmoke() {
         let hud = makeController()
-        hud.show(volume: 0.5, mute: false, deviceName: "AirPods Pro")
+        hud.show(sliderFraction: 0.5, mute: false, deviceName: "AirPods Pro")
         #expect(hud.showCallCount == 1)
     }
 
     @Test("show() with an empty device name completes without crashing")
     func emptyNameSmoke() {
         let hud = makeController()
-        hud.show(volume: 0.5, mute: false, deviceName: "")
+        hud.show(sliderFraction: 0.5, mute: false, deviceName: "")
         #expect(hud.showCallCount == 1)
     }
 
@@ -62,7 +62,7 @@ struct HUDDeviceNameSmokeTests {
     func longNameSmoke() {
         let hud = makeController()
         let longName = "Ronit's MacBook Pro Speakers (Built-in Audio Output)"
-        hud.show(volume: 0.75, mute: false, deviceName: longName)
+        hud.show(sliderFraction: 0.75, mute: false, deviceName: longName)
         #expect(hud.showCallCount == 1)
     }
 
@@ -70,6 +70,6 @@ struct HUDDeviceNameSmokeTests {
     func longNamePreviewConstruction() {
         let longName = "Ronit's MacBook Pro Speakers (Built-in Audio Output)"
         // Construction-only smoke; rendering is covered by xcode-cli preview.
-        _ = TahoeStyleHUD(volume: 0.75, mute: false, deviceName: longName)
+        _ = TahoeStyleHUD(sliderFraction: 0.75, mute: false, deviceName: longName)
     }
 }

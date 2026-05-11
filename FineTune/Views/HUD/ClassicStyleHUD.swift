@@ -3,7 +3,7 @@ import SwiftUI
 
 /// 200×200 pre-Tahoe-style volume HUD: 80 pt glyph + 16-tile segment row. Stateless.
 struct ClassicStyleHUD: View {
-    let volume: Float
+    let sliderFraction: Float
     let mute: Bool
 
     // MARK: - Constants
@@ -21,7 +21,7 @@ struct ClassicStyleHUD: View {
     // MARK: - Derived state
 
     private var displayValue: Float {
-        mute ? 0 : max(0, min(1, volume))
+        mute ? 0 : max(0, min(1, sliderFraction))
     }
 
     private var filledTileCount: Int {
@@ -102,25 +102,25 @@ struct ClassicStyleHUD: View {
 }
 
 #Preview("Classic — mid volume") {
-    ClassicStyleHUD(volume: 0.5, mute: false)
+    ClassicStyleHUD(sliderFraction: 0.5, mute: false)
         .padding()
         .background(Color.black)
 }
 
 #Preview("Classic — muted") {
-    ClassicStyleHUD(volume: 0.5, mute: true)
+    ClassicStyleHUD(sliderFraction: 0.5, mute: true)
         .padding()
         .background(Color.black)
 }
 
 #Preview("Classic — max volume") {
-    ClassicStyleHUD(volume: 1.0, mute: false)
+    ClassicStyleHUD(sliderFraction: 1.0, mute: false)
         .padding()
         .background(Color.black)
 }
 
 #Preview("Classic — zero volume") {
-    ClassicStyleHUD(volume: 0.0, mute: false)
+    ClassicStyleHUD(sliderFraction: 0.0, mute: false)
         .padding()
         .background(Color.black)
 }

@@ -125,19 +125,21 @@ struct FineTuneApp: App {
         // Mirrors the mute semantics applied for media-key drags (auto-unmute
         // when ramping above 0 from muted; auto-mute when dragging down to 0)
         // so the HUD slider and F11/F12 behave identically.
-        hud.volumeWriter = { [weak engine] newVolume in
+        hud.volumeWriter = { [weak engine] sliderFraction in
             guard let engine else { return }
             let volumeMonitor = engine.deviceVolumeMonitor
             let deviceID = volumeMonitor.defaultDeviceID
             guard deviceID.isValid else { return }
+            let tier = volumeMonitor.outputVolumeBackend(for: deviceID)
             let currentMute = volumeMonitor.muteStates[deviceID] ?? false
-            let willBeSilent = newVolume <= 0.001
+            let willBeSilent = sliderFraction <= 0.001
             if currentMute && !willBeSilent {
                 volumeMonitor.setMute(for: deviceID, to: false)
             } else if !currentMute && willBeSilent {
                 volumeMonitor.setMute(for: deviceID, to: true)
             }
-            volumeMonitor.setVolume(for: deviceID, to: newVolume)
+            let gain = VolumeMapping.systemGain(forSliderFraction: sliderFraction, tier: tier)
+            volumeMonitor.setVolume(for: deviceID, to: gain)
         }
 
         let monitor = MediaKeyMonitor(

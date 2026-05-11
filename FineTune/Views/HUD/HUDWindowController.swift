@@ -16,8 +16,8 @@ final class HUDWindowController {
     private var hideTask: Task<Void, Never>?
     private var styleAtLastShow: HUDStyle = .tahoe
 
-    /// Invoked on every Tahoe slider drag; host wires this to volume + mute semantics.
-    var volumeWriter: ((Float) -> Void)?
+    /// Slider fraction in [0, 1]. The wiring site converts to gain using the current device's tier.
+    var volumeWriter: ((Double) -> Void)?
 
     // MARK: - Suppression-degraded tracking
 
@@ -69,7 +69,7 @@ final class HUDWindowController {
     // MARK: - Public API
 
     /// Displays the HUD. Skipped when the foreground app is fullscreen or the popup is visible.
-    func show(volume: Float, mute: Bool, deviceName: String) {
+    func show(sliderFraction: Double, mute: Bool, deviceName: String) {
         showCallCount += 1
         showDidUpdatePanel = false
 
@@ -94,17 +94,18 @@ final class HUDWindowController {
         panel.ignoresMouseEvents = (style == .classic)
 
         let scheme = appearance.swiftUIColorScheme
+        let displayFraction = Float(max(0, min(1, sliderFraction)))
         let root: AnyView
         let size: NSSize
         switch style {
         case .tahoe:
             root = AnyView(
                 TahoeStyleHUD(
-                    volume: volume,
+                    sliderFraction: displayFraction,
                     mute: mute,
                     deviceName: deviceName,
-                    onVolumeChange: { [weak self] newVolume in
-                        self?.volumeWriter?(newVolume)
+                    onSliderChange: { [weak self] newFraction in
+                        self?.volumeWriter?(Double(newFraction))
                     },
                     onHoverChange: { [weak self] hovering in
                         self?.handleHoverChange(hovering)
@@ -115,7 +116,7 @@ final class HUDWindowController {
             size = NSSize(width: 300, height: 72)
         case .classic:
             root = AnyView(
-                ClassicStyleHUD(volume: volume, mute: mute)
+                ClassicStyleHUD(sliderFraction: displayFraction, mute: mute)
                     .preferredColorScheme(scheme)
             )
             size = NSSize(width: 200, height: 200)
@@ -148,7 +149,7 @@ final class HUDWindowController {
         }
 
         scheduleHide(for: style)
-        postAccessibilityAnnouncement(panel: panel, volume: volume, mute: mute, deviceName: deviceName)
+        postAccessibilityAnnouncement(panel: panel, sliderFraction: sliderFraction, mute: mute, deviceName: deviceName)
     }
 
     func showPerAppVolumeHUD(app: AudioApp, level: Float) {
@@ -339,8 +340,8 @@ final class HUDWindowController {
 
     // MARK: - Accessibility
 
-    private func postAccessibilityAnnouncement(panel: NSPanel, volume: Float, mute: Bool, deviceName: String) {
-        let description = accessibilityDescription(volume: volume, mute: mute, deviceName: deviceName)
+    private func postAccessibilityAnnouncement(panel: NSPanel, sliderFraction: Double, mute: Bool, deviceName: String) {
+        let description = accessibilityDescription(sliderFraction: sliderFraction, mute: mute, deviceName: deviceName)
         NSAccessibility.post(
             element: panel,
             notification: .announcementRequested,
@@ -351,10 +352,10 @@ final class HUDWindowController {
         )
     }
 
-    private func accessibilityDescription(volume: Float, mute: Bool, deviceName: String) -> String {
+    private func accessibilityDescription(sliderFraction: Double, mute: Bool, deviceName: String) -> String {
         let device = deviceName.isEmpty ? "Unknown device" : deviceName
         if mute { return "\(device), muted" }
-        let clamped = max(0, min(1, volume))
+        let clamped = max(0, min(1, sliderFraction))
         return "\(device), volume \(Int((clamped * 100).rounded())) percent"
     }
 

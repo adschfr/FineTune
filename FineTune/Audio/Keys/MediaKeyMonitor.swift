@@ -256,7 +256,11 @@ final class MediaKeyMonitor {
             }
             setVolume(deviceID, newVolume)
             if shouldShowHUD {
-                hudController.show(volume: newVolume, mute: false, deviceName: deviceName)
+                hudController.show(
+                    sliderFraction: VolumeMapping.sliderFraction(forSystemGain: newVolume, tier: tier),
+                    mute: false,
+                    deviceName: deviceName
+                )
             }
             iconCoordinator?.flashDevice()
 
@@ -275,7 +279,11 @@ final class MediaKeyMonitor {
             }
             setVolume(deviceID, newVolume)
             if shouldShowHUD {
-                hudController.show(volume: newVolume, mute: willBeSilent, deviceName: deviceName)
+                hudController.show(
+                    sliderFraction: VolumeMapping.sliderFraction(forSystemGain: newVolume, tier: tier),
+                    mute: willBeSilent,
+                    deviceName: deviceName
+                )
             }
             iconCoordinator?.flashDevice()
 
@@ -283,7 +291,11 @@ final class MediaKeyMonitor {
             let newMute = !currentMute
             setMute(deviceID, newMute)
             if shouldShowHUD {
-                hudController.show(volume: currentVolume, mute: newMute, deviceName: deviceName)
+                hudController.show(
+                    sliderFraction: VolumeMapping.sliderFraction(forSystemGain: currentVolume, tier: tier),
+                    mute: newMute,
+                    deviceName: deviceName
+                )
             }
             iconCoordinator?.flashDevice()
         }
