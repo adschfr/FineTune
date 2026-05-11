@@ -34,10 +34,11 @@ struct ShortcutsRegistryTests {
 
         registry.dispatch(.targetAppVolumeUp)
 
-        let expected: Float = 0.5 + 1.0 / 16.0
+        let nextSlider = sqrt(0.5) + 1.0 / 16.0
+        let expected = Float(nextSlider * nextSlider)
         #expect(engine.setVolumeCalls.count == 1)
         #expect(engine.setVolumeCalls.first?.app.bundleID == "com.test.app")
-        #expect(engine.setVolumeCalls.first?.volume == expected)
+        #expect(abs((engine.setVolumeCalls.first?.volume ?? 0) - expected) < 1e-5)
         #expect(hud.successCalls == 1)
         #expect(hud.failureCalls == 0)
     }

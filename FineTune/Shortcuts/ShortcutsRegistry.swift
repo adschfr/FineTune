@@ -54,10 +54,6 @@ final class ShortcutsRegistry {
     private let hud: any PerAppHUDPresenting
     private var didStart = false
 
-    /// Matches the macOS media-key step (1/16). Replicated here because
-    /// `MediaKeyMonitor.volumeStep` is `private`.
-    private static let volumeStep: Float = 1.0 / 16.0
-
     /// Software-emulated key-repeat timing. Carbon hot keys don't auto-repeat,
     /// so holding the chord runs this loop. Values match macOS keyboard defaults.
     private static let repeatInitialDelay: Duration = .milliseconds(450)
@@ -92,9 +88,9 @@ final class ShortcutsRegistry {
         case .togglePopup:
             popupController.toggle()
         case .targetAppVolumeUp:
-            adjustTargetVolume(delta: Self.volumeStep)
+            adjustTargetVolume(direction: +1)
         case .targetAppVolumeDown:
-            adjustTargetVolume(delta: -Self.volumeStep)
+            adjustTargetVolume(direction: -1)
         case .targetAppMuteToggle:
             toggleTargetMute()
         }
@@ -102,14 +98,19 @@ final class ShortcutsRegistry {
 
     // MARK: - Per-app dispatch
 
-    private func adjustTargetVolume(delta: Float) {
+    private func adjustTargetVolume(direction: Int) {
         guard let app = resolveTargetAudioApp() else { return }
-        let current = audioEngine.currentVolume(for: app)
-        let next = max(0.0, min(1.0, current + delta))
-        let currentMute = audioEngine.isMuted(for: app)
-        let willBeSilent = next <= 0.001
+        let sliderDelta = settings.appSettings.volumeHotkeyStep.sliderDelta * Double(direction)
 
-        if delta > 0 {
+        let currentGain = audioEngine.currentVolume(for: app)
+        let currentSlider = VolumeMapping.gainToSlider(currentGain)
+        let nextSlider = max(0.0, min(1.0, currentSlider + sliderDelta))
+        let nextGain = VolumeMapping.sliderToGain(nextSlider)
+
+        let currentMute = audioEngine.isMuted(for: app)
+        let willBeSilent = nextSlider <= 0.001
+
+        if direction > 0 {
             if currentMute {
                 audioEngine.setMute(for: app, to: false)
             }
@@ -120,8 +121,8 @@ final class ShortcutsRegistry {
                 audioEngine.setMute(for: app, to: true)
             }
         }
-        audioEngine.setVolume(for: app, to: next)
-        hud.showPerAppVolumeHUD(app: app, sliderFraction: VolumeMapping.gainToSlider(next))
+        audioEngine.setVolume(for: app, to: nextGain)
+        hud.showPerAppVolumeHUD(app: app, sliderFraction: nextSlider)
     }
 
     private func toggleTargetMute() {
