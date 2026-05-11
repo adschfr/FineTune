@@ -8,16 +8,16 @@ import Foundation
 /// in `AppSettings.customShortcuts` and must be stable across releases.
 enum ShortcutAction: String, CaseIterable, Codable, Sendable {
     case togglePopup
-    case frontmostAppVolumeUp
-    case frontmostAppVolumeDown
-    case frontmostAppMuteToggle
+    case targetAppVolumeUp = "frontmostAppVolumeUp"
+    case targetAppVolumeDown = "frontmostAppVolumeDown"
+    case targetAppMuteToggle = "frontmostAppMuteToggle"
 
     var displayName: String {
         switch self {
         case .togglePopup: "Toggle FineTune Popup"
-        case .frontmostAppVolumeUp: "Frontmost App Volume Up"
-        case .frontmostAppVolumeDown: "Frontmost App Volume Down"
-        case .frontmostAppMuteToggle: "Frontmost App Mute Toggle"
+        case .targetAppVolumeUp: "App Volume Up"
+        case .targetAppVolumeDown: "App Volume Down"
+        case .targetAppMuteToggle: "App Mute Toggle"
         }
     }
 }

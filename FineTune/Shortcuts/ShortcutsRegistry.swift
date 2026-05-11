@@ -83,32 +83,32 @@ final class ShortcutsRegistry {
         switch action {
         case .togglePopup:
             popupController.toggle()
-        case .frontmostAppVolumeUp:
-            adjustFrontmostVolume(delta: Self.volumeStep)
-        case .frontmostAppVolumeDown:
-            adjustFrontmostVolume(delta: -Self.volumeStep)
-        case .frontmostAppMuteToggle:
-            toggleFrontmostMute()
+        case .targetAppVolumeUp:
+            adjustTargetVolume(delta: Self.volumeStep)
+        case .targetAppVolumeDown:
+            adjustTargetVolume(delta: -Self.volumeStep)
+        case .targetAppMuteToggle:
+            toggleTargetMute()
         }
     }
 
     // MARK: - Per-app dispatch
 
-    private func adjustFrontmostVolume(delta: Float) {
-        guard let app = resolveFrontmostAudioApp() else { return }
+    private func adjustTargetVolume(delta: Float) {
+        guard let app = resolveTargetAudioApp() else { return }
         let current = audioEngine.currentVolume(for: app)
         let next = max(0.0, min(1.0, current + delta))
         audioEngine.setVolume(for: app, to: next)
         hud.showPerAppVolumeHUD(app: app, level: next)
     }
 
-    private func toggleFrontmostMute() {
-        guard let app = resolveFrontmostAudioApp() else { return }
+    private func toggleTargetMute() {
+        guard let app = resolveTargetAudioApp() else { return }
         audioEngine.toggleMute(for: app)
         hud.showPerAppMuteHUD(app: app, isMuted: audioEngine.isMuted(for: app))
     }
 
-    private func resolveFrontmostAudioApp() -> AudioApp? {
+    private func resolveTargetAudioApp() -> AudioApp? {
         let candidates = audioEngine.apps
             .compactMap { $0.bundleID }
             .filter { audioEngine.isAudibleNow(bundleID: $0) }
@@ -181,9 +181,9 @@ final class ShortcutsRegistry {
     private func stableID(for action: ShortcutAction) -> String {
         switch action {
         case .togglePopup: "toggle-popup"
-        case .frontmostAppVolumeUp: "frontmost-app-volume-up"
-        case .frontmostAppVolumeDown: "frontmost-app-volume-down"
-        case .frontmostAppMuteToggle: "frontmost-app-mute-toggle"
+        case .targetAppVolumeUp: "frontmost-app-volume-up"
+        case .targetAppVolumeDown: "frontmost-app-volume-down"
+        case .targetAppMuteToggle: "frontmost-app-mute-toggle"
         }
     }
 }

@@ -20,7 +20,7 @@ struct ShortcutsRegistryTests {
         #expect(recorder.toggleCount == 1)
     }
 
-    @Test("dispatch(.frontmostAppVolumeUp) raises volume on the matched app")
+    @Test("dispatch(.targetAppVolumeUp) raises volume on the matched app")
     func dispatchFrontmostVolumeUpHappyPath() {
         let app = makeAudioApp(id: 1, bundleID: "com.test.app")
         let resolver = StubTargetResolver(target: "com.test.app")
@@ -32,7 +32,7 @@ struct ShortcutsRegistryTests {
             hud: hud
         )
 
-        registry.dispatch(.frontmostAppVolumeUp)
+        registry.dispatch(.targetAppVolumeUp)
 
         let expected: Float = 0.5 + 1.0 / 16.0
         #expect(engine.setVolumeCalls.count == 1)
@@ -42,7 +42,7 @@ struct ShortcutsRegistryTests {
         #expect(hud.failureCalls == 0)
     }
 
-    @Test("dispatch(.frontmostAppVolumeDown) clamps at 0")
+    @Test("dispatch(.targetAppVolumeDown) clamps at 0")
     func dispatchFrontmostVolumeDownClampsAtZero() {
         let app = makeAudioApp(id: 1, bundleID: "com.test.app")
         let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.0)
@@ -52,12 +52,12 @@ struct ShortcutsRegistryTests {
             hud: RecordingHUDController()
         )
 
-        registry.dispatch(.frontmostAppVolumeDown)
+        registry.dispatch(.targetAppVolumeDown)
 
         #expect(engine.setVolumeCalls.first?.volume == 0.0)
     }
 
-    @Test("dispatch(.frontmostAppMuteToggle) calls toggleMute and reports new mute state")
+    @Test("dispatch(.targetAppMuteToggle) calls toggleMute and reports new mute state")
     func dispatchFrontmostMuteHappyPath() {
         let app = makeAudioApp(id: 1, bundleID: "com.test.app")
         let engine = RecordingAudioEngine(apps: [app], initialMuted: false)
@@ -68,7 +68,7 @@ struct ShortcutsRegistryTests {
             hud: hud
         )
 
-        registry.dispatch(.frontmostAppMuteToggle)
+        registry.dispatch(.targetAppMuteToggle)
 
         #expect(engine.toggleMuteCalls.count == 1)
         #expect(hud.successCalls == 1)
@@ -84,7 +84,7 @@ struct ShortcutsRegistryTests {
             hud: hud
         )
 
-        registry.dispatch(.frontmostAppVolumeUp)
+        registry.dispatch(.targetAppVolumeUp)
 
         #expect(engine.setVolumeCalls.isEmpty)
         #expect(hud.failureCalls == 1)
@@ -100,7 +100,7 @@ struct ShortcutsRegistryTests {
             hud: hud
         )
 
-        registry.dispatch(.frontmostAppVolumeDown)
+        registry.dispatch(.targetAppVolumeDown)
 
         #expect(engine.setVolumeCalls.isEmpty)
         #expect(hud.failureCalls == 1)
@@ -112,9 +112,9 @@ struct ShortcutsRegistryTests {
     func nameStable() {
         let registry = makeRegistry()
         #expect(registry.name(for: .togglePopup).rawValue == "toggle-popup")
-        #expect(registry.name(for: .frontmostAppVolumeUp).rawValue == "frontmost-app-volume-up")
-        #expect(registry.name(for: .frontmostAppVolumeDown).rawValue == "frontmost-app-volume-down")
-        #expect(registry.name(for: .frontmostAppMuteToggle).rawValue == "frontmost-app-mute-toggle")
+        #expect(registry.name(for: .targetAppVolumeUp).rawValue == "frontmost-app-volume-up")
+        #expect(registry.name(for: .targetAppVolumeDown).rawValue == "frontmost-app-volume-down")
+        #expect(registry.name(for: .targetAppMuteToggle).rawValue == "frontmost-app-mute-toggle")
     }
 
     // MARK: - start: load path
