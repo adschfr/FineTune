@@ -165,6 +165,35 @@ extension MenuBarPopupSize {
     }
 }
 
+// MARK: - Volume Hotkey Step Size
+
+enum VolumeHotkeyStep: String, Codable, CaseIterable, Identifiable, CustomStringConvertible {
+    case coarse
+    case normal
+    case fine
+    case extraFine
+
+    var id: String { rawValue }
+
+    var sliderDelta: Double {
+        switch self {
+        case .coarse:    return 1.0 / 8.0
+        case .normal:    return 1.0 / 16.0
+        case .fine:      return 1.0 / 32.0
+        case .extraFine: return 1.0 / 64.0
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .coarse:    return "Coarse (12.5%)"
+        case .normal:    return "Normal (6.25%)"
+        case .fine:      return "Fine (3.13%)"
+        case .extraFine: return "Extra-Fine (1.56%)"
+        }
+    }
+}
+
 // MARK: - App-Wide Settings Model
 
 struct AppSettings: Codable, Equatable {
