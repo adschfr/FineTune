@@ -47,7 +47,7 @@ final class ShortcutsRegistry {
 
     private let settings: SettingsManager
     private let popupController: any MenuBarPopupControlling
-    private let frontmostResolver: any FrontmostAppResolving
+    private let resolver: any TargetAppResolving
     private let audioEngine: any AudioEngineDispatching
     private let hud: any PerAppHUDPresenting
     private var didStart = false
@@ -59,13 +59,13 @@ final class ShortcutsRegistry {
     init(
         settings: SettingsManager,
         popupController: any MenuBarPopupControlling,
-        frontmostResolver: any FrontmostAppResolving,
+        resolver: any TargetAppResolving,
         audioEngine: any AudioEngineDispatching,
         hud: any PerAppHUDPresenting
     ) {
         self.settings = settings
         self.popupController = popupController
-        self.frontmostResolver = frontmostResolver
+        self.resolver = resolver
         self.audioEngine = audioEngine
         self.hud = hud
     }
@@ -108,7 +108,7 @@ final class ShortcutsRegistry {
     }
 
     private func resolveFrontmostAudioApp() -> AudioApp? {
-        guard let bundleID = frontmostResolver.resolveTargetBundleID() else {
+        guard let bundleID = resolver.resolveTargetBundleID() else {
             hud.showPerAppNotControlledHUD(displayName: nil, bundleID: nil, icon: nil)
             return nil
         }

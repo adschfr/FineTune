@@ -23,11 +23,11 @@ struct ShortcutsRegistryTests {
     @Test("dispatch(.frontmostAppVolumeUp) raises volume on the matched app")
     func dispatchFrontmostVolumeUpHappyPath() {
         let app = makeAudioApp(id: 1, bundleID: "com.test.app")
-        let resolver = StubFrontmostResolver(target: "com.test.app")
+        let resolver = StubTargetResolver(target: "com.test.app")
         let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.5)
         let hud = RecordingHUDController()
         let registry = makeRegistry(
-            frontmostResolver: resolver,
+            resolver: resolver,
             audioEngine: engine,
             hud: hud
         )
@@ -47,7 +47,7 @@ struct ShortcutsRegistryTests {
         let app = makeAudioApp(id: 1, bundleID: "com.test.app")
         let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.0)
         let registry = makeRegistry(
-            frontmostResolver: StubFrontmostResolver(target: "com.test.app"),
+            resolver: StubTargetResolver(target: "com.test.app"),
             audioEngine: engine,
             hud: RecordingHUDController()
         )
@@ -63,7 +63,7 @@ struct ShortcutsRegistryTests {
         let engine = RecordingAudioEngine(apps: [app], initialMuted: false)
         let hud = RecordingHUDController()
         let registry = makeRegistry(
-            frontmostResolver: StubFrontmostResolver(target: "com.test.app"),
+            resolver: StubTargetResolver(target: "com.test.app"),
             audioEngine: engine,
             hud: hud
         )
@@ -79,7 +79,7 @@ struct ShortcutsRegistryTests {
         let engine = RecordingAudioEngine(apps: [])
         let hud = RecordingHUDController()
         let registry = makeRegistry(
-            frontmostResolver: StubFrontmostResolver(target: nil),
+            resolver: StubTargetResolver(target: nil),
             audioEngine: engine,
             hud: hud
         )
@@ -95,7 +95,7 @@ struct ShortcutsRegistryTests {
         let engine = RecordingAudioEngine(apps: [])
         let hud = RecordingHUDController()
         let registry = makeRegistry(
-            frontmostResolver: StubFrontmostResolver(target: "com.test.notap"),
+            resolver: StubTargetResolver(target: "com.test.notap"),
             audioEngine: engine,
             hud: hud
         )
@@ -190,14 +190,14 @@ struct ShortcutsRegistryTests {
     private func makeRegistry(
         settings: SettingsManager? = nil,
         popupController: (any MenuBarPopupControlling)? = nil,
-        frontmostResolver: (any FrontmostAppResolving)? = nil,
+        resolver: (any TargetAppResolving)? = nil,
         audioEngine: (any AudioEngineDispatching)? = nil,
         hud: (any PerAppHUDPresenting)? = nil
     ) -> ShortcutsRegistry {
         ShortcutsRegistry(
             settings: settings ?? makeIsolatedSettings(),
             popupController: popupController ?? RecordingPopupController(),
-            frontmostResolver: frontmostResolver ?? StubFrontmostResolver(target: nil),
+            resolver: resolver ?? StubTargetResolver(target: nil),
             audioEngine: audioEngine ?? RecordingAudioEngine(apps: []),
             hud: hud ?? RecordingHUDController()
         )
@@ -228,7 +228,7 @@ final class RecordingPopupController: MenuBarPopupControlling {
 }
 
 @MainActor
-final class StubFrontmostResolver: FrontmostAppResolving {
+final class StubTargetResolver: TargetAppResolving {
     var target: String?
     init(target: String?) { self.target = target }
     func resolveTargetBundleID() -> String? { target }

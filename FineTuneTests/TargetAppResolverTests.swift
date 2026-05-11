@@ -1,17 +1,17 @@
-// FineTuneTests/FrontmostAppResolverTests.swift
+// FineTuneTests/TargetAppResolverTests.swift
 import Testing
 import Foundation
 import AppKit
 @testable import FineTune
 
-@Suite("FrontmostAppResolver")
+@Suite("TargetAppResolver")
 @MainActor
-struct FrontmostAppResolverTests {
+struct TargetAppResolverTests {
     private static let ownBundleID = "com.finetuneapp.FineTune"
 
     @Test("resolveTargetBundleID returns nil when nothing has activated")
     func coldLaunchReturnsNil() {
-        let resolver = FrontmostAppResolver(
+        let resolver = TargetAppResolver(
             ownBundleID: Self.ownBundleID,
             frontmostBundleIDProvider: { Self.ownBundleID }
         )
@@ -20,7 +20,7 @@ struct FrontmostAppResolverTests {
 
     @Test("resolveTargetBundleID returns the frontmost bundle ID when it is not FineTune")
     func returnsFrontmostWhenNotFineTune() {
-        let resolver = FrontmostAppResolver(
+        let resolver = TargetAppResolver(
             ownBundleID: Self.ownBundleID,
             frontmostBundleIDProvider: { "com.apple.Safari" }
         )
@@ -29,7 +29,7 @@ struct FrontmostAppResolverTests {
 
     @Test("resolveTargetBundleID falls back to last cached non-FineTune ID when FineTune is frontmost")
     func fineTuneFrontmostUsesCachedFallback() {
-        let resolver = FrontmostAppResolver(
+        let resolver = TargetAppResolver(
             ownBundleID: Self.ownBundleID,
             frontmostBundleIDProvider: { Self.ownBundleID }
         )
@@ -40,7 +40,7 @@ struct FrontmostAppResolverTests {
 
     @Test("activation by FineTune does not overwrite the cached fallback")
     func fineTuneActivationDoesNotPoisonCache() {
-        let resolver = FrontmostAppResolver(
+        let resolver = TargetAppResolver(
             ownBundleID: Self.ownBundleID,
             frontmostBundleIDProvider: { Self.ownBundleID }
         )

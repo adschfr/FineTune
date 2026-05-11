@@ -1,9 +1,9 @@
-// FineTune/Shortcuts/FrontmostAppResolver.swift
+// FineTune/Shortcuts/TargetAppResolver.swift
 import AppKit
 import Foundation
 
 @MainActor
-protocol FrontmostAppResolving: AnyObject {
+protocol TargetAppResolving: AnyObject {
     func resolveTargetBundleID() -> String?
 }
 
@@ -12,7 +12,7 @@ protocol FrontmostAppResolving: AnyObject {
 /// no-op (`AppKit/NSWorkspace.h`).
 @MainActor
 @Observable
-final class FrontmostAppResolver: FrontmostAppResolving {
+final class TargetAppResolver: TargetAppResolving {
     private let ownBundleID: String
     private let frontmostBundleIDProvider: @MainActor () -> String?
     private var lastNonFineTuneFrontmostBundleID: String?
