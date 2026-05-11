@@ -465,25 +465,29 @@ private struct PerAppHUD: View {
         }
     }
 
+    private var displayedPercent: Int {
+        Int((displayLevel * 100).rounded())
+    }
+
     private var isMutedDisplay: Bool {
         switch content {
         case .mute(let isMuted): return isMuted
-        case .volume(let sliderFraction): return sliderFraction <= 0.001
+        case .volume: return displayedPercent == 0
         case .notControlled: return false
         }
     }
 
     private var waveIconName: String {
-        switch displayLevel {
-        case ..<0.01:  return "speaker.fill"
-        case ..<0.34:  return "speaker.wave.1.fill"
-        case ..<0.67:  return "speaker.wave.2.fill"
+        switch displayedPercent {
+        case 0:        return "speaker.fill"
+        case 1...33:   return "speaker.wave.1.fill"
+        case 34...66:  return "speaker.wave.2.fill"
         default:       return "speaker.wave.3.fill"
         }
     }
 
     private var percentageText: String {
-        "\(Int((displayLevel * 100).rounded()))%"
+        "\(displayedPercent)%"
     }
 
     private var accessibilityDescription: String {

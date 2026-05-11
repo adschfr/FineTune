@@ -29,23 +29,31 @@ struct TahoeStyleHUD: View {
         return max(0, min(1, sliderFraction))
     }
 
+    private var displayedPercent: Int {
+        Int((displayFloat * 100).rounded())
+    }
+
     private var displayMute: Bool {
-        if let dragValue { return dragValue <= 0.001 }
+        if let dragValue { return Int((dragValue * 100).rounded()) == 0 }
         return mute
     }
 
     private var waveIconName: String {
-        switch displayFloat {
-        case ..<0.01:  return "speaker.fill"
-        case ..<0.34:  return "speaker.wave.1.fill"
-        case ..<0.67:  return "speaker.wave.2.fill"
+        switch displayedPercent {
+        case 0:        return "speaker.fill"
+        case 1...33:   return "speaker.wave.1.fill"
+        case 34...66:  return "speaker.wave.2.fill"
         default:       return "speaker.wave.3.fill"
         }
     }
 
     private var percentageText: String {
-        "\(Int((displayFloat * 100).rounded()))%"
+        "\(displayedPercent)%"
     }
+
+    #if DEBUG
+    var waveIconNameForTest: String { waveIconName }
+    #endif
 
     private var accessibilityDescription: String {
         let device = deviceName.isEmpty ? "Unknown device" : deviceName

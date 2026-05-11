@@ -24,24 +24,31 @@ struct ClassicStyleHUD: View {
         mute ? 0 : max(0, min(1, sliderFraction))
     }
 
+    private var displayedPercent: Int {
+        Int((displayValue * 100).rounded())
+    }
+
     private var filledTileCount: Int {
-        let clamped = max(0, min(1, displayValue))
-        return Int((clamped * Float(Self.tileCount)).rounded())
+        Int((displayValue * Float(Self.tileCount)).rounded())
     }
 
     private var waveIconName: String {
-        switch displayValue {
-        case ..<0.01:  return "speaker.fill"
-        case ..<0.34:  return "speaker.wave.1.fill"
-        case ..<0.67:  return "speaker.wave.2.fill"
+        switch displayedPercent {
+        case 0:        return "speaker.fill"
+        case 1...33:   return "speaker.wave.1.fill"
+        case 34...66:  return "speaker.wave.2.fill"
         default:       return "speaker.wave.3.fill"
         }
     }
 
     /// `speaker.slash.fill` sits 2pt high vs the rest of the `speaker.*` glyphs at 80pt.
     private var iconYOffset: CGFloat {
-        (mute || displayValue <= 0.001) ? 2 : 0
+        (mute || displayedPercent == 0) ? 2 : 0
     }
+
+    #if DEBUG
+    var waveIconNameForTest: String { waveIconName }
+    #endif
 
     private var accessibilityDescription: String {
         if mute { return "Muted" }
