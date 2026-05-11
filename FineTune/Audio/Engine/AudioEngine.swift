@@ -748,6 +748,13 @@ final class AudioEngine {
         volumeState.getMute(for: app.id)
     }
 
+    func isAudibleNow(bundleID: String) -> Bool {
+        guard let app = apps.first(where: { $0.bundleID == bundleID }) else {
+            return false
+        }
+        return app.processObjectIDs.contains { $0.readProcessIsRunning() }
+    }
+
     func setMute(for app: AudioApp, to muted: Bool) {
         volumeState.setMute(for: app.id, to: muted, identifier: app.persistenceIdentifier)
         taps[app.id]?.isMuted = muted

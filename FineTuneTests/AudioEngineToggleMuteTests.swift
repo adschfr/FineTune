@@ -25,6 +25,18 @@ struct AudioEngineToggleMuteTests {
         #expect(engine.volumeState.getMute(for: app.id) == false)
     }
 
+    @Test("isAudibleNow returns false when no AudioApp matches the bundle ID")
+    func isAudibleNowReturnsFalseForUnknownBundle() {
+        let (engine, _) = makeEngineWithApp(initiallyMuted: false)
+        #expect(engine.isAudibleNow(bundleID: "com.does.not.exist") == false)
+    }
+
+    @Test("isAudibleNow returns false when matched AudioApp has no processObjectIDs")
+    func isAudibleNowReturnsFalseWhenNoProcessObjects() {
+        let (engine, app) = makeEngineWithApp(initiallyMuted: false)
+        #expect(engine.isAudibleNow(bundleID: app.bundleID ?? "") == false)
+    }
+
     private func makeEngineWithApp(initiallyMuted: Bool) -> (AudioEngine, AudioApp) {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
