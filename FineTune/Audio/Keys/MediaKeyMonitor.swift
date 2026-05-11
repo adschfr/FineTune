@@ -19,9 +19,6 @@ final class MediaKeyMonitor {
     private let mediaKeyStatus: MediaKeyStatus
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MediaKeyMonitor")
 
-    /// Step size applied per keypress (1/16 matches Apple's default cadence).
-    private let volumeStep: Float = 1.0 / 16.0
-
     // MARK: - Tap state
 
     private var tap: CFMachPort?
@@ -229,8 +226,9 @@ final class MediaKeyMonitor {
         )
     }
 
-    /// Volume/mute state machine. `.ddc` tier coalesces repeats to an 80 ms floor;
-    /// hardware/software tiers pass them through. Mute repeats are dropped upstream.
+    /// `.ddc` tier coalesces repeats to an 80 ms floor; hardware/software pass them through.
+    /// Mute repeats are dropped upstream. Stepping operates on slider-position; HUD receives
+    /// the slider fraction so it always matches the popup device row.
     func handleCore(
         event: MediaKeyEvent,
         deviceID: AudioDeviceID,
@@ -242,6 +240,8 @@ final class MediaKeyMonitor {
         setMute: (AudioDeviceID, Bool) -> Void
     ) {
         let shouldShowHUD = !popupVisibility.isVisible
+        let sliderDelta = settingsManager.appSettings.volumeHotkeyStep.sliderDelta
+        let currentSlider = VolumeMapping.sliderFraction(forSystemGain: currentVolume, tier: tier)
 
         switch event {
         case .volumeUp(let isRepeat):
@@ -249,18 +249,15 @@ final class MediaKeyMonitor {
                 logger.debug("DDC repeat coalesced")
                 return
             }
-            let newVolume = min(1.0, currentVolume + volumeStep)
+            let nextSlider = min(1.0, currentSlider + sliderDelta)
+            let newVolume = VolumeMapping.systemGain(forSliderFraction: nextSlider, tier: tier)
             // Volume-up from muted unmutes (system HUD parity).
             if currentMute {
                 setMute(deviceID, false)
             }
             setVolume(deviceID, newVolume)
             if shouldShowHUD {
-                hudController.show(
-                    sliderFraction: VolumeMapping.sliderFraction(forSystemGain: newVolume, tier: tier),
-                    mute: false,
-                    deviceName: deviceName
-                )
+                hudController.show(sliderFraction: nextSlider, mute: false, deviceName: deviceName)
             }
             iconCoordinator?.flashDevice()
 
@@ -269,8 +266,9 @@ final class MediaKeyMonitor {
                 logger.debug("DDC repeat coalesced")
                 return
             }
-            let newVolume = max(0, currentVolume - volumeStep)
-            let willBeSilent = newVolume <= 0.001
+            let nextSlider = max(0, currentSlider - sliderDelta)
+            let newVolume = VolumeMapping.systemGain(forSliderFraction: nextSlider, tier: tier)
+            let willBeSilent = nextSlider <= 0.001
             // muted+audible → unmute; unmuted+silent → auto-mute (system HUD parity).
             if currentMute && !willBeSilent {
                 setMute(deviceID, false)
@@ -279,11 +277,7 @@ final class MediaKeyMonitor {
             }
             setVolume(deviceID, newVolume)
             if shouldShowHUD {
-                hudController.show(
-                    sliderFraction: VolumeMapping.sliderFraction(forSystemGain: newVolume, tier: tier),
-                    mute: willBeSilent,
-                    deviceName: deviceName
-                )
+                hudController.show(sliderFraction: nextSlider, mute: willBeSilent, deviceName: deviceName)
             }
             iconCoordinator?.flashDevice()
 
@@ -291,11 +285,7 @@ final class MediaKeyMonitor {
             let newMute = !currentMute
             setMute(deviceID, newMute)
             if shouldShowHUD {
-                hudController.show(
-                    sliderFraction: VolumeMapping.sliderFraction(forSystemGain: currentVolume, tier: tier),
-                    mute: newMute,
-                    deviceName: deviceName
-                )
+                hudController.show(sliderFraction: currentSlider, mute: newMute, deviceName: deviceName)
             }
             iconCoordinator?.flashDevice()
         }

@@ -67,7 +67,7 @@ struct MediaKeyMonitorHandlerTests {
 
     // MARK: - Volume step arithmetic
 
-    @Test("volumeUp from 0.5 sets volume to 0.5625 (1/16 step)")
+    @Test("volumeUp on software tier steps in slider domain (x² taper)")
     func volumeUpStep() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -82,11 +82,12 @@ struct MediaKeyMonitorHandlerTests {
             setVolume: { _, v in writtenVolume = v },
             setMute: { _, _ in }
         )
-        let expected: Float = 0.5 + 1.0 / 16.0
-        #expect(writtenVolume == expected)
+        let nextSlider = sqrt(Double(0.5)) + 1.0 / 16.0
+        let expected = Float(nextSlider * nextSlider)
+        #expect(abs((writtenVolume ?? 0) - expected) < 1e-5)
     }
 
-    @Test("volumeDown from 0.5 sets volume to 0.4375 (1/16 step)")
+    @Test("volumeDown on software tier steps in slider domain (x² taper)")
     func volumeDownStep() {
         let (monitor, _, _, _) = makeMonitor()
         let deviceID: AudioDeviceID = 1
@@ -101,8 +102,9 @@ struct MediaKeyMonitorHandlerTests {
             setVolume: { _, v in writtenVolume = v },
             setMute: { _, _ in }
         )
-        let expected: Float = 0.5 - 1.0 / 16.0
-        #expect(writtenVolume == expected)
+        let nextSlider = sqrt(Double(0.5)) - 1.0 / 16.0
+        let expected = Float(nextSlider * nextSlider)
+        #expect(abs((writtenVolume ?? 0) - expected) < 1e-5)
     }
 
     @Test("volumeUp clamps at 1.0 when current is 0.9375 or higher")
@@ -472,5 +474,30 @@ struct MediaKeyMonitorHandlerTests {
             setMute: { _, _ in }
         )
         #expect(hud.showCallCount == 1)
+    }
+
+    @Test("Software tier post-step gain differs from hardware tier by exactly the x² taper")
+    func softwareVsHardwareStepDivergence() {
+        let (monitor, _, _, _) = makeMonitor()
+        let deviceID: AudioDeviceID = 1
+
+        var softwareVolume: Float = 0.5
+        monitor.handleCore(
+            event: .volumeUp(isRepeat: false), deviceID: deviceID, tier: .software,
+            deviceName: "Software Device", currentVolume: softwareVolume, currentMute: false,
+            setVolume: { _, v in softwareVolume = v }, setMute: { _, _ in }
+        )
+
+        var hardwareVolume: Float = 0.5
+        monitor.handleCore(
+            event: .volumeUp(isRepeat: false), deviceID: deviceID, tier: .hardware,
+            deviceName: "Hardware Device", currentVolume: hardwareVolume, currentMute: false,
+            setVolume: { _, v in hardwareVolume = v }, setMute: { _, _ in }
+        )
+
+        #expect(abs(hardwareVolume - 0.5625) < 1e-5)
+        let expectedSoftware = Float(pow(sqrt(0.5) + 1.0/16.0, 2))
+        #expect(abs(softwareVolume - expectedSoftware) < 1e-5)
+        #expect(softwareVolume != hardwareVolume)
     }
 }
