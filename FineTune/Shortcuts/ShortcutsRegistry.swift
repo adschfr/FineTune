@@ -8,6 +8,7 @@ import os
 protocol AudioEngineDispatching: AnyObject {
     var apps: [AudioApp] { get }
     func setVolume(for app: AudioApp, to volume: Float)
+    func setMute(for app: AudioApp, to muted: Bool)
     func toggleMute(for app: AudioApp)
     func currentVolume(for app: AudioApp) -> Float
     func isMuted(for app: AudioApp) -> Bool
@@ -98,6 +99,20 @@ final class ShortcutsRegistry {
         guard let app = resolveTargetAudioApp() else { return }
         let current = audioEngine.currentVolume(for: app)
         let next = max(0.0, min(1.0, current + delta))
+        let currentMute = audioEngine.isMuted(for: app)
+        let willBeSilent = next <= 0.001
+
+        if delta > 0 {
+            if currentMute {
+                audioEngine.setMute(for: app, to: false)
+            }
+        } else {
+            if currentMute && !willBeSilent {
+                audioEngine.setMute(for: app, to: false)
+            } else if !currentMute && willBeSilent {
+                audioEngine.setMute(for: app, to: true)
+            }
+        }
         audioEngine.setVolume(for: app, to: next)
         hud.showPerAppVolumeHUD(app: app, level: next)
     }

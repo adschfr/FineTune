@@ -90,6 +90,69 @@ struct ShortcutsRegistryTests {
         #expect(hud.failureCalls == 1)
     }
 
+    @Test("dispatch(.targetAppVolumeUp) unmutes a muted app (media-key parity)")
+    func dispatchVolumeUpUnmutesMutedApp() {
+        let app = makeAudioApp(id: 1, bundleID: "com.test.app")
+        let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.5, initialMuted: true)
+        let registry = makeRegistry(
+            resolver: StubTargetResolver(target: "com.test.app"),
+            audioEngine: engine,
+            hud: RecordingHUDController()
+        )
+
+        registry.dispatch(.targetAppVolumeUp)
+
+        #expect(engine.setMuteCalls.count == 1)
+        #expect(engine.setMuteCalls.first?.mute == false)
+    }
+
+    @Test("dispatch(.targetAppVolumeDown) auto-mutes an unmuted app when volume hits zero")
+    func dispatchVolumeDownAutoMutesAtZero() {
+        let app = makeAudioApp(id: 1, bundleID: "com.test.app")
+        let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.001, initialMuted: false)
+        let registry = makeRegistry(
+            resolver: StubTargetResolver(target: "com.test.app"),
+            audioEngine: engine,
+            hud: RecordingHUDController()
+        )
+
+        registry.dispatch(.targetAppVolumeDown)
+
+        #expect(engine.setMuteCalls.count == 1)
+        #expect(engine.setMuteCalls.first?.mute == true)
+    }
+
+    @Test("dispatch(.targetAppVolumeDown) unmutes a muted app when next volume is still audible")
+    func dispatchVolumeDownUnmutesMutedButAudibleApp() {
+        let app = makeAudioApp(id: 1, bundleID: "com.test.app")
+        let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.5, initialMuted: true)
+        let registry = makeRegistry(
+            resolver: StubTargetResolver(target: "com.test.app"),
+            audioEngine: engine,
+            hud: RecordingHUDController()
+        )
+
+        registry.dispatch(.targetAppVolumeDown)
+
+        #expect(engine.setMuteCalls.count == 1)
+        #expect(engine.setMuteCalls.first?.mute == false)
+    }
+
+    @Test("dispatch(.targetAppVolumeUp) on already-unmuted app does not call setMute")
+    func dispatchVolumeUpNoMuteTransitionIfAlreadyUnmuted() {
+        let app = makeAudioApp(id: 1, bundleID: "com.test.app")
+        let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.5, initialMuted: false)
+        let registry = makeRegistry(
+            resolver: StubTargetResolver(target: "com.test.app"),
+            audioEngine: engine,
+            hud: RecordingHUDController()
+        )
+
+        registry.dispatch(.targetAppVolumeUp)
+
+        #expect(engine.setMuteCalls.isEmpty)
+    }
+
     @Test("dispatch falls through to failure HUD when no matching AudioApp exists")
     func dispatchNoMatchingApp() {
         let engine = RecordingAudioEngine(apps: [])
@@ -254,6 +317,11 @@ final class RecordingAudioEngine: AudioEngineDispatching {
         setVolumeCalls.append((app, volume))
     }
 
+    func setMute(for app: AudioApp, to mute: Bool) {
+        muted = mute
+        setMuteCalls.append((app, mute))
+    }
+
     func toggleMute(for app: AudioApp) {
         muted.toggle()
         toggleMuteCalls.append(app)
@@ -262,6 +330,8 @@ final class RecordingAudioEngine: AudioEngineDispatching {
     func currentVolume(for app: AudioApp) -> Float { volume }
     func isMuted(for app: AudioApp) -> Bool { muted }
     func isAudibleNow(bundleID: String) -> Bool { audibleBundleIDs.contains(bundleID) }
+
+    var setMuteCalls: [(app: AudioApp, mute: Bool)] = []
 }
 
 @MainActor
