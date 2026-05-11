@@ -59,6 +59,22 @@ struct ShortcutsTab: View {
                     ) {
                         HUDStyleSegmentedControl(selection: $settings.appSettings.hudStyle)
                     }
+
+                    CardRowDivider()
+                    CardRow(
+                        icon: "speaker.wave.2",
+                        title: "Volume Step",
+                        description: "How much each keypress changes the volume"
+                    ) {
+                        Picker("", selection: $settings.appSettings.volumeHotkeyStep) {
+                            ForEach(VolumeHotkeyStep.allCases) { step in
+                                Text(step.description).tag(step)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
                 }
             }
         }
