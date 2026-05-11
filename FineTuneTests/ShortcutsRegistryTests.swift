@@ -231,12 +231,13 @@ final class RecordingPopupController: MenuBarPopupControlling {
 final class StubTargetResolver: TargetAppResolving {
     var target: String?
     init(target: String?) { self.target = target }
-    func resolveTargetBundleID() -> String? { target }
+    func resolveTargetBundleID(audibleCandidates: [String]) -> String? { target }
 }
 
 @MainActor
 final class RecordingAudioEngine: AudioEngineDispatching {
     var apps: [AudioApp]
+    var audibleBundleIDs: Set<String> = []
     private var volume: Float
     private var muted: Bool
     var setVolumeCalls: [(app: AudioApp, volume: Float)] = []
@@ -260,6 +261,7 @@ final class RecordingAudioEngine: AudioEngineDispatching {
 
     func currentVolume(for app: AudioApp) -> Float { volume }
     func isMuted(for app: AudioApp) -> Bool { muted }
+    func isAudibleNow(bundleID: String) -> Bool { audibleBundleIDs.contains(bundleID) }
 }
 
 @MainActor

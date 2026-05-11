@@ -11,6 +11,7 @@ protocol AudioEngineDispatching: AnyObject {
     func toggleMute(for app: AudioApp)
     func currentVolume(for app: AudioApp) -> Float
     func isMuted(for app: AudioApp) -> Bool
+    func isAudibleNow(bundleID: String) -> Bool
 }
 
 @MainActor
@@ -108,7 +109,11 @@ final class ShortcutsRegistry {
     }
 
     private func resolveFrontmostAudioApp() -> AudioApp? {
-        guard let bundleID = resolver.resolveTargetBundleID() else {
+        let candidates = audioEngine.apps
+            .compactMap { $0.bundleID }
+            .filter { audioEngine.isAudibleNow(bundleID: $0) }
+
+        guard let bundleID = resolver.resolveTargetBundleID(audibleCandidates: candidates) else {
             hud.showPerAppNotControlledHUD(displayName: nil, bundleID: nil, icon: nil)
             return nil
         }
