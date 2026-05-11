@@ -104,6 +104,37 @@ struct VolumeMappingGainToSliderTests {
     }
 }
 
+// MARK: - VolumeMapping — Tier-aware system helpers
+
+@Suite("VolumeMapping — tier-aware system helpers")
+struct VolumeMappingTierTests {
+    @Test("Software tier: gain 0.25 ↔ sliderFraction 0.5")
+    func softwareRoundTrip() {
+        #expect(abs(VolumeMapping.sliderFraction(forSystemGain: 0.25, tier: .software) - 0.5) < 1e-6)
+        #expect(abs(VolumeMapping.systemGain(forSliderFraction: 0.5, tier: .software) - 0.25) < 1e-6)
+    }
+
+    @Test("Hardware tier: identity in both directions")
+    func hardwareIdentity() {
+        #expect(abs(VolumeMapping.sliderFraction(forSystemGain: 0.3, tier: .hardware) - 0.3) < 1e-6)
+        #expect(abs(VolumeMapping.systemGain(forSliderFraction: 0.3, tier: .hardware) - 0.3) < 1e-6)
+    }
+
+    @Test("DDC tier: identity in both directions")
+    func ddcIdentity() {
+        #expect(abs(VolumeMapping.sliderFraction(forSystemGain: 0.7, tier: .ddc) - 0.7) < 1e-6)
+        #expect(abs(VolumeMapping.systemGain(forSliderFraction: 0.7, tier: .ddc) - 0.7) < 1e-6)
+    }
+
+    @Test("All tiers clamp out-of-range input")
+    func clampsOutOfRange() {
+        #expect(VolumeMapping.sliderFraction(forSystemGain: -0.1, tier: .software) == 0)
+        #expect(VolumeMapping.sliderFraction(forSystemGain:  1.5, tier: .hardware) == 1.0)
+        #expect(VolumeMapping.systemGain(forSliderFraction: -0.1, tier: .ddc) == 0)
+        #expect(VolumeMapping.systemGain(forSliderFraction:  1.5, tier: .software) == 1.0)
+    }
+}
+
 // MARK: - BoostLevel
 
 @Suite("BoostLevel — Enumeration and cycling")

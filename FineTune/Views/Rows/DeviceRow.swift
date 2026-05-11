@@ -240,37 +240,12 @@ struct DeviceRow: View {
 extension DeviceRow {
     // MARK: - Volume Mapping
 
-    /// Converts a stored volume value to slider position based on the device's volume backend.
     static func volumeToSlider(_ volume: Float, backend: VolumeControlTier) -> Double {
-        switch backend {
-        case .hardware:
-            // HAL scalar is already audio-tapered by the driver (IOAudioLevelControl dB curve).
-            // Identity: slider position == scalar value.
-            return Double(volume)
-        case .ddc:
-            // DDC 0–100 is a monitor-facing percentage sent via VCP 0x62 over I2C.
-            // The monitor's firmware applies its own perceptual curve internally.
-            // Identity: slider position == DDC value / 100. Matches OSD values.
-            return Double(volume)
-        case .software:
-            // Linear PCM amplitude multiplier. Needs x² curve for perceptual linearity.
-            return VolumeMapping.gainToSlider(volume)
-        }
+        VolumeMapping.sliderFraction(forSystemGain: volume, tier: backend)
     }
 
-    /// Converts a slider position to a volume value for the device's volume backend.
     static func sliderToVolume(_ slider: Double, backend: VolumeControlTier) -> Float {
-        switch backend {
-        case .hardware:
-            // Identity: write slider position directly as HAL scalar.
-            return Float(slider)
-        case .ddc:
-            // Identity: DeviceVolumeMonitor converts Float → Int(round(value * 100)) for DDC.
-            return Float(slider)
-        case .software:
-            // Apply x² curve: slider position → linear PCM gain.
-            return VolumeMapping.sliderToGain(slider)
-        }
+        VolumeMapping.systemGain(forSliderFraction: slider, tier: backend)
     }
 
     // MARK: - Subtitle

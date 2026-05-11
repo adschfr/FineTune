@@ -42,4 +42,24 @@ enum VolumeMapping {
         if gain <= 0 { return 0 }
         return Double(sqrt(min(gain, 1.0)))
     }
+
+    /// `.software` is linear PCM; `.hardware` / `.ddc` scalars are already audio-tapered
+    /// by the driver/firmware (see the top-level docstring on this enum).
+    static func sliderFraction(forSystemGain gain: Float, tier: VolumeControlTier) -> Double {
+        switch tier {
+        case .software:
+            return gainToSlider(gain)
+        case .hardware, .ddc:
+            return Double(max(0, min(1, gain)))
+        }
+    }
+
+    static func systemGain(forSliderFraction fraction: Double, tier: VolumeControlTier) -> Float {
+        switch tier {
+        case .software:
+            return sliderToGain(fraction)
+        case .hardware, .ddc:
+            return Float(max(0, min(1, fraction)))
+        }
+    }
 }
