@@ -11,9 +11,13 @@ import AppKit
 @Suite("AppearancePreference — Resolution helpers")
 struct AppearancePreferenceMappingTests {
 
-    @Test("system maps to nil ColorScheme (inherit from environment)")
+    @Test("system resolves to a concrete ColorScheme matching live system appearance")
     func systemColorScheme() {
-        #expect(AppearancePreference.system.swiftUIColorScheme == nil)
+        let scheme = AppearancePreference.system.swiftUIColorScheme
+        #expect(scheme != nil)
+        let expected: ColorScheme =
+            NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+        #expect(scheme == expected)
     }
 
     @Test("light maps to ColorScheme.light")
