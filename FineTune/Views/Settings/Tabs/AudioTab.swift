@@ -23,11 +23,16 @@ struct AudioTab: View {
     }
 
     var body: some View {
-        VStack(spacing: 20) {
-            defaultsCard
-            devicesCard
-            loudnessCard
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                volumeSection
+                devicesSection
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollIndicators(.never)
         .onAppear { updateSortedDevices() }
         .onChange(of: audioEngine.outputDevices) { _, _ in updateSortedDevices() }
         .onChange(of: settings.appSettings.lockInputDevice) { oldValue, newValue in
@@ -43,103 +48,86 @@ struct AudioTab: View {
         }
     }
 
-    // MARK: - Defaults
+    // MARK: - Volume
 
-    private var defaultsCard: some View {
-        SettingsCard(title: "Defaults") {
-            CardRow(
-                icon: "speaker.wave.2",
-                title: "Default Volume",
+    private var volumeSection: some View {
+        SettingsSection("Volume") {
+            SettingsRow(
+                "Default Volume",
                 description: "Initial volume for new apps"
             ) {
                 VolumeSlider(
                     $settings.appSettings.defaultNewAppVolume,
                     range: 0.1...1.0,
-                    width: 160
+                    width: 280
                 )
             }
-        }
-    }
-
-    // MARK: - Devices
-
-    private var devicesCard: some View {
-        SettingsCard(title: "Devices") {
-            VStack(spacing: 0) {
-                CardRow(
-                    icon: "mic",
-                    title: "Lock Input Device",
-                    description: "Prevent auto-switching when devices connect"
-                ) {
-                    Toggle("", isOn: $settings.appSettings.lockInputDevice)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .labelsHidden()
-                }
-
-                CardRowDivider()
-
-                CardRow(
-                    icon: "speaker.wave.1",
-                    title: "System Sounds",
-                    description: "Where alerts and effects play"
-                ) {
-                    SystemSoundsDevicePicker(
-                        devices: sortedOutputDevices,
-                        selectedDeviceUID: deviceVolumeMonitor.systemDeviceUID,
-                        defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
-                        isFollowingDefault: deviceVolumeMonitor.isSystemFollowingDefault,
-                        onDeviceSelected: { deviceUID in
-                            if let device = sortedOutputDevices.first(where: { $0.uid == deviceUID }) {
-                                deviceVolumeMonitor.setSystemDeviceExplicit(device.id)
-                            }
-                        },
-                        onSelectFollowDefault: {
-                            deviceVolumeMonitor.setSystemFollowDefault()
-                        }
-                    )
-                }
-
-                CardRowDivider()
-
-                CardRow(
-                    icon: "bell.and.waves.left.and.right",
-                    title: "Alert Volume",
-                    description: "Volume for alerts and notifications"
-                ) {
-                    VolumeSlider(
-                        Binding(
-                            get: { deviceVolumeMonitor.alertVolume },
-                            set: { deviceVolumeMonitor.setAlertVolume($0) }
-                        ),
-                        range: 0...1,
-                        width: 160
-                    )
-                }
-                .task {
-                    // No CoreAudio listener for alert volume — must poll via AppleScript.
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .seconds(2))
-                        deviceVolumeMonitor.refreshAlertVolume()
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Loudness
-
-    private var loudnessCard: some View {
-        SettingsCard(title: "Loudness") {
-            CardRow(
-                icon: "ear",
-                title: "Loudness Compensation",
+            SettingsRowDivider()
+            SettingsRow(
+                "Loudness Compensation",
                 description: "Boost low frequencies at low volume"
             ) {
                 Toggle("", isOn: unifiedLoudnessToggleBinding)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
+            }
+        }
+    }
+
+    // MARK: - Devices
+
+    private var devicesSection: some View {
+        SettingsSection("Devices") {
+            SettingsRow(
+                "Lock Input Device",
+                description: "Prevent auto-switching when devices connect"
+            ) {
+                Toggle("", isOn: $settings.appSettings.lockInputDevice)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "System Sounds",
+                description: "Where alerts and effects play"
+            ) {
+                SystemSoundsDevicePicker(
+                    devices: sortedOutputDevices,
+                    selectedDeviceUID: deviceVolumeMonitor.systemDeviceUID,
+                    defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
+                    isFollowingDefault: deviceVolumeMonitor.isSystemFollowingDefault,
+                    onDeviceSelected: { deviceUID in
+                        if let device = sortedOutputDevices.first(where: { $0.uid == deviceUID }) {
+                            deviceVolumeMonitor.setSystemDeviceExplicit(device.id)
+                        }
+                    },
+                    onSelectFollowDefault: {
+                        deviceVolumeMonitor.setSystemFollowDefault()
+                    }
+                )
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "Alert Volume",
+                description: "Volume for alerts and notifications"
+            ) {
+                VolumeSlider(
+                    Binding(
+                        get: { deviceVolumeMonitor.alertVolume },
+                        set: { deviceVolumeMonitor.setAlertVolume($0) }
+                    ),
+                    range: 0...1,
+                    width: 280
+                )
+            }
+            .task {
+                // No CoreAudio listener for alert volume — must poll via AppleScript.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2))
+                    deviceVolumeMonitor.refreshAlertVolume()
+                }
             }
         }
     }

@@ -23,12 +23,11 @@ struct UpdatesTab: View {
     }
 
     var body: some View {
-        VStack(spacing: 20) {
-            SettingsCard(title: "Software Updates") {
-                VStack(spacing: 0) {
-                    CardRow(
-                        icon: "arrow.down.circle",
-                        title: "Automatic updates",
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                SettingsSection("Software Updates") {
+                    SettingsRow(
+                        "Automatic updates",
                         description: "Check for new versions automatically"
                     ) {
                         Toggle("", isOn: automaticallyChecksBinding)
@@ -36,12 +35,9 @@ struct UpdatesTab: View {
                             .controlSize(.small)
                             .labelsHidden()
                     }
-
-                    CardRowDivider()
-
-                    CardRow(
-                        icon: "clock",
-                        title: "Last checked",
+                    SettingsRowDivider()
+                    SettingsRow(
+                        "Last checked",
                         description: lastCheckDescription
                     ) {
                         Button("Check Now") {
@@ -52,6 +48,10 @@ struct UpdatesTab: View {
                     }
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollIndicators(.never)
     }
 }

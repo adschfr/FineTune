@@ -15,56 +15,12 @@ struct SettingsRootView: View {
     enum Section: String, Hashable, CaseIterable, Identifiable {
         case general, audio, shortcuts, updates, about
         var id: Self { self }
-
-        var label: String {
-            switch self {
-            case .general: return "General"
-            case .audio: return "Audio"
-            case .shortcuts: return "Shortcuts"
-            case .updates: return "Updates"
-            case .about: return "About"
-            }
-        }
-
-        var icon: String {
-            switch self {
-            case .general: return "gearshape"
-            case .audio: return "speaker.wave.2"
-            case .shortcuts: return "command"
-            case .updates: return "arrow.triangle.2.circlepath"
-            case .about: return "info.circle"
-            }
-        }
     }
 
     @State private var selection: Section = .general
 
     var body: some View {
-        NavigationSplitView {
-            List(Section.allCases, selection: $selection) { section in
-                Label(section.label, systemImage: section.icon)
-                    .tag(section)
-            }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 200, max: 200)
-            .toolbar(removing: .sidebarToggle)
-        } detail: {
-            ScrollView {
-                content
-                    .padding(24)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .scrollIndicators(.never)
-        }
-        .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 720, minHeight: 540)
-        .environment(\.colorScheme, .dark)
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch selection {
-        case .general:
+        TabView(selection: $selection) {
             GeneralTab(
                 settings: settings,
                 onResetAll: {
@@ -72,13 +28,17 @@ struct SettingsRootView: View {
                     deviceVolumeMonitor.setSystemFollowDefault()
                 }
             )
-        case .audio:
+            .tabItem { Label("General", systemImage: "gearshape") }
+            .tag(Section.general)
+
             AudioTab(
                 settings: settings,
                 audioEngine: audioEngine,
                 deviceVolumeMonitor: deviceVolumeMonitor
             )
-        case .shortcuts:
+            .tabItem { Label("Audio", systemImage: "speaker.wave.2") }
+            .tag(Section.audio)
+
             ShortcutsTab(
                 settings: settings,
                 accessibility: accessibility,
@@ -86,10 +46,20 @@ struct SettingsRootView: View {
                 mediaKeyMonitor: mediaKeyMonitor,
                 shortcutsRegistry: shortcutsRegistry
             )
-        case .updates:
+            .tabItem { Label("Shortcuts", systemImage: "command") }
+            .tag(Section.shortcuts)
+
             UpdatesTab(updateManager: updateManager)
-        case .about:
+                .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
+                .tag(Section.updates)
+
             AboutTab()
+                .tabItem { Label("About", systemImage: "info.circle") }
+                .tag(Section.about)
         }
+        .frame(width: 720, height: 560)
+        .preferredColorScheme(settings.appSettings.appearance.swiftUIColorScheme)
+        .background(WindowAppearanceBridge(appearance: settings.appSettings.appearance.nsAppearance))
+        .background(WindowTitleBridge(title: "FineTune Settings"))
     }
 }

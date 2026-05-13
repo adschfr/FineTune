@@ -71,9 +71,6 @@ struct FineTuneApp: App {
                 shortcutsRegistry: shortcutsRegistry,
                 updateManager: updateManager
             )
-            .frame(minWidth: 720, minHeight: 540)
-            .background(Color(nsColor: .windowBackgroundColor))
-            .ignoresSafeArea()
         }
         FluidMenuBarExtra("FineTune", image: launchIconImage, isInserted: $showMenuBarExtra) {
             menuBarContent

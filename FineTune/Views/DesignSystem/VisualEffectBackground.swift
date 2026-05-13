@@ -56,18 +56,11 @@ extension View {
     func eqCardBackground() -> some View {
         modifier(LiftedCardBackgroundModifier())
     }
-
-    /// Applies the lifted-card background used by Settings sections.
-    /// Same modifier as `eqCardBackground()`; aliased so call sites read
-    /// clearly. Split into a separate modifier if the families diverge.
-    func settingsCardBackground() -> some View {
-        modifier(LiftedCardBackgroundModifier())
-    }
 }
 
-// MARK: - Lifted Card Background Modifier (EQ + Settings sections)
+// MARK: - Lifted Card Background Modifier (EQ panel)
 
-/// Lifted-card background used by the EQ panel and Settings sections.
+/// Lifted-card background used by the EQ panel.
 /// Light: opaque-ish white card on the popup glass with a hairline edge
 /// and a soft shadow that lifts the card off the surface. Dark: translucent
 /// white on the dark glass with a slightly stronger hairline. Tokens come

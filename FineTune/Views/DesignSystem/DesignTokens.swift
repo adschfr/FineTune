@@ -215,14 +215,6 @@ enum DesignTokens {
             dark: NSColor.white.withAlphaComponent(0.10)
         )
 
-        /// Settings cards use the same family as the EQ card. Aliased for
-        /// call-site clarity; if values diverge later, split into a
-        /// separate dynamic color.
-        static let settingsCardBackground: Color = eqCardBackground
-
-        /// Settings card border. Same family as `eqCardBorder`.
-        static let settingsCardBorder: Color = eqCardBorder
-
         /// Monochrome circular badge fill used on non-selected device rows.
         /// The selected state uses a `Color.accentColor` gradient inline in
         /// `DeviceBadge`; that does not need a token.
