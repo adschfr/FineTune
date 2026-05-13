@@ -29,14 +29,31 @@ struct WindowAppearanceBridge: NSViewRepresentable {
 /// it on `viewDidMoveToWindow`. This catches the case where the initial
 /// `updateNSView` runs before SwiftUI has parented the hosting view into a
 /// window — when the window finally arrives, we still apply the correct value.
+///
+/// When `desiredAppearance` is `nil` (System mode) we apply `NSApp.effectiveAppearance`
+/// instead of `nil`. Setting `NSWindow.appearance = nil` leaves persistent windows
+/// resolving `NSColor` against the previously-locked appearance until something
+/// kicks the window (key/main change, certain redraws), which produces a stale
+/// "labels look faded" frame after Light→System until refocus. KVO on
+/// `NSApp.effectiveAppearance` re-mirrors the live system value while we're in
+/// System mode so the window's appearance is always concrete.
 final class WindowAppearanceTrackerView: NSView {
     var desiredAppearance: NSAppearance? {
-        didSet { window?.appearance = desiredAppearance }
+        didSet { applyAppearance() }
+    }
+    private var appearanceObservation: NSKeyValueObservation?
+
+    private func applyAppearance() {
+        window?.appearance = desiredAppearance ?? NSApp.effectiveAppearance
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.appearance = desiredAppearance
+        applyAppearance()
+        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            guard let self, self.desiredAppearance == nil else { return }
+            self.applyAppearance()
+        }
     }
 }
 

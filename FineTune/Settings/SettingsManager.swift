@@ -80,11 +80,14 @@ enum AppearancePreference: String, Codable, CaseIterable, Identifiable, CustomSt
 }
 
 extension AppearancePreference {
-    /// SwiftUI color-scheme override. `nil` means "follow the environment".
-    /// Apply via `.preferredColorScheme(value)` at the root of any `NSHostingView`.
+    /// `.system` resolves concrete because `.preferredColorScheme(nil)` doesn't
+    /// re-propagate after a previously-locked value (HwS forum 23260, Apple
+    /// Forums 658818). Live system flips are picked up via `WindowAppearanceBridge`.
     var swiftUIColorScheme: ColorScheme? {
         switch self {
-        case .system: return nil
+        case .system:
+            let match = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
+            return match == .darkAqua ? .dark : .light
         case .light: return .light
         case .dark: return .dark
         }
