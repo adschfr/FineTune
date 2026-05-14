@@ -41,34 +41,42 @@ struct AboutTab: View {
 
             HStack(spacing: 8) {
                 AboutLinkChip(
+                    label: "Donate",
+                    icon: "heart.fill",
+                    hoverIcon: "heart.fill",
+                    hoverColor: .pink,
+                    url: DesignTokens.Links.support,
+                    isPrimary: true
+                )
+                AboutLinkChip(
                     label: "Star on GitHub",
                     icon: "star",
                     hoverIcon: "star.fill",
                     hoverColor: .yellow,
                     url: URL(string: "https://github.com/ronitsingh10/FineTune")!
                 )
-                AboutLinkChip(
-                    label: "Support FineTune",
-                    icon: "heart",
-                    hoverIcon: "heart.fill",
-                    hoverColor: .pink,
-                    url: DesignTokens.Links.support
-                )
-                AboutLinkChip(
-                    label: "GPL-3.0",
-                    icon: "doc.text",
-                    hoverIcon: "doc.text.fill",
-                    hoverColor: .blue,
-                    url: DesignTokens.Links.license
-                )
             }
 
-            Text("© \(yearText) Ronit Singh")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
+            footer
                 .padding(.top, 16)
                 .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 6) {
+            Button {
+                NSWorkspace.shared.open(DesignTokens.Links.license)
+            } label: {
+                Text("GPL-3.0")
+            }
+            .buttonStyle(.plain)
+
+            Text("·")
+            Text("© \(yearText) Ronit Singh")
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.tertiary)
     }
 }
