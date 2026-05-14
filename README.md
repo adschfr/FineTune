@@ -22,7 +22,7 @@ Control the volume of every app independently, boost quiet ones up to 4x, route 
 </p>
 
 <p align="center">
-  <img src="assets/screenshot-main.png" alt="FineTune showing per-app volume control with EQ and multi-device output" width="750">
+  <img src="assets/screenshot-main.png" alt="FineTune popup showing per-app volume control, multi-device output routing with picker popover, AutoEQ headphone correction, and device-level volume sliders" width="750">
 </p>
 
 ## Install
@@ -52,6 +52,14 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 - **Per-app volume boost** — 2x / 3x / 4x gain presets
 - **Pinned apps** — Keep apps visible in the menu bar even when they're not playing, so you can configure volume, EQ, and routing in advance
 - **Ignore apps** — Completely disengage FineTune from specific apps. Tears down the audio tap so the app returns to normal macOS audio
+- **Scroll-wheel volume** — Hover any slider in the popup, the HUD, or the EQ panel and scroll to adjust.
+
+### ⌨️ Keyboard
+- **Global volume hotkeys** — Bind your own keys to **App Volume Up**, **App Volume Down**, and **App Mute** from Settings → Shortcuts. The "app" is whichever is currently making sound, so volume-down while a YouTube tab plays behind a foreground Terminal turns down YouTube, not the terminal. If nothing is audible, the hotkey falls through to the frontmost app.
+- **Toggle the popup from anywhere** — Bind a hotkey to **Toggle FineTune Popup** and the menu bar opens or closes on demand, including from full-screen apps.
+- **Configurable step size** — Pick **Coarse / Normal / Fine / Extra-Fine** under Settings → Shortcuts → Volume Step. The same setting governs the F10–F12 media keys, the global hotkeys, and the popup's arrow-key navigation.
+- **Hold to ramp, auto-unmute on volume-up** — Holding App Volume Up or Down emits repeats the way macOS does for arrow keys. Volume-up while muted unmutes and sets the new level in one keystroke.
+- **Drive the popup with the keyboard** — Once the popup is open, **↑ / ↓** move between rows, **← / →** adjusts the focused row's volume (Shift = 2× step), **M** toggles mute, **Return / Space** activates, **Tab** switches between Output and Input device tabs, **Esc** closes. The focused row autoscrolls to center as you arrow through.
 
 ### 🔀 Audio Routing
 - **Multi-device output** — Route audio to multiple devices simultaneously
@@ -78,19 +86,9 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 - **Menu bar app** — Lightweight, always accessible
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
 
-## Screenshots
-
-<p align="center">
-  <img src="assets/screenshot-main.png" alt="FineTune showing per-app volume control with EQ and multi-device output" width="400">
-  <img src="assets/screenshot-edit-mode.png" alt="FineTune edit mode showing device priority, Bluetooth pairing, and app pin/ignore controls" width="400">
-</p>
-<p align="center">
-  <img src="assets/screenshot-autoeq.png" alt="FineTune AutoEQ headphone correction picker with search and favorites" width="400">
-  <img src="assets/screenshot-settings.png" alt="FineTune settings panel with Media Keys and HUD section" width="400">
-</p>
-<p align="center">
-  <img src="assets/screenshot-device-inspector.png" alt="FineTune device inspector showing sample rate, format, UID, and software-volume override, with hidden devices below" width="400">
-</p>
+### 🎨 Appearance
+- **Light or Dark theme** — Settings → General → Theme matches macOS or locks FineTune to Light or Dark. The menu bar popup, every popover, and the volume HUD switch immediately.
+- **Popup density** — Settings → General → Popup Size picks **Compact / Comfortable / Spacious** with a live tile preview. Compact fits more apps on small screens; Spacious gives bigger hit areas for trackpads.
 
 ## Documentation
 
