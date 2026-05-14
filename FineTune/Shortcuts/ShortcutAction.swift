@@ -17,7 +17,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Sendable {
         case .togglePopup: "Toggle FineTune Popup"
         case .targetAppVolumeUp: "App Volume Up"
         case .targetAppVolumeDown: "App Volume Down"
-        case .targetAppMuteToggle: "App Mute Toggle"
+        case .targetAppMuteToggle: "App Mute"
         }
     }
 
