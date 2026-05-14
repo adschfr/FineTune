@@ -14,9 +14,6 @@ final class DDCController {
     /// Set of CoreAudio AudioDeviceIDs that are backed by DDC volume control
     private(set) var ddcBackedDevices: Set<AudioDeviceID> = []
 
-    /// Whether the initial DDC probe has completed
-    private(set) var probeCompleted: Bool = false
-
     /// Cached DDC volumes for each backed device (0-100)
     private(set) var cachedVolumes: [AudioDeviceID: Int] = [:]
 
@@ -147,7 +144,6 @@ final class DDCController {
                 Task { @MainActor [weak self] in
                     self?.ddcBackedDevices = []
                     self?.services = [:]
-                    self?.probeCompleted = true
                     self?.onProbeCompleted?()
                 }
                 return
@@ -187,7 +183,6 @@ final class DDCController {
                 Task { @MainActor [weak self] in
                     self?.ddcBackedDevices = []
                     self?.services = [:]
-                    self?.probeCompleted = true
                     self?.onProbeCompleted?()
                 }
                 return
@@ -300,7 +295,6 @@ final class DDCController {
                 }
 
                 self.logger.info("DDC probe complete: \(matchedSnapshot.count) display(s) matched")
-                self.probeCompleted = true
                 self.onProbeCompleted?()
             }
         }
