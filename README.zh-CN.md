@@ -20,6 +20,9 @@
   <a href="README.md">English</a> · <strong>简体中文</strong>
 </p>
 
+> 本翻译由社区维护，可能落后于英文版本。最新信息请参考 [English README](README.md)。
+> *This translation is community-maintained and may lag the English version. See the [English README](README.md) for the most current information.*
+
 <p align="center">
   <img src="assets/screenshot-main.png" alt="FineTune 显示按 App 控制音量、EQ 与多设备输出" width="750">
 </p>
