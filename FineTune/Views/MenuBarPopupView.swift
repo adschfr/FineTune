@@ -101,10 +101,6 @@ struct MenuBarPopupView: View {
     private var popupDimensions: PopupDimensions {
         audioEngine.settingsManager.appSettings.popupSize.dimensions
     }
-    private var deviceScrollThreshold: Int { popupDimensions.deviceScrollThreshold }
-    private var deviceScrollHeight: CGFloat { popupDimensions.deviceScrollHeight }
-    private var appScrollThreshold: Int { popupDimensions.appScrollThreshold }
-    private var appScrollHeight: CGFloat { popupDimensions.appScrollHeight }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
@@ -124,7 +120,19 @@ struct MenuBarPopupView: View {
             }
             .padding(.bottom, DesignTokens.Spacing.xs)
 
-            mainContent
+            ScrollViewReader { proxy in
+                ScrollView {
+                    mainContent(scrollProxy: proxy)
+                }
+                .scrollIndicators(.never)
+                .frame(maxHeight: popupDimensions.maxContentHeight)
+                .onChange(of: selectedRow) { _, newFocus in
+                    guard let newFocus else { return }
+                    withAnimation(DesignTokens.Animation.hover) {
+                        proxy.scrollTo(newFocus, anchor: .center)
+                    }
+                }
+            }
         }
         .padding(popupDimensions.contentPadding)
         .frame(width: popupDimensions.width)
@@ -308,46 +316,56 @@ struct MenuBarPopupView: View {
     // MARK: - Main Content
 
     @ViewBuilder
-    private var mainContent: some View {
-        // Devices section (tabbed: Output / Input)
-        devicesSection
+    private func mainContent(scrollProxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            // Devices section (tabbed: Output / Input)
+            devicesSection
 
-        Divider()
-            .padding(.vertical, DesignTokens.Spacing.xs)
+            Divider()
+                .padding(.vertical, DesignTokens.Spacing.xs)
 
-        // Apps section (active + pinned inactive + hidden in edit mode)
-        appsSection
+            // Apps section (active + pinned inactive + hidden in edit mode)
+            appsSection(scrollProxy: scrollProxy)
 
-        Divider()
-            .padding(.vertical, DesignTokens.Spacing.xs)
+            Divider()
+                .padding(.vertical, DesignTokens.Spacing.xs)
 
-        // Footer: support link + quit
-        HStack {
-            Button {
-                NSWorkspace.shared.open(DesignTokens.Links.support)
-            } label: {
-                Label("Support", systemImage: isSupportHovered ? "heart.fill" : "heart")
-            }
-            .buttonStyle(.plain)
-            .font(DesignTokens.Typography.caption)
-            .foregroundStyle(isSupportHovered ? Color(nsColor: .systemPink) : DesignTokens.Colors.textTertiary)
-            .onHover { hovering in
-                withAnimation(DesignTokens.Animation.hover) {
-                    isSupportHovered = hovering
+            // Footer: support link + quit
+            HStack {
+                Button {
+                    NSWorkspace.shared.open(DesignTokens.Links.support)
+                } label: {
+                    Label("Donate", systemImage: isSupportHovered ? "heart.fill" : "heart")
                 }
-            }
-            .accessibilityLabel("Support FineTune")
-            .help("Support FineTune")
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isSupportHovered ? Color(nsColor: .systemPink) : DesignTokens.Colors.textTertiary)
+                .onHover { hovering in
+                    withAnimation(DesignTokens.Animation.hover) {
+                        isSupportHovered = hovering
+                    }
+                }
+                .accessibilityLabel("Donate to FineTune")
+                .help("Donate to FineTune")
 
-            Spacer()
+                Spacer()
 
-            Button("Quit FineTune") {
-                NSApplication.shared.terminate(nil)
+                Button {
+                    NSApplication.shared.terminate(nil)
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Quit")
+                        Text("⌘Q")
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+                .glassButtonStyle()
+                .accessibilityLabel("Quit FineTune")
+                .help("Quit FineTune (⌘Q)")
             }
-            .buttonStyle(.plain)
-            .font(DesignTokens.Typography.caption)
-            .foregroundStyle(DesignTokens.Colors.textSecondary)
-            .glassButtonStyle()
         }
     }
 
@@ -468,26 +486,7 @@ struct MenuBarPopupView: View {
 
     @ViewBuilder
     private var devicesSection: some View {
-        let devices = showingInputDevices ? sortedInputDevices : sortedDevices
-        let threshold = deviceScrollThreshold
-
-        if !isEditingDevicePriority && devices.count > threshold {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    devicesContent
-                }
-                .scrollIndicators(.never)
-                .frame(height: deviceScrollHeight)
-                .onChange(of: selectedRow) { _, newFocus in
-                    guard case .device = newFocus else { return }
-                    withAnimation(DesignTokens.Animation.hover) {
-                        proxy.scrollTo(newFocus, anchor: .center)
-                    }
-                }
-            }
-        } else {
-            devicesContent
-        }
+        devicesContent
     }
 
     private var devicesContent: some View {
@@ -719,7 +718,7 @@ struct MenuBarPopupView: View {
     }
 
     @ViewBuilder
-    private var appsSection: some View {
+    private func appsSection(scrollProxy: ScrollViewProxy) -> some View {
         HStack {
             SectionHeader(title: "Apps")
             Spacer()
@@ -739,23 +738,7 @@ struct MenuBarPopupView: View {
         } else if audioEngine.displayableApps.isEmpty {
             emptyStateView
         } else {
-            ScrollViewReader { scrollProxy in
-                if audioEngine.displayableApps.count > appScrollThreshold {
-                    ScrollView {
-                        appsContent(scrollProxy: scrollProxy)
-                    }
-                    .scrollIndicators(.never)
-                    .frame(height: appScrollHeight)
-                    .onChange(of: selectedRow) { _, newFocus in
-                        guard case .app = newFocus else { return }
-                        withAnimation(DesignTokens.Animation.hover) {
-                            scrollProxy.scrollTo(newFocus, anchor: .center)
-                        }
-                    }
-                } else {
-                    appsContent(scrollProxy: scrollProxy)
-                }
-            }
+            appsContent(scrollProxy: scrollProxy)
         }
     }
 
@@ -1452,10 +1435,16 @@ struct MenuBarPopupView: View {
             Divider()
                 .padding(.vertical, DesignTokens.Spacing.xs)
 
-            Button("Quit FineTune") {}
-                .buttonStyle(.plain)
-                .foregroundStyle(DesignTokens.Colors.textTertiary)
-                .font(DesignTokens.Typography.caption)
+            Button {} label: {
+                HStack(spacing: 6) {
+                    Text("Quit")
+                    Text("⌘Q")
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DesignTokens.Colors.textTertiary)
+            .font(DesignTokens.Typography.caption)
         }
     }
 }

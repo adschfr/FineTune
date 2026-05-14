@@ -63,21 +63,15 @@ struct MenuBarPopupSizeDimensionsTests {
         let d = MenuBarPopupSize.compact.dimensions
         #expect(d.width == 470)
         #expect(d.contentPadding == 12)
-        #expect(d.deviceScrollThreshold == 3)
-        #expect(d.deviceScrollHeight == 130)
-        #expect(d.appScrollThreshold == 4)
-        #expect(d.appScrollHeight == 180)
+        #expect(d.maxContentHeight == 560)
     }
 
-    @Test("comfortable resolves to the prior hard-coded popup numbers")
-    func comfortableDimensionsMatchLegacy() {
+    @Test("comfortable resolves to the middle preset")
+    func comfortableDimensions() {
         let d = MenuBarPopupSize.comfortable.dimensions
         #expect(d.width == 510)
         #expect(d.contentPadding == 16)
-        #expect(d.deviceScrollThreshold == 4)
-        #expect(d.deviceScrollHeight == 160)
-        #expect(d.appScrollThreshold == 5)
-        #expect(d.appScrollHeight == 220)
+        #expect(d.maxContentHeight == 660)
     }
 
     @Test("spacious resolves to the wider / roomier preset")
@@ -85,10 +79,7 @@ struct MenuBarPopupSizeDimensionsTests {
         let d = MenuBarPopupSize.spacious.dimensions
         #expect(d.width == 560)
         #expect(d.contentPadding == 20)
-        #expect(d.deviceScrollThreshold == 5)
-        #expect(d.deviceScrollHeight == 195)
-        #expect(d.appScrollThreshold == 6)
-        #expect(d.appScrollHeight == 270)
+        #expect(d.maxContentHeight == 760)
     }
 
     @Test("widths are strictly increasing across the three cases")
@@ -96,5 +87,19 @@ struct MenuBarPopupSizeDimensionsTests {
         let widths = MenuBarPopupSize.allCases.map { $0.dimensions.width }
         #expect(widths == widths.sorted())
         #expect(Set(widths).count == widths.count)
+    }
+
+    @Test("maxContentHeight is strictly increasing across the three cases")
+    func maxContentHeightMonotonic() {
+        let heights = MenuBarPopupSize.allCases.map { $0.dimensions.maxContentHeight }
+        #expect(heights == heights.sorted())
+        #expect(Set(heights).count == heights.count)
+    }
+
+    @Test("maxContentHeight fits inside a 13\" MacBook usable height (~860pt)")
+    func maxContentHeightFitsSmallestScreen() {
+        for size in MenuBarPopupSize.allCases {
+            #expect(size.dimensions.maxContentHeight <= 800)
+        }
     }
 }
