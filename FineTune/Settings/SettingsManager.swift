@@ -189,7 +189,7 @@ enum VolumeHotkeyStep: String, Codable, CaseIterable, Identifiable, CustomString
 
 // MARK: - App-Wide Settings Model
 
-struct AppSettings: Codable, Equatable {
+nonisolated struct AppSettings: Codable, Equatable {
     // General
     var launchAtLogin: Bool = false
     var menuBarIconStyle: MenuBarIconStyle = .default
