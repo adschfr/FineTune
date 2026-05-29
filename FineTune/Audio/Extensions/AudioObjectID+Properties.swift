@@ -19,7 +19,7 @@ extension AudioObjectID {
 // MARK: - Property Reading
 
 extension AudioObjectID {
-    func read<T>(
+    func read<T: BitwiseCopyable>(
         _ selector: AudioObjectPropertySelector,
         scope: AudioScope = .global,
         defaultValue: T
@@ -55,13 +55,18 @@ extension AudioObjectID {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
         }
 
-        var cfString: CFString = "" as CFString
-        size = UInt32(MemoryLayout<CFString>.size)
-        err = AudioObjectGetPropertyData(self, &address, 0, nil, &size, &cfString)
-        guard err == noErr else {
+        // CFString-returning selectors transfer +1 ownership per AudioHardwareBase.h
+        // ("The caller is responsible for releasing the returned CFObject"). Reading
+        // into an Unmanaged slot keeps that retain explicit; takeRetainedValue consumes it.
+        var unmanaged: Unmanaged<CFString>? = nil
+        size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        err = withUnsafeMutablePointer(to: &unmanaged) { ptr in
+            AudioObjectGetPropertyData(self, &address, 0, nil, &size, UnsafeMutableRawPointer(ptr))
+        }
+        guard err == noErr, let unmanaged else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
         }
-        return cfString as String
+        return unmanaged.takeRetainedValue() as String
     }
 
     func readStringWithQualifier(
@@ -106,7 +111,7 @@ extension AudioObjectID {
 // MARK: - Array Property Reading
 
 extension AudioObjectID {
-    func readArray<T>(
+    func readArray<T: BitwiseCopyable>(
         _ selector: AudioObjectPropertySelector,
         scope: AudioScope = .global,
         defaultValue: T
