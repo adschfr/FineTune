@@ -4,7 +4,7 @@ import AudioToolbox
 
 // MARK: - Device Classification
 
-extension AudioDeviceID {
+nonisolated extension AudioDeviceID {
     func isAggregateDevice() -> Bool {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioObjectPropertyClass,
