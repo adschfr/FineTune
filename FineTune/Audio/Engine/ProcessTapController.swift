@@ -396,7 +396,7 @@ final class ProcessTapController: ProcessTapControlling {
         return (mixdownTap, mixdownTapID)
     }
 
-    func activate() throws {
+    func activate(initial: TapInitialState) throws {
         guard !activated else { return }
 
         logger.debug("Activating tap for \(self.app.name)")
@@ -460,8 +460,21 @@ final class ProcessTapController: ProcessTapControlling {
 
         eqProcessor = EQProcessor(sampleRate: sampleRate)
         autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
-        loudnessEqualizerProcessor = LoudnessEqualizer(settings: LoudnessEqualizerSettings(), sampleRate: Float(sampleRate))
+        loudnessEqualizerProcessor = LoudnessEqualizer(settings: initial.loudnessEqualizerSettings, sampleRate: Float(sampleRate))
         loudnessCompensator = LoudnessCompensator(sampleRate: sampleRate)
+
+        // Apply persisted state to fresh processors before AudioDeviceStart so the
+        // first IOProc callback sees correct EQ/AutoEQ/Loudness coefficients.
+        eqProcessor?.updateSettings(initial.eqSettings)
+        autoEQProcessor?.setPreampEnabled(initial.autoEQPreampEnabled)
+        if let profile = initial.autoEQProfile {
+            autoEQProcessor?.updateProfile(profile)
+        }
+        loudnessCompensator?.setEnabled(initial.loudnessCompensationEnabled)
+        if initial.loudnessCompensationEnabled {
+            loudnessCompensator?.updateForVolume(initial.loudnessVolume)
+        }
+        _lastLoudnessVolume = initial.loudnessVolume
 
         // Create IO proc with gain processing
         nextCallbackID += 1
@@ -483,13 +496,14 @@ final class ProcessTapController: ProcessTapControlling {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to create IO proc: \(err)"])
         }
 
+        // Seed the ramp target so the first IOProc tick is a no-op slide.
+        _primaryCurrentVolume = _volume
+
         err = AudioDeviceStart(primaryResources.aggregateDeviceID, primaryResources.deviceProcID)
         guard err == noErr else {
             cleanupPartialActivation()
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to start device: \(err)"])
         }
-
-        _primaryCurrentVolume = _volume
 
         // Track current devices for external queries
         currentDeviceUIDs = targetDeviceUIDs

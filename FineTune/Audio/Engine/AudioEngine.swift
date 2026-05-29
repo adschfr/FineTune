@@ -836,7 +836,26 @@ final class AudioEngine {
         }
     }
 
-    /// Apply the correct AutoEQ profile to a single tap based on its current device.
+    /// Synchronous in-memory AutoEQ profile lookup. nil = not yet cached.
+    private func autoEQProfileForActivation(deviceUID: String) -> AutoEQProfile? {
+        guard let device = deviceMonitor.device(for: deviceUID), device.supportsAutoEQ else { return nil }
+        guard let selection = settingsManager.getAutoEQSelection(for: deviceUID), selection.isEnabled else { return nil }
+        return autoEQProfileManager.profile(for: selection.profileID)
+    }
+
+    private func tapInitialState(forApp app: AudioApp, primaryDeviceUID: String, deviceVolume: Float) -> TapInitialState {
+        var loudnessEqSettings = LoudnessEqualizerSettings()
+        loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
+        return TapInitialState(
+            eqSettings: settingsManager.getEQSettings(for: app.persistenceIdentifier),
+            autoEQProfile: autoEQProfileForActivation(deviceUID: primaryDeviceUID),
+            autoEQPreampEnabled: settingsManager.autoEQPreampEnabled,
+            loudnessVolume: deviceVolume * volumeState.getVolume(for: app.id),
+            loudnessCompensationEnabled: settingsManager.appSettings.loudnessCompensationEnabled,
+            loudnessEqualizerSettings: loudnessEqSettings
+        )
+    }
+
     /// Skips AutoEQ entirely for devices that don't support it (speakers, HDMI, etc.).
     /// If the profile isn't loaded yet, triggers an async fetch and applies when ready.
     private func applyAutoEQToTap(_ tap: any ProcessTapControlling) {
@@ -1060,21 +1079,18 @@ final class AudioEngine {
             let tap = try tapFactory(app, deviceUIDs, preferredTapSourceUID)
             applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
 
-            try tap.activate()
+            let initial = tapInitialState(
+                forApp: app,
+                primaryDeviceUID: deviceUIDs[0],
+                deviceVolume: tap.currentDeviceVolume
+            )
+            try tap.activate(initial: initial)
             taps[app.id] = tap
 
-            // Load and apply persisted EQ settings
-            let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
-            tap.updateEQSettings(eqSettings)
-            tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)
-            applyAutoEQToTap(tap)
-            var loudnessEqSettings = LoudnessEqualizerSettings()
-            loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
-            tap.updateLoudnessEqualization(loudnessEqSettings)
-            tap.updateLoudnessCompensation(
-                volume: effectiveLoudnessVolume(for: tap),
-                enabled: settingsManager.appSettings.loudnessCompensationEnabled
-            )
+            // Catalog AutoEQ may not have been cached yet — kick off async resolve.
+            if initial.autoEQProfile == nil {
+                applyAutoEQToTap(tap)
+            }
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
@@ -1084,6 +1100,23 @@ final class AudioEngine {
 
     func applyPersistedSettings() {
         guard permission.status == .authorized else { return }
+
+        // Warm the AutoEQ cache for every (app, device) selection so that subsequent
+        // tap activations can apply correction synchronously inside activate(initial:)
+        // instead of falling back to the async resolve path. Imported profiles are
+        // already loaded by AutoEQProfileManager.init.
+        let selectedProfileIDs: Set<String> = Set(apps.compactMap { app -> String? in
+            let deviceUID = appDeviceRouting[app.id] ?? deviceVolumeMonitor.defaultDeviceUID
+            guard let deviceUID, let selection = settingsManager.getAutoEQSelection(for: deviceUID) else { return nil }
+            return selection.isEnabled ? selection.profileID : nil
+        })
+        let manager = autoEQProfileManager
+        Task { @MainActor in
+            for id in selectedProfileIDs where manager.profile(for: id) == nil {
+                _ = await manager.resolveProfile(for: id)
+            }
+        }
+
         for app in apps {
             guard !appliedPIDs.contains(app.id) else { continue }
             guard !settingsManager.isIgnored(app.persistenceIdentifier) else { continue }
@@ -1207,21 +1240,19 @@ final class AudioEngine {
             let tap = try tapFactory(app, [deviceUID], preferredTapSourceUID)
             applyTapOutputState(to: tap, for: app.id, deviceUIDs: [deviceUID])
 
-            try tap.activate()
+            let initial = tapInitialState(
+                forApp: app,
+                primaryDeviceUID: deviceUID,
+                deviceVolume: tap.currentDeviceVolume
+            )
+            try tap.activate(initial: initial)
             taps[app.id] = tap
 
-            // Load and apply persisted EQ settings
-            let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
-            tap.updateEQSettings(eqSettings)
-            tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)
-            applyAutoEQToTap(tap)
-            var loudnessEqSettings = LoudnessEqualizerSettings()
-            loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
-            tap.updateLoudnessEqualization(loudnessEqSettings)
-            tap.updateLoudnessCompensation(
-                volume: effectiveLoudnessVolume(for: tap),
-                enabled: settingsManager.appSettings.loudnessCompensationEnabled
-            )
+            // Catalog AutoEQ may not have been cached yet — kick off async resolve.
+            // Imported profiles always hit the synchronous path above.
+            if initial.autoEQProfile == nil {
+                applyAutoEQToTap(tap)
+            }
 
             logger.debug("Created tap for \(app.name)")
         } catch {
