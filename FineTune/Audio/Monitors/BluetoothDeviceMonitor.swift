@@ -54,10 +54,9 @@ final class BluetoothDeviceMonitor {
     private static let a2dpSinkUUID = IOBluetoothSDPUUID(uuid16: 0x110B)!
     private static let hfpUUID = IOBluetoothSDPUUID(uuid16: 0x111E)!
 
-    /// Observers for Bluetooth power state change notifications.
-    /// nonisolated(unsafe) so deinit can remove them.
-    private nonisolated(unsafe) var powerOnObserver: NSObjectProtocol?
-    private nonisolated(unsafe) var powerOffObserver: NSObjectProtocol?
+    // Read from the nonisolated deinit to call removeObserver.
+    @ObservationIgnored private nonisolated(unsafe) var powerOnObserver: NSObjectProtocol?
+    @ObservationIgnored private nonisolated(unsafe) var powerOffObserver: NSObjectProtocol?
 
     // MARK: - Lifecycle
 
@@ -72,7 +71,9 @@ final class BluetoothDeviceMonitor {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.refresh()
+            MainActor.assumeIsolated {
+                self?.refresh()
+            }
         }
 
         powerOffObserver = NotificationCenter.default.addObserver(
@@ -80,7 +81,9 @@ final class BluetoothDeviceMonitor {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.refresh()
+            MainActor.assumeIsolated {
+                self?.refresh()
+            }
         }
 
         refresh()
