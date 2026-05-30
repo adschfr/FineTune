@@ -110,7 +110,7 @@ final class ProcessTapController: ProcessTapControlling {
     /// Sample count for the 200 ms silence-hold before re-arming (recomputed in activate).
     private nonisolated(unsafe) var _outputGateSilenceHoldSamples: Int32 = 9600
     /// Input below this peak magnitude is treated as silence (≈ -80 dBFS).
-    private static let outputGateSilenceThreshold: Float = 0.0001
+    nonisolated private static let outputGateSilenceThreshold: Float = 0.0001
 
     // MARK: - Non-RT State (modified only from main thread)
 
@@ -1104,7 +1104,7 @@ final class ProcessTapController: ProcessTapControlling {
     /// Transitions: armed→ramping on first non-silent buffer; ramping→open at progress≥1.
     /// open→armed after `silenceHoldSamples` of sustained silence (re-arm next wake).
     @inline(__always)
-    static func advanceOutputGate(
+    nonisolated static func advanceOutputGate(
         phase: inout UInt8,
         progress: inout Float,
         silentSamples: inout Int32,
@@ -1147,7 +1147,7 @@ final class ProcessTapController: ProcessTapControlling {
     }
 
     @inline(__always)
-    static func processMappedBuffers(
+    nonisolated static func processMappedBuffers(
         inputBuffers: UnsafeMutableAudioBufferListPointer,
         outputBuffers: UnsafeMutableAudioBufferListPointer,
         targetVol: Float,
@@ -1320,7 +1320,7 @@ final class ProcessTapController: ProcessTapControlling {
     /// - Use Objective-C messaging
     /// - Call print/logging functions
     /// - Perform file/network I/O
-    private func processAudioCallback(
+    nonisolated private func processAudioCallback(
         _ inputBufferList: UnsafePointer<AudioBufferList>,
         to outputBufferList: UnsafeMutablePointer<AudioBufferList>,
         callbackID: UInt32
