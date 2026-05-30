@@ -1,11 +1,12 @@
 /// Abstraction over process tap controllers for testability.
 ///
-/// **Threading:** Intentionally NOT `@MainActor`. Concrete implementations straddle
-/// the main thread (property access from AudioEngine) and the CoreAudio HAL I/O thread
-/// (audio processing callbacks). Thread safety for mutable properties (`volume`, `isMuted`,
-/// `currentDeviceVolume`, `isDeviceMuted`) is achieved via `nonisolated(unsafe)` atomic
-/// field access on the concrete type, not actor isolation.
-protocol ProcessTapControlling: AnyObject {
+/// **Threading:** The protocol surface is `@MainActor` — AudioEngine and tests
+/// interact with controllers from main. The concrete class straddles main and the
+/// CoreAudio HAL I/O thread, but the audio callback never goes through this
+/// protocol; it reads `nonisolated(unsafe)` atomic fields directly on the concrete
+/// type via a `void *` userdata pointer.
+@MainActor
+protocol ProcessTapControlling: AnyObject, Sendable {
     var app: AudioApp { get }
     var volume: Float { get set }
     var isMuted: Bool { get set }

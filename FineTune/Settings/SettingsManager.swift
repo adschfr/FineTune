@@ -83,6 +83,7 @@ extension AppearancePreference {
     /// `.system` resolves concrete because `.preferredColorScheme(nil)` doesn't
     /// re-propagate after a previously-locked value (HwS forum 23260, Apple
     /// Forums 658818). Live system flips are picked up via `WindowAppearanceBridge`.
+    @MainActor
     var swiftUIColorScheme: ColorScheme? {
         switch self {
         case .system:

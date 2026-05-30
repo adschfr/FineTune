@@ -1029,21 +1029,21 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     private func startObservingDeviceList() {
         guard !isObservingDeviceList else { return }
         isObservingDeviceList = true
+        subscribeOutputDeviceListObservation()
+    }
 
-        func observe() {
-            guard isObservingDeviceList else { return }
-            withObservationTracking {
-                _ = self.deviceMonitor.outputDevices
-            } onChange: { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self, self.isObservingDeviceList else { return }
-                    self.logger.debug("Device list changed, refreshing volume listeners")
-                    self.refreshDeviceListeners()
-                    observe()
-                }
+    private func subscribeOutputDeviceListObservation() {
+        guard isObservingDeviceList else { return }
+        withObservationTracking {
+            _ = self.deviceMonitor.outputDevices
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.isObservingDeviceList else { return }
+                self.logger.debug("Device list changed, refreshing volume listeners")
+                self.refreshDeviceListeners()
+                self.subscribeOutputDeviceListObservation()
             }
         }
-        observe()
     }
 
     // MARK: - Input Device Private Methods
@@ -1223,21 +1223,21 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     private func startObservingInputDeviceList() {
         guard !isObservingInputDeviceList else { return }
         isObservingInputDeviceList = true
+        subscribeInputDeviceListObservation()
+    }
 
-        func observe() {
-            guard isObservingInputDeviceList else { return }
-            withObservationTracking {
-                _ = self.deviceMonitor.inputDevices
-            } onChange: { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self, self.isObservingInputDeviceList else { return }
-                    self.logger.debug("Input device list changed, refreshing input volume listeners")
-                    self.refreshInputDeviceListeners()
-                    observe()
-                }
+    private func subscribeInputDeviceListObservation() {
+        guard isObservingInputDeviceList else { return }
+        withObservationTracking {
+            _ = self.deviceMonitor.inputDevices
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.isObservingInputDeviceList else { return }
+                self.logger.debug("Input device list changed, refreshing input volume listeners")
+                self.refreshInputDeviceListeners()
+                self.subscribeInputDeviceListObservation()
             }
         }
-        observe()
     }
 
     // MARK: - Bluetooth Confirmation Tasks

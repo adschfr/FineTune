@@ -61,7 +61,7 @@ final class MediaKeyMonitor {
         subscribeToWorkspaceLifecycle()
     }
 
-    deinit {
+    isolated deinit {
         // C callback holds an unretained pointer to self; runloop source must not outlive us.
         if let tap = tap {
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -134,7 +134,7 @@ final class MediaKeyMonitor {
     /// Re-enable on wake/session-activate; disable on sleep/deactivate.
     private func subscribeToWorkspaceLifecycle() {
         let nc = NSWorkspace.shared.notificationCenter
-        func add(_ name: Notification.Name, _ handler: @escaping () -> Void) {
+        func add(_ name: Notification.Name, _ handler: @escaping @MainActor () -> Void) {
             let token = nc.addObserver(forName: name, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { handler() }
             }
@@ -384,8 +384,13 @@ private let mediaKeyTapCallback: CGEventTapCallBack = { _, type, event, userInfo
         return Unmanaged.passUnretained(event)
     }
 
+    // CGEvent is a CF type without Swift's Sendable conformance, so wrap it for
+    // the synchronous hop into MainActor — assumeIsolated runs inline on the
+    // current (main) thread, no real cross-actor send happens.
+    struct EventBox: @unchecked Sendable { let event: CGEvent }
+    let box = EventBox(event: event)
     let shouldSwallow = MainActor.assumeIsolated {
-        monitor.processSystemDefined(event)
+        monitor.processSystemDefined(box.event)
     }
     return shouldSwallow ? nil : Unmanaged.passUnretained(event)
 }
