@@ -498,7 +498,7 @@ final class ProcessTapController: ProcessTapControlling {
         nextCallbackID += 1
         _primaryCallbackID = nextCallbackID
         let activateCallbackID = nextCallbackID
-        err = AudioDeviceCreateIOProcIDWithBlock(&primaryResources.deviceProcID, primaryResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
+        err = AudioDeviceCreateIOProcIDWithBlock(&primaryResources.deviceProcID, primaryResources.aggregateDeviceID, queue) { @Sendable [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else {
                 // Zero output to prevent garbage audio if controller is deallocated
                 let outputs = UnsafeMutableAudioBufferListPointer(outOutputData)
@@ -873,7 +873,7 @@ final class ProcessTapController: ProcessTapControlling {
         nextCallbackID += 1
         _secondaryCallbackID = nextCallbackID
         let secondaryCallbackID = nextCallbackID
-        err = AudioDeviceCreateIOProcIDWithBlock(&secondaryResources.deviceProcID, secondaryResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
+        err = AudioDeviceCreateIOProcIDWithBlock(&secondaryResources.deviceProcID, secondaryResources.aggregateDeviceID, queue) { @Sendable [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else {
                 // Zero output to prevent garbage audio if controller is deallocated
                 let outputs = UnsafeMutableAudioBufferListPointer(outOutputData)
@@ -1046,7 +1046,7 @@ final class ProcessTapController: ProcessTapControlling {
         nextCallbackID += 1
         _primaryCallbackID = nextCallbackID
         let switchCallbackID = nextCallbackID
-        err = AudioDeviceCreateIOProcIDWithBlock(&newResources.deviceProcID, newResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
+        err = AudioDeviceCreateIOProcIDWithBlock(&newResources.deviceProcID, newResources.aggregateDeviceID, queue) { @Sendable [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else {
                 // Zero output to prevent garbage audio if controller is deallocated
                 let outputs = UnsafeMutableAudioBufferListPointer(outOutputData)
