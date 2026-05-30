@@ -702,7 +702,7 @@ final class ProcessTapController: ProcessTapControlling {
         _invalidating = false
     }
 
-    deinit {
+    isolated deinit {
         invalidate()
     }
 
