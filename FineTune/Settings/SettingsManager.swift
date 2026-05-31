@@ -2,7 +2,6 @@
 import Foundation
 import os
 import ServiceManagement
-import SwiftUI
 import AppKit
 
 // MARK: - Pinned App Info
@@ -80,20 +79,6 @@ enum AppearancePreference: String, Codable, CaseIterable, Identifiable, CustomSt
 }
 
 extension AppearancePreference {
-    /// `.system` resolves concrete because `.preferredColorScheme(nil)` doesn't
-    /// re-propagate after a previously-locked value (HwS forum 23260, Apple
-    /// Forums 658818). Live system flips are picked up via `WindowAppearanceBridge`.
-    @MainActor
-    var swiftUIColorScheme: ColorScheme? {
-        switch self {
-        case .system:
-            let match = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
-            return match == .darkAqua ? .dark : .light
-        case .light: return .light
-        case .dark: return .dark
-        }
-    }
-
     /// AppKit appearance override. `nil` means "inherit from window or app".
     /// Apply via `nsView.window?.appearance = value` for any `NSWindow`/`NSPanel`
     /// the app hosts (popup, popover, HUD).
