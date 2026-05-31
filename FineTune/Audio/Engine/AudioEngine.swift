@@ -15,6 +15,7 @@ final class AudioEngine {
     let settingsManager: SettingsManager
     let autoEQProfileManager: AutoEQProfileManager
     let permission: AudioRecordingPermission
+    let appListCoordinator: AppListCoordinator
 
     #if !APP_STORE
     let ddcController: DDCController
@@ -184,6 +185,7 @@ final class AudioEngine {
         self.permission = permission
         let manager = settingsManager
         self.settingsManager = manager
+        self.appListCoordinator = AppListCoordinator(settingsManager: manager)
         self.autoEQProfileManager = autoEQProfileManager
         self.volumeState = VolumeState(settingsManager: manager)
         self.isAliveCheck = isAlive ?? { $0.isDeviceAlive() }
@@ -404,16 +406,16 @@ final class AudioEngine {
     /// Pinned apps appear first (sorted alphabetically), then unpinned active apps (sorted alphabetically).
     var displayableApps: [DisplayableApp] {
         let activeApps = apps
-            .filter { !settingsManager.isIgnored($0.persistenceIdentifier) }
+            .filter { !appListCoordinator.isIgnored(identifier: $0.persistenceIdentifier) }
         let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
 
         // Get pinned apps that are not currently active
-        let pinnedInactiveInfos = settingsManager.getPinnedAppInfo()
+        let pinnedInactiveInfos = appListCoordinator.pinnedAppInfo()
             .filter { !activeIdentifiers.contains($0.persistenceIdentifier) }
 
         // Pinned active apps (sorted alphabetically)
         let pinnedActive = activeApps
-            .filter { settingsManager.isPinned($0.persistenceIdentifier) }
+            .filter { appListCoordinator.isPinned(identifier: $0.persistenceIdentifier) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             .map { DisplayableApp.active($0) }
 
@@ -424,7 +426,7 @@ final class AudioEngine {
 
         // Unpinned active apps (sorted alphabetically)
         let unpinnedActive = activeApps
-            .filter { !settingsManager.isPinned($0.persistenceIdentifier) }
+            .filter { !appListCoordinator.isPinned(identifier: $0.persistenceIdentifier) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             .map { DisplayableApp.active($0) }
 
@@ -435,41 +437,31 @@ final class AudioEngine {
 
     /// Pin an active app so it remains visible when inactive.
     func pinApp(_ app: AudioApp) {
-        let info = PinnedAppInfo(
-            persistenceIdentifier: app.persistenceIdentifier,
-            displayName: app.name,
-            bundleID: app.bundleID
-        )
-        settingsManager.pinApp(app.persistenceIdentifier, info: info)
+        appListCoordinator.pinApp(app)
     }
 
     /// Unpin an app by its persistence identifier.
     func unpinApp(_ identifier: String) {
-        settingsManager.unpinApp(identifier)
+        appListCoordinator.unpinApp(identifier)
     }
 
     /// Check if an app is pinned.
     func isPinned(_ app: AudioApp) -> Bool {
-        settingsManager.isPinned(app.persistenceIdentifier)
+        appListCoordinator.isPinned(app)
     }
 
     /// Check if an identifier is pinned (for inactive apps).
     func isPinned(identifier: String) -> Bool {
-        settingsManager.isPinned(identifier)
+        appListCoordinator.isPinned(identifier: identifier)
     }
 
     // MARK: - Ignored Apps
 
-    /// Hide an active app so FineTune ignores it entirely.
+    /// Hide an active app so FineTune ignores it entirely. Persists the ignore,
+    /// then tears down the live tap so audio returns to natural volume.
     func ignoreApp(_ app: AudioApp) {
-        let info = IgnoredAppInfo(
-            persistenceIdentifier: app.persistenceIdentifier,
-            displayName: app.name,
-            bundleID: app.bundleID
-        )
-        settingsManager.ignoreApp(app.persistenceIdentifier, info: info)
+        appListCoordinator.recordIgnore(app)
 
-        // Tear down the live tap so audio returns to natural volume
         if let tap = taps.removeValue(forKey: app.id) {
             tap.invalidate()
         }
@@ -481,92 +473,75 @@ final class AudioEngine {
     /// Unhide an app by its persistence identifier.
     /// Immediately creates a tap if the app is currently running.
     func unignoreApp(_ identifier: String) {
-        settingsManager.unignoreApp(identifier)
+        appListCoordinator.clearIgnore(identifier)
         applyPersistedSettings()
     }
 
     /// Check if an identifier is hidden.
     func isIgnored(identifier: String) -> Bool {
-        settingsManager.isIgnored(identifier)
+        appListCoordinator.isIgnored(identifier: identifier)
     }
 
     // MARK: - Inactive App Settings (by persistence identifier)
 
-    /// Get volume for an inactive app by persistence identifier.
     func getVolumeForInactive(identifier: String) -> Float {
-        settingsManager.getVolume(for: identifier) ?? 1.0
+        appListCoordinator.getVolumeForInactive(identifier: identifier)
     }
 
-    /// Set volume for an inactive app by persistence identifier.
     func setVolumeForInactive(identifier: String, to volume: Float) {
-        settingsManager.setVolume(for: identifier, to: volume)
+        appListCoordinator.setVolumeForInactive(identifier: identifier, to: volume)
     }
 
     func getBoostForInactive(identifier: String) -> BoostLevel {
-        settingsManager.getBoost(for: identifier) ?? .x1
+        appListCoordinator.getBoostForInactive(identifier: identifier)
     }
 
     func setBoostForInactive(identifier: String, to boost: BoostLevel) {
-        settingsManager.setBoost(for: identifier, to: boost)
+        appListCoordinator.setBoostForInactive(identifier: identifier, to: boost)
     }
 
-    /// Get mute state for an inactive app by persistence identifier.
     func getMuteForInactive(identifier: String) -> Bool {
-        settingsManager.getMute(for: identifier) ?? false
+        appListCoordinator.getMuteForInactive(identifier: identifier)
     }
 
-    /// Set mute state for an inactive app by persistence identifier.
     func setMuteForInactive(identifier: String, to muted: Bool) {
-        settingsManager.setMute(for: identifier, to: muted)
+        appListCoordinator.setMuteForInactive(identifier: identifier, to: muted)
     }
 
-    /// Get EQ settings for an inactive app by persistence identifier.
     func getEQSettingsForInactive(identifier: String) -> EQSettings {
-        settingsManager.getEQSettings(for: identifier)
+        appListCoordinator.getEQSettingsForInactive(identifier: identifier)
     }
 
-    /// Set EQ settings for an inactive app by persistence identifier.
     func setEQSettingsForInactive(_ settings: EQSettings, identifier: String) {
-        settingsManager.setEQSettings(settings, for: identifier)
+        appListCoordinator.setEQSettingsForInactive(settings, identifier: identifier)
     }
 
-    /// Get device routing for an inactive app by persistence identifier.
     func getDeviceRoutingForInactive(identifier: String) -> String? {
-        settingsManager.getDeviceRouting(for: identifier)
+        appListCoordinator.getDeviceRoutingForInactive(identifier: identifier)
     }
 
-    /// Set device routing for an inactive app by persistence identifier.
     func setDeviceRoutingForInactive(identifier: String, deviceUID: String?) {
-        if let deviceUID = deviceUID {
-            settingsManager.setDeviceRouting(for: identifier, deviceUID: deviceUID)
-        } else {
-            settingsManager.setFollowDefault(for: identifier)
-        }
+        appListCoordinator.setDeviceRoutingForInactive(identifier: identifier, deviceUID: deviceUID)
     }
 
-    /// Check if an inactive app follows system default device.
     func isFollowingDefaultForInactive(identifier: String) -> Bool {
-        settingsManager.isFollowingDefault(for: identifier)
+        appListCoordinator.isFollowingDefaultForInactive(identifier: identifier)
     }
 
-    /// Get device selection mode for an inactive app.
     func getDeviceSelectionModeForInactive(identifier: String) -> DeviceSelectionMode {
-        settingsManager.getDeviceSelectionMode(for: identifier) ?? .single
+        appListCoordinator.getDeviceSelectionModeForInactive(identifier: identifier)
     }
 
-    /// Set device selection mode for an inactive app.
     func setDeviceSelectionModeForInactive(identifier: String, to mode: DeviceSelectionMode) {
-        settingsManager.setDeviceSelectionMode(for: identifier, to: mode)
+        appListCoordinator.setDeviceSelectionModeForInactive(identifier: identifier, to: mode)
     }
 
-    /// Get selected device UIDs for an inactive app (multi-mode).
     func getSelectedDeviceUIDsForInactive(identifier: String) -> Set<String> {
-        settingsManager.getSelectedDeviceUIDs(for: identifier) ?? []
+        appListCoordinator.getSelectedDeviceUIDsForInactive(identifier: identifier)
     }
 
-    /// Set selected device UIDs for an inactive app (multi-mode).
     func setSelectedDeviceUIDsForInactive(identifier: String, to uids: Set<String>) {
-        settingsManager.setSelectedDeviceUIDs(for: identifier, to: uids)
+        appListCoordinator.setSelectedDeviceUIDsForInactive(identifier: identifier, to: uids)
     }
 
     /// Audio levels for all active apps (for VU meter visualization)
