@@ -5,7 +5,7 @@ import os
 
 /// Owns the on-screen volume HUD panel and its auto-hide timing.
 @MainActor
-final class HUDWindowController {
+final class HUDWindowController: MediaKeyHUDPresenting {
     private let settingsManager: SettingsManager
     private let mediaKeyStatus: MediaKeyStatus
     private let popupVisibility: PopupVisibilityService

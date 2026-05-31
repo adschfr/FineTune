@@ -4,6 +4,20 @@ import AudioToolbox
 import CoreGraphics
 import os
 
+/// View-layer collaborators MediaKeyMonitor drives. Abstracting them keeps the audio
+/// layer free of concrete view types (HUDWindowController, MenuBarIconCoordinator);
+/// the view layer supplies the conformances.
+@MainActor
+protocol MediaKeyHUDPresenting: AnyObject {
+    func show(sliderFraction: Double, mute: Bool, deviceName: String)
+    func swallowObserved()
+}
+
+@MainActor
+protocol MediaKeyIconFlashing: AnyObject {
+    func flashDevice()
+}
+
 /// Intercepts F10/F11/F12 via a `CGEventTap`, swallows them so the native HUD
 /// does not double-fire, and drives the default output device.
 @MainActor
@@ -14,7 +28,7 @@ final class MediaKeyMonitor {
     private let audioEngine: AudioEngine
     private let settingsManager: SettingsManager
     private let accessibility: any AccessibilityTrustProviding
-    private let hudController: HUDWindowController
+    private let hudController: MediaKeyHUDPresenting
     private let popupVisibility: PopupVisibilityService
     private let mediaKeyStatus: MediaKeyStatus
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MediaKeyMonitor")
@@ -40,14 +54,14 @@ final class MediaKeyMonitor {
 
     /// Optional coordinator notified on every volume/mute key event so the menu bar icon
     /// can flash the current device's transport symbol. Wired by FineTuneApp after init.
-    var iconCoordinator: MenuBarIconCoordinator?
+    var iconCoordinator: MediaKeyIconFlashing?
 
     init(
         decoder: any MediaKeyEventDecoding,
         audioEngine: AudioEngine,
         settingsManager: SettingsManager,
         accessibility: any AccessibilityTrustProviding,
-        hudController: HUDWindowController,
+        hudController: MediaKeyHUDPresenting,
         popupVisibility: PopupVisibilityService,
         mediaKeyStatus: MediaKeyStatus
     ) {

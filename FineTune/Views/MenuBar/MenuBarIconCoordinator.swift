@@ -10,7 +10,7 @@ import Observation
 import os
 
 @MainActor
-final class MenuBarIconCoordinator {
+final class MenuBarIconCoordinator: MediaKeyIconFlashing {
     private let deviceVolumeMonitor: DeviceVolumeMonitor
     private let settings: SettingsManager
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MenuBarIconCoordinator")
