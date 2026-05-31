@@ -171,9 +171,9 @@ final class AudioEngine {
 
 
     init(
-        permission: AudioRecordingPermission? = nil,
-        settingsManager: SettingsManager? = nil,
-        autoEQProfileManager: AutoEQProfileManager? = nil,
+        permission: AudioRecordingPermission,
+        settingsManager: SettingsManager,
+        autoEQProfileManager: AutoEQProfileManager,
         deviceProvider: (any AudioDeviceProviding)? = nil,
         processMonitor: (any AudioProcessMonitoring)? = nil,
         deviceVolumeMonitor: (any DeviceVolumeProviding)? = nil,
@@ -181,10 +181,10 @@ final class AudioEngine {
         isAlive: ((AudioDeviceID) -> Bool)? = nil,
         startMonitorsAutomatically: Bool = true
     ) {
-        self.permission = permission ?? AudioRecordingPermission()
-        let manager = settingsManager ?? SettingsManager()
+        self.permission = permission
+        let manager = settingsManager
         self.settingsManager = manager
-        self.autoEQProfileManager = autoEQProfileManager ?? AutoEQProfileManager()
+        self.autoEQProfileManager = autoEQProfileManager
         self.volumeState = VolumeState(settingsManager: manager)
         self.isAliveCheck = isAlive ?? { $0.isDeviceAlive() }
 
@@ -288,7 +288,7 @@ final class AudioEngine {
         }
 
         // Start process monitor when permission is granted
-        if startMonitorsAutomatically && permission?.status != .authorized {
+        if startMonitorsAutomatically && permission.status != .authorized {
             observePermissionGranted()
         }
     }
