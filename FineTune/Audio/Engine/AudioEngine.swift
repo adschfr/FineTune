@@ -362,6 +362,11 @@ final class AudioEngine {
             realMonitor.inputPriorityOrder = { [weak self] in
                 self?.settingsManager.inputDevicePriorityOrder ?? []
             }
+            realMonitor.onBTDeviceSampleRateChanged = { [weak self] uid, newRate in
+                Task { @MainActor [weak self] in
+                    await self?.handleBTDeviceSampleRateChanged(uid: uid, newRate: newRate)
+                }
+            }
         }
 
         deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
@@ -1972,6 +1977,23 @@ final class AudioEngine {
         // Restore mute state
         if let muted = volumeState.loadSavedMute(for: pid, identifier: app.persistenceIdentifier), muted {
             taps[pid]?.isMuted = true
+        }
+    }
+
+    /// Recreates the aggregate at the device's new rate for every tap on a BT output that changed
+    /// sample rate (A2DP↔SCO), so each tap's IOProc re-rates to match. Falls back to a full tap
+    /// recreate if the in-controller recreation throws.
+    private func handleBTDeviceSampleRateChanged(uid: String, newRate: Double) async {
+        logger.info("[RATE] BT output \(uid, privacy: .public) → \(newRate, format: .fixed(precision: 0)) Hz — recreating affected taps (clean dip)")
+        let affected = taps.filter { $0.value.currentDeviceUIDs.contains(uid) }
+        for (pid, tap) in affected {
+            do {
+                logger.info("[RATE] Recreating tap for PID \(pid)")
+                try await tap.recreateForOutputRateChange()
+            } catch {
+                logger.error("[RATE] Recreate failed for PID \(pid): \(error.localizedDescription) — falling back to full recreate")
+                await recreateTap(for: pid)
+            }
         }
     }
 

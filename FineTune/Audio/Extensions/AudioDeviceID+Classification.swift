@@ -22,6 +22,11 @@ nonisolated extension AudioDeviceID {
         readTransportType() == .virtual
     }
 
+    func isBluetoothDevice() -> Bool {
+        let t = readTransportType()
+        return t == .bluetooth || t == .bluetoothLE
+    }
+
     func isHidden() -> Bool {
         (try? readBool(kAudioDevicePropertyIsHidden)) ?? false
     }

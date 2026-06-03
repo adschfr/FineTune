@@ -308,6 +308,14 @@ final class ProcessTapController: ProcessTapControlling {
 
         let clockDeviceUID = outputUIDs[0]  // Primary = clock source
 
+        // Sub-tap drift comp must be OFF when the tap source and output share a clock domain:
+        // Bluetooth (tap and output both follow the BT clock — enabling it makes the HAL insert/
+        // delete a sample on the ~50ppm BT-vs-crystal offset every ~0.7s, the rhythmic call crackle)
+        // and virtual sources (burst delivery looks like drift). ON for wired/USB where the crystal
+        // domains genuinely differ. Defaults OFF on an unresolvable device (less wrong on unknown BT).
+        let isPrimaryBTOutput = audioDeviceID(for: outputUIDs[0])?.isBluetoothDevice() ?? true
+        let tapDriftCompensation = !isTapSourceVirtual() && !isPrimaryBTOutput
+
         return [
             kAudioAggregateDeviceNameKey: name,
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
@@ -319,11 +327,31 @@ final class ProcessTapController: ProcessTapControlling {
             kAudioAggregateDeviceSubDeviceListKey: subDevices,
             kAudioAggregateDeviceTapListKey: [
                 [
-                    kAudioSubTapDriftCompensationKey: true,
+                    kAudioSubTapDriftCompensationKey: tapDriftCompensation,
                     kAudioSubTapUIDKey: tapUUID.uuidString
                 ]
             ]
         ]
+    }
+
+    private func isTapSourceVirtual() -> Bool {
+        guard let uid = preferredTapSourceDeviceUID,
+              let deviceID = audioDeviceID(for: uid) else { return false }
+        return deviceID.isVirtualDevice()
+    }
+
+    /// Recreates the aggregate at the device's new rate on a Bluetooth A2DP↔SCO change. Recreation is
+    /// the only reliable way to re-rate the IOProc — in-place nominal-rate or buffer-size writes
+    /// silence a running aggregate's IOProc, which can't be reconfigured live. Routed through the
+    /// destructive switch with `sourceAlreadySilent: true` so the old aggregate is force-silenced
+    /// first (cutting the rate-mismatched garbage) before the rebuild, then volume ramps back up — a
+    /// brief clean dip rather than a crackle. The switch can't be fully gapless: the BT link itself
+    /// renegotiates across the profile change.
+    func recreateForOutputRateChange() async throws {
+        guard activated, let primaryUID = currentDeviceUIDs.first else { return }
+        guard primaryResources.tapDescription != nil else { throw CrossfadeError.noTapDescription }
+        logger.info("[RATE] \(self.app.name): recreating aggregate at new rate")
+        try await performDestructiveDeviceSwitch(to: primaryUID, allDeviceUIDs: currentDeviceUIDs, sourceAlreadySilent: true)
     }
 
     private func preferredStereoChannels(for deviceUID: String?) -> (left: Int, right: Int) {
