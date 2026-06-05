@@ -1185,6 +1185,8 @@ struct MenuBarPopupView: View {
     }
 
     private func handleKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
+        // `.onKeyPress` also fires for focused descendants; yield while a TextField is editing so its Return commits via onSubmit instead of activating a row.
+        if NSApp.keyWindow?.firstResponder is NSTextView { return .ignored }
         let mods = keyPress.modifiers
         let isM = keyPress.key == KeyEquivalent("m")
         let isRecognized: Bool = {
