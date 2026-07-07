@@ -182,7 +182,13 @@ struct FineTuneApp: App {
             deviceSymbol: MenuBarDeviceIconResolver.resolveSymbol(
                 priorityOrder: settings.devicePriorityOrder,
                 outputDevices: engine.deviceMonitor.outputDevices,
-                defaultDeviceID: launchID
+                defaultDeviceID: launchID,
+                symbolForDevice: { device in
+                    MenuBarDeviceIconResolver.symbol(for: device, override: settings.getDeviceIconOverride(for: device.uid))
+                },
+                symbolForDefaultID: { id in
+                    MenuBarDeviceIconResolver.symbol(forDefaultID: id, override: { settings.getDeviceIconOverride(for: $0) })
+                }
             )
         )
         launchIconImage = launchState.image.nsImage()
