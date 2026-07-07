@@ -31,6 +31,14 @@ struct DeviceIconCatalogTests {
         }
     }
 
+    @Test("entry(for:) round-trips every catalog symbol and misses cleanly")
+    func entryLookupRoundTrips() {
+        for entry in DeviceIconCatalog.allEntries {
+            #expect(DeviceIconCatalog.entry(for: entry.symbol) == entry)
+        }
+        #expect(DeviceIconCatalog.entry(for: "not.a.catalog.symbol") == nil)
+    }
+
     @Test("Search matches symbol names and keywords, case-insensitively")
     func searchMatching() {
         let byName = DeviceIconCatalog.matching("AIRPODS").map(\.symbol)

@@ -1,0 +1,198 @@
+// FineTune/Views/Components/DeviceIconPicker.swift
+import SwiftUI
+import AppKit
+
+/// Popover content for choosing a device's icon override. Selection applies
+/// immediately via `onSelect` and the popover stays open for further browsing;
+/// `onSelect(nil)` restores the automatic icon.
+struct DeviceIconPicker: View {
+    let device: AudioDevice
+    let isInputDevice: Bool
+    let currentOverride: String?
+    let onSelect: (String?) -> Void
+
+    @State private var query = ""
+    @State private var driverIconPresent = false
+
+    private static let columns = Array(
+        repeating: GridItem(.flexible(), spacing: DesignTokens.Spacing.xs),
+        count: 6
+    )
+
+    var body: some View {
+        let highlighted = highlightedSymbol
+
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            searchField
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    if trimmedQuery.isEmpty {
+                        gridSection(title: "Suggested", symbols: suggestedSymbols, highlighted: highlighted)
+                        ForEach(DeviceIconCatalog.categories) { category in
+                            gridSection(title: category.name, symbols: category.entries.map(\.symbol), highlighted: highlighted)
+                        }
+                    } else {
+                        searchResults(highlighted: highlighted)
+                    }
+                }
+            }
+            .frame(height: 300)
+
+            Button("Restore Default") {
+                onSelect(nil)
+            }
+            .controlSize(.small)
+            .disabled(currentOverride == nil)
+            .frame(maxWidth: .infinity)
+        }
+        .padding(DesignTokens.Spacing.md)
+        .frame(width: 300)
+        .task(id: device.uid) {
+            // NSImage has no isSymbolImage (UIKit-only). Driver-vs-symbol is
+            // decided the same way AudioDeviceMonitor decides it: does the
+            // driver provide an icon? Probed once per device, not per render —
+            // the cache only stores non-nil results, so a per-render probe
+            // would hit CoreAudio (and disk) every body pass for the majority
+            // of devices that have no driver icon.
+            driverIconPresent = DeviceIconCache.shared.icon(for: device.uid) {
+                device.id.readDeviceIcon()
+            } != nil
+        }
+    }
+
+    // MARK: - Sections
+
+    private var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespaces)
+    }
+
+    @ViewBuilder
+    private func searchResults(highlighted: String?) -> some View {
+        let hits = DeviceIconCatalog.matching(trimmedQuery).map(\.symbol)
+        if hits.isEmpty {
+            Text("No matching icons")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, DesignTokens.Spacing.md)
+        } else {
+            grid(symbols: hits, highlighted: highlighted)
+        }
+    }
+
+    @ViewBuilder
+    private func gridSection(title: String, symbols: [String], highlighted: String?) -> some View {
+        SectionHeader(title: title)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        grid(symbols: symbols, highlighted: highlighted)
+    }
+
+    private func grid(symbols: [String], highlighted: String?) -> some View {
+        LazyVGrid(columns: Self.columns, spacing: DesignTokens.Spacing.xs) {
+            ForEach(symbols, id: \.self) { symbol in
+                cell(symbol, isHighlighted: symbol == highlighted)
+            }
+        }
+    }
+
+    private func cell(_ symbol: String, isHighlighted: Bool) -> some View {
+        Button {
+            onSelect(symbol)
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 15))
+                .symbolRenderingMode(.hierarchical)
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(isHighlighted ? DesignTokens.Colors.glassFillStrong : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(
+                            isHighlighted ? DesignTokens.Colors.accentPrimary : Color.clear,
+                            lineWidth: 1.5
+                        )
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .help(symbol)
+        .accessibilityLabel(DeviceIconCatalog.entry(for: symbol)?.keywords.first?.capitalized ?? symbol)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
+            TextField("Search icons", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+        }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(DesignTokens.Colors.recessedBackground)
+        )
+    }
+
+    // MARK: - Symbol Resolution
+
+    private var suggestedSymbols: [String] {
+        Self.composeSuggested(
+            leading: isInputDevice ? device.id.suggestedInputIconSymbol() : nil,
+            shared: DeviceIconCatalog.suggested(
+                forName: device.name,
+                transport: device.id.readTransportType()
+            )
+        )
+    }
+
+    /// Leading symbol first (when present), then the shared suggestions
+    /// with duplicates of the leading symbol dropped.
+    static func composeSuggested(leading: String?, shared: [String]) -> [String] {
+        var result: [String] = leading.map { [$0] } ?? []
+        for symbol in shared where !result.contains(symbol) {
+            result.append(symbol)
+        }
+        return result
+    }
+
+    private var highlightedSymbol: String? {
+        Self.highlightSymbol(
+            currentOverride: currentOverride,
+            automaticIsSymbol: !driverIconPresent,
+            automaticSymbol: isInputDevice
+                ? device.id.suggestedInputIconSymbol()
+                : device.id.suggestedIconSymbol()
+        )
+    }
+
+    /// Pure highlight rule: the override wins; otherwise the automatic
+    /// suggested symbol — unless the automatic icon is a driver-provided
+    /// image, in which case no grid cell is current.
+    static func highlightSymbol(
+        currentOverride: String?,
+        automaticIsSymbol: Bool,
+        automaticSymbol: String
+    ) -> String? {
+        if let currentOverride { return currentOverride }
+        return automaticIsSymbol ? automaticSymbol : nil
+    }
+}
+
+// MARK: - Previews
+
+#Preview("DeviceIconPicker") {
+    ComponentPreviewContainer {
+        DeviceIconPicker(
+            device: MockData.sampleDevices[1],
+            isInputDevice: false,
+            currentOverride: "gamecontroller.fill",
+            onSelect: { _ in }
+        )
+    }
+}

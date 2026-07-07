@@ -101,6 +101,13 @@ enum DeviceIconCatalog {
 
     static let allEntries: [Entry] = categories.flatMap(\.entries)
 
+    private static let entryBySymbol: [String: Entry] =
+        Dictionary(uniqueKeysWithValues: allEntries.map { ($0.symbol, $0) })
+
+    static func entry(for symbol: String) -> Entry? {
+        entryBySymbol[symbol]
+    }
+
     /// An empty or whitespace-only query returns the full catalog.
     static func matching(_ query: String) -> [Entry] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
