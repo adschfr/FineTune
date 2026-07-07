@@ -23,10 +23,12 @@ enum DeviceIconCatalog {
             Entry(symbol: "airpodsmax", keywords: ["airpods", "max", "over-ear"]),
             Entry(symbol: "airpods", keywords: ["airpods", "earbuds"]),
             Entry(symbol: "airpods.gen3", keywords: ["airpods", "earbuds"]),
+            Entry(symbol: "airpods.gen4", keywords: ["airpods", "earbuds"]),
             Entry(symbol: "airpod.left", keywords: ["airpod", "left", "earbud"]),
             Entry(symbol: "airpod.right", keywords: ["airpod", "right", "earbud"]),
             Entry(symbol: "airpodspro.chargingcase.wireless.fill", keywords: ["airpods", "case", "charging"]),
             Entry(symbol: "airpods.chargingcase.wireless.fill", keywords: ["airpods", "case", "charging"]),
+            Entry(symbol: "earpods", keywords: ["earpods", "wired", "apple"]),
             Entry(symbol: "earbuds", keywords: ["earbuds", "in-ear"]),
             Entry(symbol: "earbuds.case.fill", keywords: ["earbuds", "case"]),
             Entry(symbol: "beats.headphones", keywords: ["beats", "headphones"]),
@@ -34,6 +36,7 @@ enum DeviceIconCatalog {
             Entry(symbol: "beats.powerbeatspro", keywords: ["beats", "powerbeats", "sport"]),
             Entry(symbol: "beats.powerbeats", keywords: ["beats", "powerbeats", "sport"]),
             Entry(symbol: "beats.studiobuds", keywords: ["beats", "studio", "buds"]),
+            Entry(symbol: "beats.solobuds", keywords: ["beats", "solo", "buds"]),
             Entry(symbol: "beats.fitpro", keywords: ["beats", "fit", "sport"]),
             Entry(symbol: "hearingdevice.ear", keywords: ["hearing", "aid", "ear"]),
         ]),
@@ -43,14 +46,18 @@ enum DeviceIconCatalog {
             Entry(symbol: "hifispeaker.2", keywords: ["speakers", "stereo", "pair"]),
             Entry(symbol: "hifispeaker.2.fill", keywords: ["speakers", "stereo", "pair"]),
             Entry(symbol: "homepod.fill", keywords: ["homepod", "speaker"]),
+            Entry(symbol: "homepod.2.fill", keywords: ["homepod", "stereo", "pair"]),
             Entry(symbol: "homepodmini.fill", keywords: ["homepod", "mini", "speaker"]),
+            Entry(symbol: "homepodmini.2.fill", keywords: ["homepod", "mini", "stereo", "pair"]),
             Entry(symbol: "homepod.and.homepodmini.fill", keywords: ["homepod", "pair", "stereo"]),
             Entry(symbol: "speaker.fill", keywords: ["speaker"]),
             Entry(symbol: "speaker.wave.1.fill", keywords: ["speaker", "quiet"]),
             Entry(symbol: "speaker.wave.2.fill", keywords: ["speaker", "volume"]),
             Entry(symbol: "speaker.wave.3.fill", keywords: ["speaker", "loud"]),
+            Entry(symbol: "beats.pill", keywords: ["beats", "pill", "speaker"]),
             Entry(symbol: "radio.fill", keywords: ["radio", "boombox"]),
             Entry(symbol: "tv.and.hifispeaker.fill", keywords: ["tv", "soundbar", "home theater"]),
+            Entry(symbol: "hifispeaker.and.appletv.fill", keywords: ["apple tv", "home theater", "speaker"]),
             Entry(symbol: "hifireceiver.fill", keywords: ["receiver", "amp", "home theater"]),
         ]),
         Category(name: "Computers & Displays", entries: [
@@ -67,6 +74,8 @@ enum DeviceIconCatalog {
             Entry(symbol: "appletv.fill", keywords: ["apple tv", "airplay"]),
             Entry(symbol: "iphone", keywords: ["iphone", "phone", "continuity"]),
             Entry(symbol: "ipad", keywords: ["ipad", "tablet"]),
+            Entry(symbol: "visionpro", keywords: ["vision", "pro", "spatial"]),
+            Entry(symbol: "videoprojector.fill", keywords: ["projector", "beamer", "hdmi"]),
         ]),
         Category(name: "Microphones", entries: [
             Entry(symbol: "mic", keywords: ["mic", "microphone"]),
@@ -75,6 +84,7 @@ enum DeviceIconCatalog {
             Entry(symbol: "mic.circle.fill", keywords: ["mic", "microphone"]),
             Entry(symbol: "mic.square.fill", keywords: ["mic", "microphone"]),
             Entry(symbol: "waveform.and.mic", keywords: ["mic", "voice", "recording"]),
+            Entry(symbol: "web.camera.fill", keywords: ["webcam", "camera"]),
             Entry(symbol: "headset", keywords: ["headset", "boom", "gaming", "calls"]),
         ]),
         Category(name: "Connectors & Other", entries: [
@@ -94,6 +104,11 @@ enum DeviceIconCatalog {
             Entry(symbol: "guitars.fill", keywords: ["guitar", "instrument", "amp"]),
             Entry(symbol: "pianokeys", keywords: ["piano", "keyboard", "midi"]),
             Entry(symbol: "amplifier", keywords: ["amp", "amplifier", "guitar"]),
+            Entry(symbol: "slider.vertical.3", keywords: ["mixer", "faders", "interface"]),
+            Entry(symbol: "dial.medium.fill", keywords: ["knob", "gain", "interface", "amp"]),
+            Entry(symbol: "recordingtape", keywords: ["tape", "recorder", "recording"]),
+            Entry(symbol: "megaphone.fill", keywords: ["megaphone", "pa", "announcement"]),
+            Entry(symbol: "tuningfork", keywords: ["tuning", "fork", "pitch"]),
             Entry(symbol: "music.note", keywords: ["music", "note"]),
             Entry(symbol: "opticaldisc.fill", keywords: ["cd", "disc", "player"]),
         ]),
@@ -133,14 +148,14 @@ enum DeviceIconCatalog {
                       "earbuds", "beats.headphones", "hifispeaker.fill", "headset"]
         case .usb:
             family = ["headphones", "mic.fill", "cable.connector", "amplifier",
-                      "hifispeaker.fill", "headset"]
+                      "hifispeaker.fill", "headset", "slider.vertical.3"]
         case .builtIn:
             family = ["macbook", "laptopcomputer", "desktopcomputer", "hifispeaker", "mic.fill"]
         case .hdmi, .displayPort:
-            family = ["tv", "display", "tv.and.hifispeaker.fill", "display.2"]
+            family = ["tv", "display", "tv.and.hifispeaker.fill", "display.2", "videoprojector.fill"]
         case .airPlay:
             family = ["airplayaudio", "homepod.fill", "homepodmini.fill",
-                      "appletv.fill", "tv.and.hifispeaker.fill"]
+                      "appletv.fill", "tv.and.hifispeaker.fill", "homepod.2.fill"]
         case .virtual:
             family = ["waveform", "waveform.circle.fill", "dot.radiowaves.left.and.right", "music.note"]
         case .thunderbolt:
