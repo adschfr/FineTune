@@ -38,6 +38,7 @@ struct DeviceIconPicker: View {
                 }
             }
             .frame(height: 300)
+            .scrollIndicators(.never)
 
             Button("Restore Default") {
                 onSelect(nil)
@@ -91,35 +92,13 @@ struct DeviceIconPicker: View {
     private func grid(symbols: [String], highlighted: String?) -> some View {
         LazyVGrid(columns: Self.columns, spacing: DesignTokens.Spacing.xs) {
             ForEach(symbols, id: \.self) { symbol in
-                cell(symbol, isHighlighted: symbol == highlighted)
+                IconCell(
+                    symbol: symbol,
+                    isHighlighted: symbol == highlighted,
+                    onSelect: { onSelect(symbol) }
+                )
             }
         }
-    }
-
-    private func cell(_ symbol: String, isHighlighted: Bool) -> some View {
-        Button {
-            onSelect(symbol)
-        } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 15))
-                .symbolRenderingMode(.hierarchical)
-                .frame(maxWidth: .infinity, minHeight: 34)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(isHighlighted ? DesignTokens.Colors.glassFillStrong : Color.clear)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7)
-                        .strokeBorder(
-                            isHighlighted ? DesignTokens.Colors.accentPrimary : Color.clear,
-                            lineWidth: 1.5
-                        )
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .help(symbol)
-        .accessibilityLabel(DeviceIconCatalog.entry(for: symbol)?.keywords.first?.capitalized ?? symbol)
     }
 
     private var searchField: some View {
@@ -181,6 +160,51 @@ struct DeviceIconPicker: View {
     ) -> String? {
         if let currentOverride { return currentOverride }
         return automaticIsSymbol ? automaticSymbol : nil
+    }
+}
+
+// MARK: - Icon Cell
+
+/// One grid cell with its own hover state. Per-cell state (not a shared
+/// hovered-symbol on the picker) because the Suggested section repeats
+/// catalog symbols — identity by symbol would light up both twins at once.
+private struct IconCell: View {
+    let symbol: String
+    let isHighlighted: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            Image(systemName: symbol)
+                .font(.system(size: 15))
+                .symbolRenderingMode(.hierarchical)
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(fill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(
+                            isHighlighted ? DesignTokens.Colors.accentPrimary : Color.clear,
+                            lineWidth: 1.5
+                        )
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(DesignTokens.Animation.hover, value: isHovered)
+        .help(symbol)
+        .accessibilityLabel(DeviceIconCatalog.entry(for: symbol)?.keywords.first?.capitalized ?? symbol)
+    }
+
+    private var fill: Color {
+        if isHighlighted { return DesignTokens.Colors.glassFillStrong }
+        if isHovered { return DesignTokens.Colors.hoverSurface }
+        return .clear
     }
 }
 
