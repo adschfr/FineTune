@@ -675,6 +675,9 @@ struct MenuBarPopupView: View {
                     audioEngine.settingsManager.toggleOutputDeviceHidden(uid: device.uid)
                 }
             },
+            onIconSelect: { symbol in
+                audioEngine.settingsManager.setDeviceIconOverride(for: device.uid, to: symbol)
+            },
             expandedContent: {
                 // Only render when actually expanded. Input devices skip
                 // the expand, so this is never hit for them.
