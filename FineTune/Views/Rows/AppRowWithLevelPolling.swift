@@ -7,6 +7,7 @@ struct AppRowWithLevelPolling: View {
     let volume: Float
     let isMuted: Bool
     let devices: [AudioDevice]
+    let deviceIconOverrides: [String: String]
     let selectedDeviceUID: String
     let selectedDeviceUIDs: Set<String>
     let isFollowingDefault: Bool
@@ -42,6 +43,7 @@ struct AppRowWithLevelPolling: View {
         volume: Float,
         isMuted: Bool,
         devices: [AudioDevice],
+        deviceIconOverrides: [String: String] = [:],
         selectedDeviceUID: String,
         selectedDeviceUIDs: Set<String> = [],
         isFollowingDefault: Bool = true,
@@ -73,6 +75,7 @@ struct AppRowWithLevelPolling: View {
         self.volume = volume
         self.isMuted = isMuted
         self.devices = devices
+        self.deviceIconOverrides = deviceIconOverrides
         self.selectedDeviceUID = selectedDeviceUID
         self.selectedDeviceUIDs = selectedDeviceUIDs
         self.isFollowingDefault = isFollowingDefault
@@ -107,6 +110,7 @@ struct AppRowWithLevelPolling: View {
             volume: volume,
             audioLevel: displayLevel,
             devices: devices,
+            deviceIconOverrides: deviceIconOverrides,
             selectedDeviceUID: selectedDeviceUID,
             selectedDeviceUIDs: selectedDeviceUIDs,
             isFollowingDefault: isFollowingDefault,

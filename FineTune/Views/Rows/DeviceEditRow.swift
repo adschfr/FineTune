@@ -8,6 +8,7 @@ import AppKit
 /// expand — siblings keep their own gestures.
 struct DeviceEditRow<ExpandedContent: View>: View {
     let device: AudioDevice
+    var iconOverrideSymbol: String? = nil
     let priorityIndex: Int
     let isDefault: Bool
     let isInputDevice: Bool
@@ -20,6 +21,14 @@ struct DeviceEditRow<ExpandedContent: View>: View {
     @ViewBuilder let expandedContent: () -> ExpandedContent
 
     @State private var isInfoButtonHovered = false
+
+    private var displayIcon: NSImage? {
+        DeviceIconResolver.displayIcon(
+            overrideSymbol: iconOverrideSymbol,
+            automatic: device.icon,
+            deviceName: device.name
+        )
+    }
 
     var body: some View {
         ExpandableGlassRow(isExpanded: isExpanded) {
@@ -56,7 +65,7 @@ struct DeviceEditRow<ExpandedContent: View>: View {
 
             HStack(spacing: DesignTokens.Spacing.sm) {
                 Group {
-                    if let icon = device.icon {
+                    if let icon = displayIcon {
                         Image(nsImage: icon)
                             .resizable()
                             .aspectRatio(contentMode: .fit)

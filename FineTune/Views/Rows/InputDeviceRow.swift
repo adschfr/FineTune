@@ -12,6 +12,7 @@ struct InputDeviceRow: View {
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
     let isFocused: Bool
+    let iconOverrideSymbol: String?
 
     @State private var sliderValue: Double
     @State private var isEditing = false
@@ -31,6 +32,14 @@ struct InputDeviceRow: View {
     /// Default volume to restore when unmuting from 0 (50%)
     private let defaultUnmuteVolume: Double = 0.5
 
+    private var displayIcon: NSImage? {
+        DeviceIconResolver.displayIcon(
+            overrideSymbol: iconOverrideSymbol,
+            automatic: device.icon,
+            deviceName: device.name
+        )
+    }
+
     init(
         device: AudioDevice,
         isDefault: Bool,
@@ -39,7 +48,8 @@ struct InputDeviceRow: View {
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void,
-        isFocused: Bool = false
+        isFocused: Bool = false,
+        iconOverrideSymbol: String? = nil
     ) {
         self.device = device
         self.isDefault = isDefault
@@ -49,6 +59,7 @@ struct InputDeviceRow: View {
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
         self.isFocused = isFocused
+        self.iconOverrideSymbol = iconOverrideSymbol
         self._sliderValue = State(initialValue: Double(volume))
     }
 
@@ -75,7 +86,7 @@ struct InputDeviceRow: View {
 
     private var deviceHeader: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
-            DeviceBadge(icon: device.icon, isSelected: isDefault, fallbackSymbol: "mic")
+            DeviceBadge(icon: displayIcon, isSelected: isDefault, fallbackSymbol: "mic")
 
             // Device name
             Text(device.name)
