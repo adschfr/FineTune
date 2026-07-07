@@ -92,7 +92,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 11
+        var version: Int = 12
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -123,6 +123,7 @@ final class SettingsManager {
         // nil/missing → auto-detect (hardware/ddc/software). Populated only by
         // the user via the device detail sheet's manual override toggle.
         var deviceVolumeTierOverride: [String: VolumeControlTier] = [:]
+        var deviceIconOverrides: [String: String] = [:]  // device UID → SF Symbol name
 
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
@@ -178,6 +179,7 @@ final class SettingsManager {
                 .filter { $0.value.isFinite && $0.value >= 0 }
                 .mapValues { min($0, 1.0) }
             deviceVolumeTierOverride = try c.decodeIfPresent([String: VolumeControlTier].self, forKey: .deviceVolumeTierOverride) ?? [:]
+            deviceIconOverrides = try c.decodeIfPresent([String: String].self, forKey: .deviceIconOverrides) ?? [:]
             outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
             inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
             hiddenOutputDeviceUIDs = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenOutputDeviceUIDs) ?? []
@@ -440,6 +442,30 @@ final class SettingsManager {
             settings.deviceVolumeTierOverride[deviceUID] = tier
         } else {
             settings.deviceVolumeTierOverride.removeValue(forKey: deviceUID)
+        }
+        scheduleSave()
+    }
+
+    // MARK: - Per-Device Icon Override
+
+    /// Returns the user-chosen SF Symbol override for a device, or nil when
+    /// the automatic icon should take effect.
+    func getDeviceIconOverride(for deviceUID: String) -> String? {
+        settings.deviceIconOverrides[deviceUID]
+    }
+
+    /// All UID → symbol overrides, for views that render many devices.
+    var deviceIconOverrides: [String: String] {
+        settings.deviceIconOverrides
+    }
+
+    /// Sets or clears the icon override for a device. Passing `nil` removes
+    /// the override, returning the device to its automatic icon.
+    func setDeviceIconOverride(for deviceUID: String, to symbol: String?) {
+        if let symbol {
+            settings.deviceIconOverrides[deviceUID] = symbol
+        } else {
+            settings.deviceIconOverrides.removeValue(forKey: deviceUID)
         }
         scheduleSave()
     }
@@ -825,6 +851,7 @@ final class SettingsManager {
         settings.softwareDeviceMuteStates.removeAll()
         settings.softwareDeviceSavedVolumes.removeAll()
         settings.deviceVolumeTierOverride.removeAll()
+        settings.deviceIconOverrides.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
         settings.hiddenOutputDeviceUIDs.removeAll()
