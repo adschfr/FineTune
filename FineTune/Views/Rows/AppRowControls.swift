@@ -7,6 +7,7 @@ struct AppRowControls: View {
     let volume: Float
     let isMuted: Bool
     let devices: [AudioDevice]
+    var deviceIconOverrides: [String: String] = [:]
     let selectedDeviceUID: String
     let selectedDeviceUIDs: Set<String>
     let isFollowingDefault: Bool
@@ -113,6 +114,7 @@ struct AppRowControls: View {
 
             DevicePicker(
                 devices: devices,
+                deviceIconOverrides: deviceIconOverrides,
                 selectedDeviceUID: selectedDeviceUID,
                 selectedDeviceUIDs: selectedDeviceUIDs,
                 isFollowingDefault: isFollowingDefault,

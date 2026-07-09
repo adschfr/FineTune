@@ -37,6 +37,7 @@ struct SettingsJSONTests {
         original.autoEQPreampEnabled = false
         original.hiddenOutputDeviceUIDs = ["uid-hidden-out-1", "uid-hidden-out-2"]
         original.hiddenInputDeviceUIDs = ["uid-hidden-in-1"]
+        original.deviceIconOverrides = ["uid-a": "airpodsmax", "uid-b": "gamecontroller.fill"]
 
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
@@ -52,6 +53,7 @@ struct SettingsJSONTests {
         #expect(decoded.autoEQPreampEnabled == false)
         #expect(decoded.hiddenOutputDeviceUIDs == original.hiddenOutputDeviceUIDs)
         #expect(decoded.hiddenInputDeviceUIDs == original.hiddenInputDeviceUIDs)
+        #expect(decoded.deviceIconOverrides == original.deviceIconOverrides)
     }
 
     @Test("Decoding empty JSON produces valid defaults")
@@ -66,6 +68,7 @@ struct SettingsJSONTests {
         #expect(decoded.autoEQPreampEnabled == true)
         #expect(decoded.hiddenOutputDeviceUIDs.isEmpty)
         #expect(decoded.hiddenInputDeviceUIDs.isEmpty)
+        #expect(decoded.deviceIconOverrides.isEmpty)
     }
 
     @Test("Decoding with extra unknown keys is tolerated")
@@ -355,6 +358,64 @@ struct SettingsManagerHiddenDevicesTests {
         m.hideOutputDevice(uid: "shared-uid")
         #expect(m.isOutputDeviceHidden("shared-uid") == true)
         #expect(m.isInputDeviceHidden("shared-uid") == false)
+    }
+}
+
+// MARK: - Device Icon Override API
+
+@Suite("SettingsManager — deviceIconOverrides API")
+@MainActor
+struct DeviceIconOverrideTests {
+    private func makeManager() -> SettingsManager {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        return SettingsManager(directory: tempDir)
+    }
+
+    @Test("get/set round-trip for a single UID")
+    func setAndGet() {
+        let manager = makeManager()
+        #expect(manager.getDeviceIconOverride(for: "uid-a") == nil)
+
+        manager.setDeviceIconOverride(for: "uid-a", to: "airpodsmax")
+        #expect(manager.getDeviceIconOverride(for: "uid-a") == "airpodsmax")
+
+        manager.setDeviceIconOverride(for: "uid-a", to: "gamecontroller.fill")
+        #expect(manager.getDeviceIconOverride(for: "uid-a") == "gamecontroller.fill")
+    }
+
+    @Test("Passing nil clears the override")
+    func clearOverride() {
+        let manager = makeManager()
+        manager.setDeviceIconOverride(for: "uid-a", to: "airpodsmax")
+        #expect(manager.getDeviceIconOverride(for: "uid-a") == "airpodsmax")
+
+        manager.setDeviceIconOverride(for: "uid-a", to: nil)
+        #expect(manager.getDeviceIconOverride(for: "uid-a") == nil)
+    }
+
+    @Test("Overrides for different UIDs are independent")
+    func independentPerUID() {
+        let manager = makeManager()
+        manager.setDeviceIconOverride(for: "uid-a", to: "airpodsmax")
+        manager.setDeviceIconOverride(for: "uid-b", to: "gamecontroller.fill")
+
+        #expect(manager.getDeviceIconOverride(for: "uid-a") == "airpodsmax")
+        #expect(manager.getDeviceIconOverride(for: "uid-b") == "gamecontroller.fill")
+        #expect(manager.deviceIconOverrides == ["uid-a": "airpodsmax", "uid-b": "gamecontroller.fill"])
+    }
+
+    @Test("resetAllSettings clears all overrides")
+    func resetClearsOverrides() {
+        let manager = makeManager()
+        manager.setDeviceIconOverride(for: "uid-a", to: "airpodsmax")
+        manager.setDeviceIconOverride(for: "uid-b", to: "gamecontroller.fill")
+
+        manager.resetAllSettings()
+
+        #expect(manager.getDeviceIconOverride(for: "uid-a") == nil)
+        #expect(manager.getDeviceIconOverride(for: "uid-b") == nil)
+        #expect(manager.deviceIconOverrides.isEmpty)
     }
 }
 

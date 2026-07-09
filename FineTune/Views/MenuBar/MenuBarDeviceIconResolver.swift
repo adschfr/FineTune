@@ -39,4 +39,18 @@ struct MenuBarDeviceIconResolver {
 
         return fallbackSymbol
     }
+
+    static func symbol(for device: AudioDevice, override: String?) -> String {
+        override ?? device.id.suggestedIconSymbol()
+    }
+
+    /// Same precedence for the bare default-device-ID path, where the UID
+    /// must be read from the HAL before the override can be looked up.
+    static func symbol(forDefaultID id: AudioDeviceID, override: (String) -> String?) -> String {
+        guard id.isValid else { return fallbackSymbol }
+        if let uid = try? id.readDeviceUID(), let symbol = override(uid) {
+            return symbol
+        }
+        return id.suggestedIconSymbol()
+    }
 }

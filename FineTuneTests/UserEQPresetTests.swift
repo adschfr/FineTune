@@ -660,10 +660,10 @@ struct UserEQPresetPersistenceTests {
 @MainActor
 struct SettingsVersionTests {
 
-    @Test("Default Settings().version is 11")
+    @Test("Default Settings().version is 12")
     func defaultVersion() {
         let settings = SettingsManager.Settings()
-        #expect(settings.version == 11)
+        #expect(settings.version == 12)
     }
 
     @Test("userEQPresets defaults to empty array in Settings()")

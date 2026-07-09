@@ -42,6 +42,7 @@ struct DeviceRow: View {
     let autoEQPreampEnabled: Bool
     let onAutoEQPreampToggle: (() -> Void)?
     let isFocused: Bool
+    let iconOverrideSymbol: String?
 
     @State private var sliderValue: Double
     @State private var isEditing = false
@@ -62,6 +63,14 @@ struct DeviceRow: View {
 
     /// Default slider position to restore when unmuting from 0 (50%)
     private let defaultUnmuteVolume: Double = 0.5
+
+    private var displayIcon: NSImage? {
+        DeviceIconResolver.displayIcon(
+            overrideSymbol: iconOverrideSymbol,
+            automatic: device.icon,
+            deviceName: device.name
+        )
+    }
 
     init(
         device: AudioDevice,
@@ -84,7 +93,8 @@ struct DeviceRow: View {
         autoEQImportError: String? = nil,
         autoEQPreampEnabled: Bool = true,
         onAutoEQPreampToggle: (() -> Void)? = nil,
-        isFocused: Bool = false
+        isFocused: Bool = false,
+        iconOverrideSymbol: String? = nil
     ) {
         self.device = device
         self.isDefault = isDefault
@@ -107,6 +117,7 @@ struct DeviceRow: View {
         self.autoEQPreampEnabled = autoEQPreampEnabled
         self.onAutoEQPreampToggle = onAutoEQPreampToggle
         self.isFocused = isFocused
+        self.iconOverrideSymbol = iconOverrideSymbol
         self._sliderValue = State(initialValue: Self.volumeToSlider(volume, backend: volumeBackend))
     }
 
@@ -134,7 +145,7 @@ struct DeviceRow: View {
             // Selection is now signalled by accent-colored gradient on the
             // badge plus bold device name; the row-level gesture in `body`
             // handles tap-to-set-default.
-            DeviceBadge(icon: device.icon, isSelected: isDefault)
+            DeviceBadge(icon: displayIcon, isSelected: isDefault)
 
             // Device name + optional AutoEQ profile subtitle + AutoEQ picker
             HStack(spacing: DesignTokens.Spacing.xs) {

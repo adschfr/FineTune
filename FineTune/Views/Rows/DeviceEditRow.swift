@@ -4,10 +4,11 @@ import AppKit
 
 /// Priority-edit-mode row with drag handle, priority number, icon+name,
 /// DEFAULT badge, hide toggle, and an info/close button that expands the
-/// Device Inspector pane. Icon+name+badge is the only tap region for
-/// expand — siblings keep their own gestures.
+/// Device Inspector pane. Icon opens the icon picker; name+badge is the
+/// tap region for expand — siblings keep their own gestures.
 struct DeviceEditRow<ExpandedContent: View>: View {
     let device: AudioDevice
+    var iconOverrideSymbol: String? = nil
     let priorityIndex: Int
     let isDefault: Bool
     let isInputDevice: Bool
@@ -17,9 +18,20 @@ struct DeviceEditRow<ExpandedContent: View>: View {
     let onReorder: (Int) -> Void
     let onToggleExpand: () -> Void
     let onToggleHidden: () -> Void
+    var onIconSelect: ((String?) -> Void)? = nil
     @ViewBuilder let expandedContent: () -> ExpandedContent
 
     @State private var isInfoButtonHovered = false
+    @State private var showingIconPicker = false
+    @State private var isIconHovered = false
+
+    private var displayIcon: NSImage? {
+        DeviceIconResolver.displayIcon(
+            overrideSymbol: iconOverrideSymbol,
+            automatic: device.icon,
+            deviceName: device.name
+        )
+    }
 
     var body: some View {
         ExpandableGlassRow(isExpanded: isExpanded) {
@@ -54,20 +66,9 @@ struct DeviceEditRow<ExpandedContent: View>: View {
                 onReorder: onReorder
             )
 
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                Group {
-                    if let icon = device.icon {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                    } else {
-                        Image(systemName: isInputDevice ? "mic" : "speaker.wave.2")
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
+            iconButton
 
+            HStack(spacing: DesignTokens.Spacing.sm) {
                 Text(device.name)
                     .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
@@ -97,6 +98,47 @@ struct DeviceEditRow<ExpandedContent: View>: View {
             infoButton
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
+    }
+
+    private var iconButton: some View {
+        Button {
+            showingIconPicker = true
+        } label: {
+            Group {
+                if let icon = displayIcon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } else {
+                    Image(systemName: isInputDevice ? "mic" : "speaker.wave.2")
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
+            .overlay(alignment: .bottomTrailing) {
+                if isIconHovered {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.system(size: 9))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(Color.white, DesignTokens.Colors.accentPrimary)
+                        .offset(x: 3, y: 3)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { isIconHovered = $0 }
+        .animation(DesignTokens.Animation.hover, value: isIconHovered)
+        .help("Change icon")
+        .accessibilityLabel("Change icon")
+        .popover(isPresented: $showingIconPicker, arrowEdge: .bottom) {
+            DeviceIconPicker(
+                device: device,
+                isInputDevice: isInputDevice,
+                currentOverride: iconOverrideSymbol,
+                onSelect: { symbol in onIconSelect?(symbol) }
+            )
+        }
     }
 
     /// Eye / eye-slash toggle. Disabled for the current default device —
