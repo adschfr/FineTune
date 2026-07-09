@@ -2,7 +2,6 @@
 import AudioToolbox
 import Foundation
 
-/// Curated SF Symbols users can assign to a device, grouped for the picker.
 enum DeviceIconCatalog {
     struct Entry: Identifiable, Equatable {
         let symbol: String

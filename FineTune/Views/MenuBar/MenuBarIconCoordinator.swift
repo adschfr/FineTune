@@ -140,7 +140,7 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
             _ = settings.appSettings.menuBarIconStyle
             _ = settings.appSettings.hudStyle
             _ = settings.devicePriorityOrder
-            // Deliberate dependency so the device-style icon refreshes when the user picks a new symbol; explicit because observation granularity is per stored property today.
+            // Deliberate dependency so the device-style icon refreshes when the user picks a new symbol; explicit because observation granularity is per stored property.
             _ = settings.deviceIconOverrides
             _ = deviceProvider.outputDevices
         } onChange: { [weak self] in

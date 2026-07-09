@@ -50,12 +50,10 @@ struct DeviceIconPicker: View {
         .padding(DesignTokens.Spacing.md)
         .frame(width: 300)
         .task(id: device.uid) {
-            // NSImage has no isSymbolImage (UIKit-only). Driver-vs-symbol is
-            // decided the same way AudioDeviceMonitor decides it: does the
-            // driver provide an icon? Probed once per device, not per render —
-            // the cache only stores non-nil results, so a per-render probe
-            // would hit CoreAudio (and disk) every body pass for the majority
-            // of devices that have no driver icon.
+            // Driver-vs-symbol is decided the way AudioDeviceMonitor decides it:
+            // does the driver provide an icon? Probed once per device — the cache
+            // stores only non-nil results, so probing per render would hit
+            // CoreAudio (and disk) for every device without a driver icon.
             driverIconPresent = DeviceIconCache.shared.icon(for: device.uid) {
                 device.id.readDeviceIcon()
             } != nil
@@ -130,8 +128,6 @@ struct DeviceIconPicker: View {
         )
     }
 
-    /// Leading symbol first (when present), then the shared suggestions
-    /// with duplicates of the leading symbol dropped.
     static func composeSuggested(leading: String?, shared: [String]) -> [String] {
         var result: [String] = leading.map { [$0] } ?? []
         for symbol in shared where !result.contains(symbol) {
@@ -150,9 +146,7 @@ struct DeviceIconPicker: View {
         )
     }
 
-    /// Pure highlight rule: the override wins; otherwise the automatic
-    /// suggested symbol — unless the automatic icon is a driver-provided
-    /// image, in which case no grid cell is current.
+    /// Nil when the automatic icon is a driver-provided image — no grid cell is current then.
     static func highlightSymbol(
         currentOverride: String?,
         automaticIsSymbol: Bool,
@@ -165,9 +159,9 @@ struct DeviceIconPicker: View {
 
 // MARK: - Icon Cell
 
-/// One grid cell with its own hover state. Per-cell state (not a shared
-/// hovered-symbol on the picker) because the Suggested section repeats
-/// catalog symbols — identity by symbol would light up both twins at once.
+/// Per-cell hover state (not a shared hovered-symbol on the picker) because the
+/// Suggested section repeats catalog symbols — identity by symbol would light
+/// up both twins at once.
 private struct IconCell: View {
     let symbol: String
     let isHighlighted: Bool
