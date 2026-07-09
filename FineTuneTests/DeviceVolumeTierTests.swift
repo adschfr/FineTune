@@ -328,10 +328,10 @@ struct SettingsMigrationV10toV11Tests {
         #expect(decoded.softwareDeviceSavedVolumes.isEmpty)
     }
 
-    @Test("Re-encode after v10 decode bumps to v11 on a fresh Settings instance")
-    func defaultSettingsVersionIsEleven() {
+    @Test("Re-encode after v10 decode bumps to v12 on a fresh Settings instance")
+    func defaultSettingsVersionIsTwelve() {
         let fresh = SettingsManager.Settings()
-        #expect(fresh.version == 11)
+        #expect(fresh.version == 12)
         #expect(fresh.deviceVolumeTierOverride.isEmpty)
     }
 

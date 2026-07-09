@@ -95,6 +95,7 @@ struct AudioTab: View {
             ) {
                 SystemSoundsDevicePicker(
                     devices: sortedOutputDevices,
+                    deviceIconOverrides: audioEngine.settingsManager.deviceIconOverrides,
                     selectedDeviceUID: deviceVolumeMonitor.systemDeviceUID,
                     defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
                     isFollowingDefault: deviceVolumeMonitor.isSystemFollowingDefault,

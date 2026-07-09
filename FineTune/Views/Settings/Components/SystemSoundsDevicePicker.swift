@@ -8,6 +8,7 @@ import SwiftUI
 @MainActor
 struct SystemSoundsDevicePicker: View {
     let devices: [AudioDevice]
+    var deviceIconOverrides: [String: String] = [:]
     let selectedDeviceUID: String?
     let defaultDeviceUID: String?
     let isFollowingDefault: Bool
@@ -17,6 +18,7 @@ struct SystemSoundsDevicePicker: View {
     var body: some View {
         DevicePicker(
             devices: devices,
+            deviceIconOverrides: deviceIconOverrides,
             selectedDeviceUID: selectedDeviceUID ?? "",
             isFollowingDefault: isFollowingDefault,
             defaultDeviceUID: defaultDeviceUID,

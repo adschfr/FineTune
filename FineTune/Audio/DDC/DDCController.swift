@@ -81,14 +81,16 @@ final class DDCController {
             settingsManager.setDDCVolume(for: uid, to: clamped)
         }
 
-        // Debounce DDC write
+        // Keep the work item @Sendable and avoid `self`; otherwise it inherits
+        // @MainActor isolation here and traps when run on `ddcQueue`.
         debounceTimers[deviceID]?.cancel()
         let service = services[deviceID]
-        let item = DispatchWorkItem { [weak self] in
+        let logger = self.logger
+        let item = DispatchWorkItem { @Sendable in
             do {
                 try service?.setAudioVolume(clamped)
             } catch {
-                self?.logger.error("DDC write failed for device \(deviceID): \(error)")
+                logger.error("DDC write failed for device \(deviceID): \(error)")
             }
         }
         debounceTimers[deviceID] = item

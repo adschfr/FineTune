@@ -93,7 +93,8 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
         MenuBarDeviceIconResolver.resolveSymbol(
             priorityOrder: settings.devicePriorityOrder,
             outputDevices: deviceProvider.outputDevices,
-            defaultDeviceID: deviceVolumeMonitor.defaultDeviceID
+            defaultDeviceID: deviceVolumeMonitor.defaultDeviceID,
+            overrideForUID: { [settings] in settings.getDeviceIconOverride(for: $0) }
         )
     }
 
@@ -134,6 +135,8 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
             _ = settings.appSettings.menuBarIconStyle
             _ = settings.appSettings.hudStyle
             _ = settings.devicePriorityOrder
+            // Deliberate dependency so the device-style icon refreshes when the user picks a new symbol; explicit because observation granularity is per stored property.
+            _ = settings.deviceIconOverrides
             _ = deviceProvider.outputDevices
         } onChange: { [weak self] in
             // onChange fires in willSet — the tracked properties are still at their

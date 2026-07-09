@@ -182,11 +182,14 @@ struct FineTuneApp: App {
             deviceSymbol: MenuBarDeviceIconResolver.resolveSymbol(
                 priorityOrder: settings.devicePriorityOrder,
                 outputDevices: engine.deviceMonitor.outputDevices,
-                defaultDeviceID: launchID
+                defaultDeviceID: launchID,
+                overrideForUID: { settings.getDeviceIconOverride(for: $0) }
             )
         )
+        // The fallback must go through the shared canvas too, or the status
+        // item launches at natural symbol width and jumps on the first apply().
         launchIconImage = launchState.image.nsImage()
-            ?? NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: "FineTune")!
+            ?? MenuBarIconImage.systemSymbol("speaker.wave.2").nsImage()!
 
         // Start Accessibility polling immediately so `isTrustedCached` is live
         // before the user first opens Settings. The trust-flip callback wires

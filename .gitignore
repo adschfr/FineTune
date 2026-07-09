@@ -34,3 +34,6 @@ launch-team.sh
 *.profraw
 .playwright-mcp/
 scripts/spikes/
+
+# Brainstorming session artifacts
+.superpowers/

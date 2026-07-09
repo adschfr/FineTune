@@ -562,7 +562,8 @@ struct MenuBarPopupView: View {
                             let currentMute = deviceVolumeMonitor.inputMuteStates[device.id] ?? false
                             deviceVolumeMonitor.setInputMute(for: device.id, to: !currentMute)
                         },
-                        isFocused: hasKeyboardEngaged && selectedRow == .device(uid: device.uid)
+                        isFocused: hasKeyboardEngaged && selectedRow == .device(uid: device.uid),
+                        iconOverrideSymbol: audioEngine.settingsManager.getDeviceIconOverride(for: device.uid)
                     )
                     .id(PopupKeyboardNavModel.RowID.device(uid: device.uid))
                 }
@@ -617,7 +618,8 @@ struct MenuBarPopupView: View {
                         onAutoEQPreampToggle: {
                             audioEngine.setAutoEQPreampEnabled(!audioEngine.autoEQPreampEnabled)
                         },
-                        isFocused: hasKeyboardEngaged && selectedRow == .device(uid: device.uid)
+                        isFocused: hasKeyboardEngaged && selectedRow == .device(uid: device.uid),
+                        iconOverrideSymbol: audioEngine.settingsManager.getDeviceIconOverride(for: device.uid)
                     )
                     .id(PopupKeyboardNavModel.RowID.device(uid: device.uid))
                 }
@@ -641,6 +643,7 @@ struct MenuBarPopupView: View {
 
         DeviceEditRow(
             device: device,
+            iconOverrideSymbol: audioEngine.settingsManager.getDeviceIconOverride(for: device.uid),
             priorityIndex: index,
             isDefault: device.id == defaultDeviceID,
             isInputDevice: showingInputDevices,
@@ -671,6 +674,9 @@ struct MenuBarPopupView: View {
                 } else {
                     audioEngine.settingsManager.toggleOutputDeviceHidden(uid: device.uid)
                 }
+            },
+            onIconSelect: { symbol in
+                audioEngine.settingsManager.setDeviceIconOverride(for: device.uid, to: symbol)
             },
             expandedContent: {
                 // Only render when actually expanded. Input devices skip
@@ -860,6 +866,7 @@ struct MenuBarPopupView: View {
                 volume: audioEngine.getVolume(for: app),
                 isMuted: audioEngine.getMute(for: app),
                 devices: sortedDevices,
+                deviceIconOverrides: audioEngine.settingsManager.deviceIconOverrides,
                 selectedDeviceUID: deviceUID,
                 selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDs(for: app),
                 isFollowingDefault: audioEngine.isFollowingDefault(for: app),
@@ -931,6 +938,7 @@ struct MenuBarPopupView: View {
             icon: displayableApp.icon,
             volume: audioEngine.getVolumeForInactive(identifier: identifier),
             devices: sortedDevices,
+            deviceIconOverrides: audioEngine.settingsManager.deviceIconOverrides,
             selectedDeviceUID: audioEngine.getDeviceRoutingForInactive(identifier: identifier),
             selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDsForInactive(identifier: identifier),
             isFollowingDefault: audioEngine.isFollowingDefaultForInactive(identifier: identifier),
