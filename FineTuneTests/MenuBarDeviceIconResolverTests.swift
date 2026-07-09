@@ -127,54 +127,133 @@ struct MenuBarDeviceIconResolverTests {
         #expect(symbol == MenuBarDeviceIconResolver.fallbackSymbol)
     }
 
-    @Test("Override-aware device symbol wins over the derived symbol")
-    func overrideAwareSymbolWins() {
-        let d = device(id: 2, uid: "airpods", name: "AirPods Pro")
-        #expect(MenuBarDeviceIconResolver.symbol(for: d, override: "gamecontroller.fill") == "gamecontroller.fill")
-    }
-
-    @Test("Nil override falls back to the device-derived symbol")
-    func nilOverrideFallsBack() {
-        // 0xFFFFFFFE is never assigned by the HAL, so the fake ID deterministically
-        // reads as unreadable name + unknown transport on any machine.
-        let d = device(id: 0xFFFF_FFFE, uid: "airpods", name: "AirPods Pro")
-        #expect(
-            MenuBarDeviceIconResolver.symbol(for: d, override: nil)
-                == AudioDeviceID.iconSymbol(forName: "", transport: .unknown)
-        )
-    }
-
-    @Test("resolveSymbol surfaces an override through the injected closure")
-    func resolveSymbolWithOverrideClosure() {
-        let overrides = ["airpods": "gamecontroller.fill"]
+    @Test("Resolvable override wins over the derived symbol")
+    func resolvableOverrideWins() {
         let devices = [device(id: 2, uid: "airpods", name: "AirPods Pro")]
         let symbol = MenuBarDeviceIconResolver.resolveSymbol(
             priorityOrder: ["airpods"],
             outputDevices: devices,
             defaultDeviceID: 2,
+            overrideForUID: { ["airpods": "gamecontroller.fill"][$0] },
+            isSymbolResolvable: { _ in true },
             isDeviceAvailable: { _ in true },
-            symbolForDevice: { MenuBarDeviceIconResolver.symbol(for: $0, override: overrides[$0.uid]) },
+            symbolForDevice: { _ in "headphones" },
             symbolForDefaultID: { _ in "speaker.wave.2" }
         )
         #expect(symbol == "gamecontroller.fill")
     }
 
-    @Test("Invalid default ID returns the fallback without consulting the override")
-    func defaultIDInvalidReturnsFallback() {
-        var consulted = false
-        let symbol = MenuBarDeviceIconResolver.symbol(forDefaultID: .unknown, override: { _ in
-            consulted = true
-            return "nope"
-        })
-        #expect(symbol == MenuBarDeviceIconResolver.fallbackSymbol)
-        #expect(!consulted)
+    @Test("Unresolvable override falls back to the derived symbol")
+    func unresolvableOverrideFallsBack() {
+        let devices = [device(id: 2, uid: "airpods", name: "AirPods Pro")]
+        let symbol = MenuBarDeviceIconResolver.resolveSymbol(
+            priorityOrder: ["airpods"],
+            outputDevices: devices,
+            defaultDeviceID: 2,
+            overrideForUID: { _ in "not.a.real.symbol" },
+            isSymbolResolvable: { _ in false },
+            isDeviceAvailable: { _ in true },
+            symbolForDevice: { _ in "headphones" },
+            symbolForDefaultID: { _ in "speaker.wave.2" }
+        )
+        #expect(symbol == "headphones")
+    }
+
+    @Test("The default validator accepts a real SF Symbol and rejects a bogus name")
+    func defaultValidatorChecksRealSymbols() {
+        let devices = [device(id: 2, uid: "airpods", name: "AirPods Pro")]
+        func resolve(override: String) -> String {
+            MenuBarDeviceIconResolver.resolveSymbol(
+                priorityOrder: ["airpods"],
+                outputDevices: devices,
+                defaultDeviceID: 2,
+                overrideForUID: { _ in override },
+                isDeviceAvailable: { _ in true },
+                symbolForDevice: { _ in "headphones" },
+                symbolForDefaultID: { _ in "speaker.wave.2" }
+            )
+        }
+        #expect(resolve(override: "gamecontroller.fill") == "gamecontroller.fill")
+        #expect(resolve(override: "not.a.real.symbol") == "headphones")
+    }
+
+    @Test("Priority-path device consults the override too")
+    func priorityPathConsultsOverride() {
+        let devices = [device(id: 2, uid: "homepod", name: "HomePod")]
+        let symbol = MenuBarDeviceIconResolver.resolveSymbol(
+            priorityOrder: ["homepod"],
+            outputDevices: devices,
+            defaultDeviceID: 999,
+            overrideForUID: { ["homepod": "tv.fill"][$0] },
+            isSymbolResolvable: { _ in true },
+            isDeviceAvailable: { _ in true },
+            symbolForDevice: { _ in "homepod" },
+            symbolForDefaultID: { _ in "speaker.wave.2" }
+        )
+        #expect(symbol == "tv.fill")
+    }
+
+    @Test("Default-ID path surfaces a resolvable override")
+    func defaultIDOverrideWins() {
+        let symbol = MenuBarDeviceIconResolver.resolveSymbol(
+            priorityOrder: [],
+            outputDevices: [],
+            defaultDeviceID: 42,
+            overrideForUID: { ["monitor-uid": "tv.fill"][$0] },
+            isSymbolResolvable: { _ in true },
+            isDeviceAvailable: { _ in true },
+            uidForDefaultID: { _ in "monitor-uid" },
+            symbolForDefaultID: { _ in "speaker.wave.2" }
+        )
+        #expect(symbol == "tv.fill")
+    }
+
+    @Test("Default-ID path validates the override")
+    func defaultIDOverrideValidated() {
+        let symbol = MenuBarDeviceIconResolver.resolveSymbol(
+            priorityOrder: [],
+            outputDevices: [],
+            defaultDeviceID: 42,
+            overrideForUID: { _ in "not.a.real.symbol" },
+            isSymbolResolvable: { _ in false },
+            isDeviceAvailable: { _ in true },
+            uidForDefaultID: { _ in "monitor-uid" },
+            symbolForDefaultID: { _ in "speaker.wave.2" }
+        )
+        #expect(symbol == "speaker.wave.2")
     }
 
     @Test("Default ID with unreadable UID falls through to the derived symbol")
     func defaultIDUnreadableUIDFallsThrough() {
-        #expect(
-            MenuBarDeviceIconResolver.symbol(forDefaultID: 0xFFFF_FFFE, override: { _ in "nope" })
-                == AudioDeviceID.iconSymbol(forName: "", transport: .unknown)
+        let symbol = MenuBarDeviceIconResolver.resolveSymbol(
+            priorityOrder: [],
+            outputDevices: [],
+            defaultDeviceID: 42,
+            overrideForUID: { _ in "tv.fill" },
+            isSymbolResolvable: { _ in true },
+            isDeviceAvailable: { _ in true },
+            uidForDefaultID: { _ in nil },
+            symbolForDefaultID: { _ in "speaker.wave.2" }
         )
+        #expect(symbol == "speaker.wave.2")
+    }
+
+    @Test("Invalid default ID returns the fallback without consulting the override")
+    func defaultIDInvalidReturnsFallback() {
+        var consulted = false
+        let symbol = MenuBarDeviceIconResolver.resolveSymbol(
+            priorityOrder: [],
+            outputDevices: [],
+            defaultDeviceID: .unknown,
+            overrideForUID: { _ in
+                consulted = true
+                return "nope"
+            },
+            isDeviceAvailable: { _ in true },
+            symbolForDevice: { _ in "unused" },
+            symbolForDefaultID: { _ in "unused" }
+        )
+        #expect(symbol == MenuBarDeviceIconResolver.fallbackSymbol)
+        #expect(!consulted)
     }
 }

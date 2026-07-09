@@ -94,12 +94,7 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
             priorityOrder: settings.devicePriorityOrder,
             outputDevices: deviceProvider.outputDevices,
             defaultDeviceID: deviceVolumeMonitor.defaultDeviceID,
-            symbolForDevice: { [settings] device in
-                MenuBarDeviceIconResolver.symbol(for: device, override: settings.getDeviceIconOverride(for: device.uid))
-            },
-            symbolForDefaultID: { [settings] id in
-                MenuBarDeviceIconResolver.symbol(forDefaultID: id, override: { settings.getDeviceIconOverride(for: $0) })
-            }
+            overrideForUID: { [settings] in settings.getDeviceIconOverride(for: $0) }
         )
     }
 
