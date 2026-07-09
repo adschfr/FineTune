@@ -24,6 +24,14 @@
     </item>
     -->
         <item>
+            <title>1.9.0</title>
+            <pubDate>Thu, 09 Jul 2026 07:54:54 +0000</pubDate>
+            <sparkle:version>38</sparkle:version>
+            <sparkle:shortVersionString>1.9.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.4</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/ronitsingh10/FineTune/releases/download/v1.9.0/FineTune.dmg" length="5436346" type="application/octet-stream" sparkle:edSignature="+JnrPmTP+SA05N9EhKX7cVXesDZdIOGzHP8L0IOwZN4RLnp9jNiHjKMg84Cvl2hCOFBHYtvSFvlOTBOMMnA5Cw=="/>
+        </item>
+        <item>
             <title>1.8.0</title>
             <pubDate>Sun, 14 Jun 2026 23:42:09 +0000</pubDate>
             <sparkle:version>37</sparkle:version>
