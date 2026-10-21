@@ -19,8 +19,8 @@ final class UpdateManager: NSObject, ObservableObject {
         )
         super.init()
 
-        // Start updater to enable manual checks, but don't trigger auto-check UI
-        try? updaterController.updater.start()
+        // Fork build: the updater is never started, so Sparkle neither checks the upstream
+        // appcast nor replaces this build with an upstream release. canCheckForUpdates stays false.
 
         // Observe when updates can be checked
         updaterController.updater.publisher(for: \.canCheckForUpdates)
