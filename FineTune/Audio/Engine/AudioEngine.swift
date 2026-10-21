@@ -1047,6 +1047,7 @@ final class AudioEngine {
                     if profile == nil { applyAutoEQToTap(tap) }
                     logger.debug("Updated \(app.name) to \(deviceUIDs.count) device(s)")
                 } catch {
+                    logger.error("Failed to update devices for \(app.name): \(error.localizedDescription)")
                 }
             }
         } else {
