@@ -19,6 +19,7 @@ private struct Fixture {
     let deviceMonitor: MockAudioDeviceMonitor
     let deviceVolume: MockDeviceVolumeProviding
     let taps: FakeTapFactory
+    let playback: PlaybackDevices
     let tv: AudioDevice
     let speakers: AudioDevice
 }
@@ -45,6 +46,7 @@ private func makeFixture(tvVolume: Float = 0.25, tvMuted: Bool = false) -> Fixtu
     permission.status = .authorized
 
     let taps = FakeTapFactory()
+    let playback = PlaybackDevices()
     let engine = AudioEngine(
         permission: permission,
         settingsManager: settings,
@@ -52,13 +54,20 @@ private func makeFixture(tvVolume: Float = 0.25, tvMuted: Bool = false) -> Fixtu
         deviceProvider: deviceMonitor,
         processMonitor: StubProcessMonitor(),
         deviceVolumeMonitor: deviceVolume,
-        tapFactory: { app, uids, _ in try taps.make(app: app, deviceUIDs: uids) },
+        tapFactory: { app, uids, source in try taps.make(app: app, deviceUIDs: uids, source: source) },
         // Fake device IDs must not reach the HAL's alive check (it would install listeners)
         isAlive: { _ in true },
+        processOutputDeviceUIDs: { playback.byPID[$0.id] ?? [] },
         startMonitorsAutomatically: false
     )
     return Fixture(engine: engine, deviceMonitor: deviceMonitor, deviceVolume: deviceVolume,
-                   taps: taps, tv: tv, speakers: speakers)
+                   taps: taps, playback: playback, tv: tv, speakers: speakers)
+}
+
+/// Which output devices each app's processes currently play to.
+@MainActor
+private final class PlaybackDevices {
+    var byPID: [pid_t: Set<String>] = [:]
 }
 
 @MainActor
@@ -288,5 +297,55 @@ struct AudioEngineSoftwareVolumeTests {
 
             #expect(!tap.isInvalidated)
         }
+    }
+
+    // Stream tap vs. process-wide tap for apps that follow the default output
+
+    @Test("A following app that plays to the default output gets a stream tap on it")
+    func followingAppOnDefaultGetsStreamTap() throws {
+        let fix = makeFixture()
+        let app = makeApp()
+        fix.playback.byPID[app.id] = [fix.tv.uid]
+
+        fix.engine.setDevice(for: app, deviceUID: nil)
+
+        let tap = try #require(fix.taps.last)
+        #expect(tap.tapSourceDeviceUID == fix.tv.uid)
+    }
+
+    @Test("An app that stays on the TV when the default changes is captured process-wide")
+    func appStayingOnOldOutputGetsMixdownTap() async throws {
+        // CrossOver/Wine games keep playing to the device they started with. A stream tap on
+        // the new default would miss that audio, which then plays unprocessed on the TV.
+        let fix = makeFixture(tvVolume: 0.25)
+        let game = makeApp()
+        fix.playback.byPID[game.id] = [fix.tv.uid]
+        fix.engine.setDevice(for: game, deviceUID: nil)
+        let tap = try #require(fix.taps.last)
+
+        // AirPods (here: the speakers) become the default; the game still plays to the TV
+        fix.deviceVolume.defaultDeviceID = fix.speakers.id
+        fix.deviceVolume.defaultDeviceUID = fix.speakers.uid
+        fix.deviceVolume.onDefaultDeviceChanged?(fix.speakers.uid)
+
+        #expect(await waitUntil { tap.currentDeviceUIDs == [fix.speakers.uid] })
+        #expect(tap.tapSourceDeviceUID == nil)
+    }
+
+    @Test("An app that already plays to the new default output gets a stream tap on it")
+    func appFollowingDefaultGetsStreamTapOnNewDefault() async throws {
+        let fix = makeFixture()
+        let app = makeApp()
+        fix.playback.byPID[app.id] = [fix.tv.uid]
+        fix.engine.setDevice(for: app, deviceUID: nil)
+        let tap = try #require(fix.taps.last)
+
+        fix.playback.byPID[app.id] = [fix.speakers.uid]
+        fix.deviceVolume.defaultDeviceID = fix.speakers.id
+        fix.deviceVolume.defaultDeviceUID = fix.speakers.uid
+        fix.deviceVolume.onDefaultDeviceChanged?(fix.speakers.uid)
+
+        #expect(await waitUntil { tap.currentDeviceUIDs == [fix.speakers.uid] })
+        #expect(tap.tapSourceDeviceUID == fix.speakers.uid)
     }
 }

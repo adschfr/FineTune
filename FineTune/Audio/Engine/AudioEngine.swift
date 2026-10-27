@@ -36,6 +36,9 @@ final class AudioEngine {
     /// Clock for tap suspension and recovery timing. Overridable for testing.
     private let currentDate: () -> Date
 
+    /// UIDs of the output devices an app's processes currently play to. Overridable for testing.
+    private let processOutputDeviceUIDs: (AudioApp) -> Set<String>
+
     /// False for engines built with `startMonitorsAutomatically: false` (unit tests).
     private let startsSystemMonitors: Bool
 
@@ -240,6 +243,7 @@ final class AudioEngine {
         isAlive: ((AudioDeviceID) -> Bool)? = nil,
         isProcessRunning: ((AudioObjectID) -> Bool)? = nil,
         currentDate: (() -> Date)? = nil,
+        processOutputDeviceUIDs: ((AudioApp) -> Set<String>)? = nil,
         staleCleanupDebounce: Duration = .milliseconds(350),
         staleTapGracePeriod: Duration = .seconds(30),
         healthCheckInterval: Duration = .seconds(2),
@@ -254,6 +258,11 @@ final class AudioEngine {
         self.isAliveCheck = isAlive ?? { $0.isDeviceAlive() }
         self.isProcessRunning = isProcessRunning ?? { $0.readProcessIsRunning() }
         self.currentDate = currentDate ?? { Date() }
+        self.processOutputDeviceUIDs = processOutputDeviceUIDs ?? { app in
+            Set(app.processObjectIDs
+                .flatMap { $0.readProcessOutputDevices() }
+                .compactMap { try? $0.readDeviceUID() })
+        }
         self.staleCleanupDebounce = staleCleanupDebounce
         self.staleTapGracePeriod = staleTapGracePeriod
         self.startsSystemMonitors = startMonitorsAutomatically
@@ -1135,7 +1144,7 @@ final class AudioEngine {
 
         // Switch tap if needed
         guard let targetUID = appDeviceRouting[app.id] else { return }
-        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: followsDefault.contains(app.id))
+        let preferredTapSourceUID = preferredTapSourceDeviceUID(for: app, outputUIDs: [targetUID], isFollowsDefault: followsDefault.contains(app.id))
         if let tap = taps[app.id] {
             Task { [weak self] in
                 guard let self else { return }
@@ -1233,7 +1242,7 @@ final class AudioEngine {
             // Tap exists - update devices
             if tap.currentDeviceUIDs != deviceUIDs {
                 do {
-                    let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
+                    let preferredTapSourceUID = preferredTapSourceDeviceUID(for: app, outputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
                     let profile = autoEQProfileForActivation(deviceUID: deviceUIDs.first ?? "")
                     try await tap.updateDevices(to: deviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
                     applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
@@ -1256,7 +1265,7 @@ final class AudioEngine {
         guard permission.status == .authorized else { return }
         guard !isCallPassthrough(app) else { return }
 
-        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
+        let preferredTapSourceUID = preferredTapSourceDeviceUID(for: app, outputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
         do {
             let tap = try tapFactory(app, deviceUIDs, preferredTapSourceUID)
             applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
@@ -1383,7 +1392,7 @@ final class AudioEngine {
             // If a tap already exists but is on the wrong device (e.g., app reappeared
             // after the default changed while it was absent), switch it.
             if let existingTap = taps[app.id], existingTap.currentDeviceUIDs != [deviceUID] {
-                let preferredSource = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
+                let preferredSource = preferredTapSourceDeviceUID(for: app, outputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
                 Task { [weak self] in
                     guard let self else { return }
                     do {
@@ -1426,7 +1435,7 @@ final class AudioEngine {
         guard permission.status == .authorized else { return }
         guard !isCallPassthrough(app) else { return }
 
-        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
+        let preferredTapSourceUID = preferredTapSourceDeviceUID(for: app, outputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
         do {
             let tap = try tapFactory(app, [deviceUID], preferredTapSourceUID)
             applyTapOutputState(to: tap, for: app.id, deviceUIDs: [deviceUID])
@@ -1539,7 +1548,7 @@ final class AudioEngine {
             let profile = self.autoEQProfileForActivation(deviceUID: targetUID)
             for (app, tap) in tapsToSwitch {
                 do {
-                    let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: true)
+                    let preferredTapSourceUID = self.preferredTapSourceDeviceUID(for: app, outputUIDs: [targetUID], isFollowsDefault: true)
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
                     self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
                     if profile == nil { self.applyAutoEQToTap(tap) }
@@ -1620,7 +1629,7 @@ final class AudioEngine {
                 // Handle single-mode switches — source device is dead, skip crossfade
                 for (tap, fallbackUID) in singleModeTapsToSwitch {
                     do {
-                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [fallbackUID], isFollowsDefault: true)
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(for: tap.app, outputUIDs: [fallbackUID], isFollowsDefault: true)
                         let profile = self.autoEQProfileForActivation(deviceUID: fallbackUID)
                         try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true, autoEQProfile: profile)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [fallbackUID])
@@ -1634,7 +1643,7 @@ final class AudioEngine {
                 // Source device is dead, skip crossfade
                 for (tap, remainingUIDs) in multiModeTapsToUpdate {
                     do {
-                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: remainingUIDs, isFollowsDefault: self.followsDefault.contains(tap.app.id))
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(for: tap.app, outputUIDs: remainingUIDs, isFollowsDefault: self.followsDefault.contains(tap.app.id))
                         let profile = self.autoEQProfileForActivation(deviceUID: remainingUIDs.first ?? "")
                         try await tap.updateDevices(to: remainingUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true, autoEQProfile: profile)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: remainingUIDs)
@@ -1703,7 +1712,7 @@ final class AudioEngine {
                 let profile = self.autoEQProfileForActivation(deviceUID: deviceUID)
                 for tap in tapsToSwitch {
                     do {
-                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: false)
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(for: tap.app, outputUIDs: [deviceUID], isFollowsDefault: false)
                         try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [deviceUID])
                         if profile == nil { self.applyAutoEQToTap(tap) }
@@ -2053,10 +2062,19 @@ final class AudioEngine {
     /// Only follows-default apps use stream-specific taps (multichannel preserved, tap always
     /// valid because the app switches device when default changes). Explicitly-routed apps
     /// always use stereo mixdown (nil) — their tap never goes stale when the default changes.
-    private func preferredTapSourceDeviceUID(forOutputUIDs outputUIDs: [String], isFollowsDefault: Bool) -> String? {
+    /// Device whose output stream a follows-default app's tap should capture, or nil for the
+    /// process-wide mixdown tap.
+    ///
+    /// A stream tap only captures what the app sends to that device. Apps that keep playing
+    /// to the previous device after the default changes (CrossOver/Wine games bind the device
+    /// they started with) would escape it and play unprocessed there: at full scale on a
+    /// software-volume output such as a TV. So the stream tap is used only when the app
+    /// already plays to the default device; otherwise the mixdown tap catches its audio on
+    /// any device and FineTune plays it to the chosen output.
+    private func preferredTapSourceDeviceUID(for app: AudioApp, outputUIDs: [String], isFollowsDefault: Bool) -> String? {
         guard isFollowsDefault else { return nil }
-        guard let defaultUID = deviceVolumeMonitor.defaultDeviceUID else { return nil }
-        return outputUIDs.contains(defaultUID) ? defaultUID : nil
+        guard let defaultUID = deviceVolumeMonitor.defaultDeviceUID, outputUIDs.contains(defaultUID) else { return nil }
+        return processOutputDeviceUIDs(app).contains(defaultUID) ? defaultUID : nil
     }
 
     private func cleanupStaleTaps() {
