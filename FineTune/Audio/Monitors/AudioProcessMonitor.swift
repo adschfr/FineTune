@@ -10,6 +10,7 @@ private struct AppFingerprint: Hashable {
     let pid: pid_t
     let objectIDs: [AudioObjectID]
     let hasRunningProcess: Bool
+    let isRunningInput: Bool
 }
 
 @Observable
@@ -85,8 +86,16 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
 
     // Property listeners
     private var processListListenerBlock: AudioObjectPropertyListenerBlock?
-    private var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
+    private var processListenerBlocks: [AudioObjectID: [(selector: AudioObjectPropertySelector, block: AudioObjectPropertyListenerBlock)]] = [:]
     private var monitoredProcesses: Set<AudioObjectID> = []
+
+    /// Per-process properties observed for changes. Both funnel into refresh():
+    /// IsRunning drives app-list membership, IsRunningInput drives call
+    /// passthrough (apps capturing input are left untapped; see AudioEngine).
+    private static let processListenerSelectors: [AudioObjectPropertySelector] = [
+        kAudioProcessPropertyIsRunning,
+        kAudioProcessPropertyIsRunningInput,
+    ]
     private var periodicRefreshTask: Task<Void, Never>?
 
     private var processListAddress = AudioObjectPropertyAddress(
@@ -234,6 +243,8 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                 // Keep non-streaming Core Audio process objects visible so AudioEngine
                 // can create process taps before the first audible buffer.
 
+                let isRunningInput = objectID.readProcessIsRunningInput()
+
                 // Try to find the parent app (for helper processes like Safari Graphics and Media)
                 let directApp = runningAppsByPID[pid]
 
@@ -267,7 +278,18 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                             name: existing.name,
                             icon: existing.icon,
                             bundleID: existing.bundleID,
-                            isHelperBacked: existing.isHelperBacked || isHelper
+                            isHelperBacked: existing.isHelperBacked || isHelper,
+                            isRunningInput: existing.isRunningInput || isRunningInput
+                        )
+                    } else if isRunningInput && !existing.isRunningInput {
+                        appsByPID[parentPID] = AudioApp(
+                            id: existing.id,
+                            processObjectIDs: existing.processObjectIDs,
+                            name: existing.name,
+                            icon: existing.icon,
+                            bundleID: existing.bundleID,
+                            isHelperBacked: existing.isHelperBacked,
+                            isRunningInput: true
                         )
                     }
                 } else {
@@ -277,7 +299,8 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                         name: name,
                         icon: icon,
                         bundleID: bundleID,
-                        isHelperBacked: isHelper
+                        isHelperBacked: isHelper,
+                        isRunningInput: isRunningInput
                     )
                 }
             }
@@ -290,7 +313,7 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
             // Only fire callback if the app list actually changed (avoids churn from periodic refresh).
             // Must snapshot the previous fingerprint set — recomputing hasRunningProcess from the
             // old activeApps list would read the CURRENT isRunning state, making old == new always.
-            let newSet = Set(sorted.map { AppFingerprint(pid: $0.id, objectIDs: $0.processObjectIDs, hasRunningProcess: $0.processObjectIDs.contains { $0.readProcessIsRunning() }) })
+            let newSet = Set(sorted.map { AppFingerprint(pid: $0.id, objectIDs: $0.processObjectIDs, hasRunningProcess: $0.processObjectIDs.contains { $0.readProcessIsRunning() }, isRunningInput: $0.isRunningInput) })
 
             activeApps = sorted
             if previousFingerprints != newSet {
@@ -322,40 +345,50 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
     }
 
     private func addProcessListener(for objectID: AudioObjectID) {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioProcessPropertyIsRunning,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
+        var registered: [(selector: AudioObjectPropertySelector, block: AudioObjectPropertyListenerBlock)] = []
 
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            Task { @MainActor [weak self] in
-                self?.refresh()
+        for selector in Self.processListenerSelectors {
+            var address = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    self?.refresh()
+                }
+            }
+
+            let status = AudioObjectAddPropertyListenerBlock(objectID, &address, .main, block)
+
+            if status == noErr {
+                registered.append((selector: selector, block: block))
+            } else {
+                logger.warning("Failed to add \(selector) listener for \(objectID): \(status)")
             }
         }
 
-        let status = AudioObjectAddPropertyListenerBlock(objectID, &address, .main, block)
-
-        if status == noErr {
-            processListenerBlocks[objectID] = block
-        } else {
-            logger.warning("Failed to add isRunning listener for \(objectID): \(status)")
+        if !registered.isEmpty {
+            processListenerBlocks[objectID] = registered
         }
     }
 
     private func removeProcessListener(for objectID: AudioObjectID) {
-        guard let block = processListenerBlocks.removeValue(forKey: objectID) else { return }
+        guard let registered = processListenerBlocks.removeValue(forKey: objectID) else { return }
 
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioProcessPropertyIsRunning,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
+        for (selector, block) in registered {
+            var address = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
 
-        let status = AudioObjectRemovePropertyListenerBlock(objectID, &address, .main, block)
-        // Tolerate kAudioHardwareBadObjectError (-66680): process object already destroyed
-        if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
-            logger.warning("Failed to remove isRunning listener for \(objectID): \(status)")
+            let status = AudioObjectRemovePropertyListenerBlock(objectID, &address, .main, block)
+            // Tolerate kAudioHardwareBadObjectError (-66680): process object already destroyed
+            if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
+                logger.warning("Failed to remove \(selector) listener for \(objectID): \(status)")
+            }
         }
     }
 
