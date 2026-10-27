@@ -2261,13 +2261,16 @@ final class AudioEngine {
         healthMonitorTask = nil
     }
 
-    /// Tears down and recreates a tap for a given PID, preserving routing and settings.
-    /// Async: awaits full CoreAudio resource teardown before creating the replacement tap
-    /// to prevent orphaned IO procs from accumulating (issue #176).
+    /// Replaces the tap for a given PID, preserving routing and settings.
+    ///
+    /// Make before break: the old tap is silenced, the replacement is built, and only then
+    /// is the old tap destroyed (awaited, so IO procs never pile up, #176). Both taps mute
+    /// the process (CATapMuted), so it never plays unprocessed in between; on a
+    /// software-volume output that would be full scale. If the replacement cannot be
+    /// built, the old tap stays: the app is silent rather than unprocessed, and a later
+    /// recreate can try again.
     private func recreateTap(for pid: pid_t) async {
-        guard let oldTap = taps.removeValue(forKey: pid) else { return }
-        let deviceUIDs = oldTap.currentDeviceUIDs
-        await oldTap.invalidateAsync()
+        guard let oldTap = taps[pid] else { return }
 
         // Set cooldown to prevent thrashing
         tapRecoveryCooldownUntil[pid] = currentDate().addingTimeInterval(20)
@@ -2275,33 +2278,58 @@ final class AudioEngine {
         // Find the current AudioApp entry for this PID (may be silent; its new tap is
         // suspended again by syncTapsWithProcessState)
         guard let app = processMonitor.activeApps.first(where: { $0.id == pid }) else {
-            logger.debug("No active app for PID \(pid), skipping tap recreation")
+            logger.debug("No active app for PID \(pid), releasing its tap without replacement")
+            taps.removeValue(forKey: pid)
             appliedPIDs.remove(pid)
+            await oldTap.invalidateAsync()
             return
         }
 
-        // Allow re-initialization
+        let deviceUIDs = recreateTargetUIDs(for: app, oldTap: oldTap)
+
+        // The old tap keeps the process muted but must not play alongside the new one
+        oldTap.isMuted = true
+        taps.removeValue(forKey: pid)
         appliedPIDs.remove(pid)
 
-        // Re-route to the same device(s), preserving multi-device routing
         if deviceUIDs.count > 1 {
             ensureTapWithDevices(for: app, deviceUIDs: deviceUIDs)
-            if taps[app.id] != nil {
-                appDeviceRouting[app.id] = deviceUIDs[0]
+            if taps[pid] != nil {
+                appDeviceRouting[pid] = deviceUIDs[0]
             }
         } else if let deviceUID = deviceUIDs.first {
             ensureTapExists(for: app, deviceUID: deviceUID)
         }
 
-        // Mark as applied to avoid redundant re-processing in applyPersistedSettings
-        if taps[pid] != nil {
-            appliedPIDs.insert(pid)
+        guard taps[pid] != nil else {
+            logger.error("Could not recreate tap for \(app.name); keeping the old tap so the app stays muted")
+            oldTap.isMuted = volumeState.getMute(for: pid)
+            taps[pid] = oldTap
+            return
         }
+
+        // Mark as applied to avoid redundant re-processing in applyPersistedSettings
+        appliedPIDs.insert(pid)
 
         // Restore mute state
         if let muted = volumeState.loadSavedMute(for: pid, identifier: app.persistenceIdentifier), muted {
             taps[pid]?.isMuted = true
         }
+
+        await oldTap.invalidateAsync()
+    }
+
+    /// Devices a recreated tap plays to: the app's current routing rather than the old
+    /// tap's devices, which may be gone (possibly why the tap stopped working).
+    private func recreateTargetUIDs(for app: AudioApp, oldTap: any ProcessTapControlling) -> [String] {
+        let isAvailable: (String) -> Bool = { self.deviceMonitor.device(for: $0) != nil }
+        if oldTap.currentDeviceUIDs.count > 1 {
+            let available = oldTap.currentDeviceUIDs.filter(isAvailable)
+            if !available.isEmpty { return available }
+        }
+        if let routed = appDeviceRouting[app.id], isAvailable(routed) { return [routed] }
+        if let defaultUID = deviceVolumeMonitor.defaultDeviceUID, isAvailable(defaultUID) { return [defaultUID] }
+        return oldTap.currentDeviceUIDs
     }
 
     /// Silence every tap routed to `uid` while the HAL settles (called before debounce confirms the change).

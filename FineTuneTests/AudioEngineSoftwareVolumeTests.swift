@@ -52,7 +52,7 @@ private func makeFixture(tvVolume: Float = 0.25, tvMuted: Bool = false) -> Fixtu
         deviceProvider: deviceMonitor,
         processMonitor: StubProcessMonitor(),
         deviceVolumeMonitor: deviceVolume,
-        tapFactory: { app, uids, _ in taps.make(app: app, deviceUIDs: uids) },
+        tapFactory: { app, uids, _ in try taps.make(app: app, deviceUIDs: uids) },
         // Fake device IDs must not reach the HAL's alive check (it would install listeners)
         isAlive: { _ in true },
         startMonitorsAutomatically: false

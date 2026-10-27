@@ -14,7 +14,9 @@ final class FakeTapController: ProcessTapControlling {
     private(set) var app: AudioApp
 
     var volume: Float = 1.0
-    var isMuted = false
+    var isMuted = false {
+        didSet { onEvent?("mute \(isMuted)") }
+    }
     var currentDeviceVolume: Float = 1.0
     var isDeviceMuted = false
     var audioLevel: Float = 0.0
@@ -26,6 +28,9 @@ final class FakeTapController: ProcessTapControlling {
     private(set) var volumeAtActivate: Float?
     private(set) var isMutedAtActivate: Bool?
     private(set) var isInvalidated = false
+
+    /// Reports lifecycle events ("activate", "mute true", "invalidate") to the factory's log.
+    var onEvent: ((String) -> Void)?
 
     private(set) var isSuspended = false
     private(set) var suspendCount = 0
@@ -45,10 +50,12 @@ final class FakeTapController: ProcessTapControlling {
     func activate(initial: TapInitialState) throws {
         volumeAtActivate = volume
         isMutedAtActivate = isMuted
+        onEvent?("activate")
     }
 
     func invalidate() {
         isInvalidated = true
+        onEvent?("invalidate")
     }
 
     func suspend() {
@@ -88,16 +95,29 @@ final class FakeTapController: ProcessTapControlling {
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool { false }
 }
 
-/// Collects every tap a test engine's factory hands out.
+/// Collects every tap a test engine's factory hands out, with an ordered event log
+/// such as ["create 0", "activate 0", "mute true 0", "create 1", ..., "invalidate 0"].
 @MainActor
 final class FakeTapFactory {
     private(set) var created: [FakeTapController] = []
+    private(set) var log: [String] = []
     var last: FakeTapController? { created.last }
+    /// When true, creating a tap fails like a Core Audio error would.
+    var failCreations = false
 
-    func make(app: AudioApp, deviceUIDs: [String]) -> FakeTapController {
+    func make(app: AudioApp, deviceUIDs: [String]) throws -> FakeTapController {
+        if failCreations { throw FakeTapError() }
+        let index = created.count
         let tap = FakeTapController(app: app, deviceUIDs: deviceUIDs)
+        log.append("create \(index)")
+        tap.onEvent = { [weak self] event in self?.log.append("\(event) \(index)") }
         created.append(tap)
         return tap
+    }
+
+    /// Position of `event` in the log, for ordering assertions.
+    func position(of event: String) -> Int? {
+        log.firstIndex(of: event)
     }
 }
 

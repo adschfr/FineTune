@@ -127,6 +127,13 @@ final class MockAudioDeviceMonitor: AudioDeviceProviding {
         devicesByID[device.id] = device
     }
 
+    func removeOutputDevice(uid: String) {
+        outputDevices.removeAll { $0.uid == uid }
+        if let device = devicesByUID.removeValue(forKey: uid) {
+            devicesByID.removeValue(forKey: device.id)
+        }
+    }
+
     func device(for uid: String) -> AudioDevice? { devicesByUID[uid] }
     func inputDevice(for uid: String) -> AudioDevice? { devicesByUID[uid] }
     func device(for id: AudioDeviceID) -> AudioDevice? { devicesByID[id] }
