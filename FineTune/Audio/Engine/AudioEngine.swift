@@ -1,4 +1,5 @@
 // FineTune/Audio/Engine/AudioEngine.swift
+import AppKit
 import AudioToolbox
 import Foundation
 import os
@@ -292,6 +293,8 @@ final class AudioEngine {
             self.restoreLockedInputDevice()
         }
 
+        if startMonitorsAutomatically { installBluetoothWakeObserver() }
+
         // Wire callbacks — needed for both test and production mode
         wireCallbacks()
 
@@ -323,7 +326,7 @@ final class AudioEngine {
                 self.registerNewDevicesInPriority()
                 // Seed the confirmed default from whatever macOS has at startup
                 self.lastConfirmedDefaultUID = self.deviceVolumeMonitor.defaultDeviceUID
-                if manager.appSettings.lockInputDevice {
+                if manager.appSettings.lockInputDevice || manager.appSettings.bluetoothInputProtection {
                     self.restoreLockedInputDevice()
                 }
             }
@@ -669,6 +672,7 @@ final class AudioEngine {
     }
 
     func start() {
+        installBluetoothWakeObserver()
         // Monitors have internal guards against double-starting
         if permission.status == .authorized {
             processMonitor.start()
@@ -680,7 +684,7 @@ final class AudioEngine {
         }
 
         // Restore locked input device if feature is enabled
-        if settingsManager.appSettings.lockInputDevice {
+        if settingsManager.appSettings.lockInputDevice || settingsManager.appSettings.bluetoothInputProtection {
             restoreLockedInputDevice()
         }
 
@@ -688,6 +692,12 @@ final class AudioEngine {
     }
 
     func stop() {
+        bluetoothGuardRetry?.cancel()
+        bluetoothGuardRetry = nil
+        if let observer = bluetoothWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            bluetoothWakeObserver = nil
+        }
         stopHealthMonitor()
         processMonitor.stop()
         deviceMonitor.stop()
@@ -1446,6 +1456,7 @@ final class AudioEngine {
     /// Returns the resolved target UID.
     @discardableResult
     private func reEvaluateInputDefault(excluding: String? = nil) -> String? {
+        if enforceBluetoothInputProtection() { return deviceVolumeMonitor.defaultInputDeviceUID }
         guard let target = Self.resolveHighestPriority(
             priorityOrder: settingsManager.inputDevicePriorityOrder,
             connectedDevices: inputDevices,
@@ -2280,6 +2291,16 @@ final class AudioEngine {
         outputFormatChangeInFlight.insert(uid)
         defer { outputFormatChangeInFlight.remove(uid) }
 
+        if settingsManager.appSettings.bluetoothInputProtection,
+           let deviceID = deviceMonitor.device(for: uid)?.id,
+           [.bluetooth, .bluetoothLE].contains(deviceID.readTransportType()),
+           let newRate = try? deviceID.readNominalSampleRate() {
+            bluetoothCallModeWarning = BluetoothInputGuardPolicy.suggestsCallMode(sampleRate: newRate)
+                ? "Bluetooth output dropped to \(Int(newRate)) Hz — likely call mode. Select the built-in mic in your call app."
+                : nil
+            enforceBluetoothInputProtection()
+        }
+
         logger.info("[RATE] Output device \(uid, privacy: .public) format changed — recreating affected taps (clean dip)")
         let affected = taps.filter { $0.value.currentDeviceUIDs.contains(uid) }
         for (pid, tap) in affected {
@@ -2293,11 +2314,104 @@ final class AudioEngine {
         }
     }
 
+    // MARK: - Bluetooth input protection
+
+    private(set) var bluetoothProtectionStatus = "Waiting for audio devices"
+    private(set) var bluetoothCallModeWarning: String?
+    @ObservationIgnored private var bluetoothGuardLastWrite = Date.distantPast
+    @ObservationIgnored private var bluetoothWakeObserver: NSObjectProtocol?
+    @ObservationIgnored private var bluetoothGuardAttempts = 0
+    @ObservationIgnored private var bluetoothGuardWindow = Date.distantPast
+    @ObservationIgnored private var bluetoothGuardRetry: Task<Void, Never>?
+
+    private func installBluetoothWakeObserver() {
+        guard bluetoothWakeObserver == nil else { return }
+        bluetoothWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.enforceBluetoothInputProtection() }
+        }
+    }
+
+    func isInputAllowedByBluetoothGuard(_ device: AudioDevice) -> Bool {
+        BluetoothInputGuardPolicy.allowsInput(.init(uid: device.uid,
+            builtIn: device.id.readTransportType() == .builtIn,
+            bluetooth: device.id.isBluetoothDevice()),
+            enabled: settingsManager.appSettings.bluetoothInputProtection)
+    }
+
+    func setBluetoothInputProtection(_ enabled: Bool) {
+        bluetoothGuardAttempts = 0
+        settingsManager.appSettings.bluetoothInputProtection = enabled
+        bluetoothGuardRetry?.cancel()
+        bluetoothGuardRetry = nil
+        bluetoothCallModeWarning = nil
+        if enabled { enforceBluetoothInputProtection() }
+        else { bluetoothProtectionStatus = "Off — normal input selection restored" }
+    }
+
+    /// Uses existing hardware notifications. One delayed retry prevents a feedback loop.
+    @discardableResult
+    private func enforceBluetoothInputProtection() -> Bool {
+        guard settingsManager.appSettings.bluetoothInputProtection else { return false }
+        let lowRateOutput = deviceMonitor.outputDevices.first {
+            $0.id.isBluetoothDevice()
+                && BluetoothInputGuardPolicy.suggestsCallMode(sampleRate: (try? $0.id.readNominalSampleRate()) ?? 0)
+        }
+        bluetoothCallModeWarning = lowRateOutput.map {
+            "\($0.name) appears to be in call mode. Select the built-in mic in your call app."
+        }
+        let candidates = deviceMonitor.inputDevices.map {
+            BluetoothInputGuardPolicy.Candidate(uid: $0.uid,
+                builtIn: $0.id.readTransportType() == .builtIn,
+                bluetooth: $0.id.isBluetoothDevice())
+        }
+        guard let uid = BluetoothInputGuardPolicy.target(in: candidates),
+              let target = deviceMonitor.inputDevice(for: uid) else {
+            bluetoothProtectionStatus = "Protection unavailable: no built-in microphone"
+            return true
+        }
+        guard deviceVolumeMonitor.defaultInputDeviceUID != uid else {
+            bluetoothProtectionStatus = "Default input: \(target.name) (pinned)"
+            return true
+        }
+        guard Date().timeIntervalSince(bluetoothGuardLastWrite) >= 1 else {
+            bluetoothProtectionStatus = "Input contention detected — waiting for devices to settle"
+            if bluetoothGuardRetry == nil {
+                bluetoothGuardRetry = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(1))
+                    guard !Task.isCancelled, let self else { return }
+                    self.bluetoothGuardRetry = nil
+                    self.enforceBluetoothInputProtection()
+                }
+            }
+            return true
+        }
+        if Date().timeIntervalSince(bluetoothGuardWindow) > 10 {
+            bluetoothGuardWindow = Date()
+            bluetoothGuardAttempts = 0
+        }
+        guard bluetoothGuardAttempts < 4 else {
+            bluetoothProtectionStatus = "Another app keeps claiming the input. Select the built-in mic in that app."
+            return true
+        }
+        bluetoothGuardAttempts += 1
+        bluetoothGuardLastWrite = Date()
+        if deviceVolumeMonitor.setDefaultInputDevice(target.id) {
+            inputEchoTracker.increment(uid)
+            bluetoothProtectionStatus = "Requested switch to \(target.name); waiting for confirmation"
+        } else {
+            bluetoothProtectionStatus = "Could not switch to the built-in mic; check Sound settings"
+        }
+        return true
+    }
+
     // MARK: - Input Device Lock
 
     /// Handles changes to the default input device.
     /// Uses state machine to distinguish auto-switch (from device connection) vs user action.
     private func handleDefaultInputDeviceChanged(_ newDefaultInputUID: String) {
+        if enforceBluetoothInputProtection() { return }
         // State machine: if we're waiting for macOS to auto-switch after input device connect,
         // check whether this change is the expected auto-switch or user intent.
         if case .pendingAutoSwitch(let pendingUID, let timeoutTask) = inputPriorityState {
@@ -2356,6 +2470,7 @@ final class AudioEngine {
 
     /// Restores the locked input device, or falls back to built-in mic if unavailable.
     private func restoreLockedInputDevice() {
+        if enforceBluetoothInputProtection() { return }
         guard let lockedUID = settingsManager.lockedInputDeviceUID,
               let lockedDevice = deviceMonitor.inputDevice(for: lockedUID) else {
             // No locked device or it's unavailable - fall back to built-in
@@ -2398,6 +2513,7 @@ final class AudioEngine {
     /// Called when the user toggles lockInputDevice ON in settings.
     /// Captures the current default input device as the locked and preferred device.
     func handleInputLockEnabled() {
+        if enforceBluetoothInputProtection() { return }
         guard let currentUID = deviceVolumeMonitor.defaultInputDeviceUID,
               let device = deviceMonitor.inputDevice(for: currentUID) else {
             return
@@ -2410,6 +2526,7 @@ final class AudioEngine {
     /// Called when user explicitly selects an input device (via FineTune UI).
     /// Persists the choice and applies the change.
     func setLockedInputDevice(_ device: AudioDevice) {
+        if enforceBluetoothInputProtection() { return }
         logger.info("User locked input device to: \(device.name)")
 
         // Persist the choice — both current lock and preferred (user intent)
@@ -2424,6 +2541,7 @@ final class AudioEngine {
 
     /// Called when an input device connects — restores locked/preferred device and guards against auto-switch.
     private func handleInputDeviceConnected(_ deviceUID: String, name deviceName: String) {
+        if enforceBluetoothInputProtection() { return }
         guard settingsManager.appSettings.lockInputDevice else { return }
 
         // If the reconnected device is the user's preferred device, restore the lock to it
@@ -2465,6 +2583,7 @@ final class AudioEngine {
 
     /// Handles input device disconnect — uses priority fallback, then built-in mic.
     private func handleInputDeviceDisconnected(_ deviceUID: String) {
+        if enforceBluetoothInputProtection() { return }
         // If we were waiting for macOS to auto-switch to this device, cancel — it's gone
         if case .pendingAutoSwitch(let uid, let task) = inputPriorityState, uid == deviceUID {
             task.cancel()
