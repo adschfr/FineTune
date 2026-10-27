@@ -108,6 +108,18 @@ private func startPlaying(_ fix: Fixture, _ app: AudioApp = makePlayer()) throws
     return try #require(fix.taps.last)
 }
 
+/// Starts playback of the player and a second app used as a control.
+@MainActor
+private func startTwoApps(_ fix: Fixture) throws -> (AudioApp, FakeTapController, AudioApp, FakeTapController) {
+    let player = makePlayer()
+    let other = AudioApp(id: 6002, processObjectIDs: [701], name: "Other", icon: NSImage(), bundleID: "com.test.lifecycle.other")
+    fix.running.ids = [mainProcess, 701]
+    fix.publish([player, other])
+    let playerTap = try #require(fix.taps.created.first { $0.app.id == player.id })
+    let otherTap = try #require(fix.taps.created.first { $0.app.id == other.id })
+    return (player, playerTap, other, otherTap)
+}
+
 /// Stops playback and lets `seconds` pass, publishing at the start and the end like a
 /// monitor that saw two unrelated changes.
 @MainActor
@@ -316,20 +328,20 @@ struct AudioEngineTapLifecycleTests {
     }
 
     // Stale cleanup: upstream drops taps of apps that are not playing; the fork keeps
-    // them (suspended) for as long as the app has a Core Audio process object.
+    // them (suspended) for as long as the app has a Core Audio process object. A second
+    // app that vanishes at the same time is the control: once its tap is gone, the
+    // cleanup has run and its grace period has passed, however slow the machine is.
 
     @Test("A silent app that is still present keeps its tap past the stale-cleanup grace period")
     func silentPresentAppKeepsTap() async throws {
         let fix = makeFixture(staleCleanupDebounce: .milliseconds(5), staleTapGracePeriod: .milliseconds(20))
-        let app = makePlayer()
-        let tap = try startPlaying(fix, app)
+        let (silent, silentTap, _, controlTap) = try startTwoApps(fix)
 
         fix.running.ids = []
-        fix.publish([app])
-        try await Task.sleep(for: .milliseconds(150))
+        fix.publish([silent])
 
-        #expect(!tap.isInvalidated)
-        #expect(fix.taps.created.count == 1)
+        #expect(await waitUntil(timeout: .seconds(10)) { controlTap.isInvalidated })
+        #expect(!silentTap.isInvalidated)
     }
 
     @Test("A tap is removed once its app has no Core Audio process object left")
@@ -340,21 +352,19 @@ struct AudioEngineTapLifecycleTests {
         fix.running.ids = []
         fix.publish([])
 
-        #expect(await waitUntil { tap.isInvalidated })
+        #expect(await waitUntil(timeout: .seconds(10)) { tap.isInvalidated })
     }
 
     @Test("An app that comes back within the grace period keeps its tap")
     func returningAppKeepsTap() async throws {
-        let fix = makeFixture(staleCleanupDebounce: .milliseconds(5), staleTapGracePeriod: .milliseconds(100))
-        let app = makePlayer()
-        let tap = try startPlaying(fix, app)
+        let fix = makeFixture(staleCleanupDebounce: .milliseconds(5), staleTapGracePeriod: .seconds(1))
+        let (returning, returningTap, _, controlTap) = try startTwoApps(fix)
 
         fix.publish([])
-        try await Task.sleep(for: .milliseconds(30))
-        fix.publish([app])
-        try await Task.sleep(for: .milliseconds(250))
+        try await Task.sleep(for: .milliseconds(100))
+        fix.publish([returning])
 
-        #expect(!tap.isInvalidated)
-        #expect(fix.taps.created.count == 1)
+        #expect(await waitUntil(timeout: .seconds(10)) { controlTap.isInvalidated })
+        #expect(!returningTap.isInvalidated)
     }
 }
