@@ -29,11 +29,14 @@ private final class RunningProcesses {
 private struct Fixture {
     let engine: AudioEngine
     let settings: SettingsManager
+    let deviceMonitor: MockAudioDeviceMonitor
+    let deviceVolume: MockDeviceVolumeProviding
     let processMonitor: StubProcessMonitor
     let taps: FakeTapFactory
     let clock: TestClock
     let running: RunningProcesses
     let tvUID: String
+    let speakersUID: String
 
     /// Publishes the app list the way AudioProcessMonitor does after a change.
     func publish(_ apps: [AudioApp]) {
@@ -52,11 +55,13 @@ private func makeFixture(
 
     let deviceMonitor = MockAudioDeviceMonitor()
     let tv = AudioDevice(id: AudioDeviceID(42), uid: "uid-tv", name: "LG TV", icon: nil, supportsAutoEQ: false)
+    let speakers = AudioDevice(id: AudioDeviceID(43), uid: "uid-speakers", name: "Speakers", icon: nil, supportsAutoEQ: false)
     deviceMonitor.addOutputDevice(tv)
+    deviceMonitor.addOutputDevice(speakers)
 
     let deviceVolume = MockDeviceVolumeProviding(deviceMonitor: deviceMonitor)
-    deviceVolume.autoDetectedTiersByID = [tv.id: .software]
-    deviceVolume.volumes = [tv.id: 0.25]
+    deviceVolume.autoDetectedTiersByID = [tv.id: .software, speakers.id: .hardware]
+    deviceVolume.volumes = [tv.id: 0.25, speakers.id: 0.6]
     deviceVolume.defaultDeviceID = tv.id
     deviceVolume.defaultDeviceUID = tv.uid
 
@@ -75,15 +80,16 @@ private func makeFixture(
         deviceProvider: deviceMonitor,
         processMonitor: processMonitor,
         deviceVolumeMonitor: deviceVolume,
-        tapFactory: { app, uids, _ in taps.make(app: app, deviceUIDs: uids) },
+        tapFactory: { app, uids, _ in try taps.make(app: app, deviceUIDs: uids) },
         isProcessRunning: { running.ids.contains($0) },
         currentDate: { clock.now },
         staleCleanupDebounce: staleCleanupDebounce,
         staleTapGracePeriod: staleTapGracePeriod,
         startMonitorsAutomatically: false
     )
-    return Fixture(engine: engine, settings: settings, processMonitor: processMonitor, taps: taps,
-                   clock: clock, running: running, tvUID: tv.uid)
+    return Fixture(engine: engine, settings: settings, deviceMonitor: deviceMonitor, deviceVolume: deviceVolume,
+                   processMonitor: processMonitor, taps: taps,
+                   clock: clock, running: running, tvUID: tv.uid, speakersUID: speakers.uid)
 }
 
 private let playerPID: pid_t = 6001
@@ -233,8 +239,7 @@ struct AudioEngineTapLifecycleTests {
         fix.running.ids.insert(helperProcess)
         fix.publish([withHelper])
 
-        #expect(await waitUntil { fix.taps.created.count == 2 })
-        #expect(oldTap.isInvalidated)
+        #expect(await waitUntil { fix.taps.created.count == 2 && oldTap.isInvalidated })
         let newTap = try #require(fix.taps.last)
         #expect(newTap.app.processObjectIDs == [mainProcess, helperProcess])
         #expect(newTap.currentDeviceUIDs == [fix.tvUID])
@@ -253,11 +258,69 @@ struct AudioEngineTapLifecycleTests {
         fix.running.ids.insert(mainProcess)
         fix.publish([app])
 
-        #expect(await waitUntil { fix.taps.created.count == 2 })
-        #expect(oldTap.isInvalidated)
+        #expect(await waitUntil { fix.taps.created.count == 2 && oldTap.isInvalidated })
         let newTap = try #require(fix.taps.last)
         #expect(newTap.currentDeviceUIDs == [fix.tvUID])
         #expect(approx(newTap.volumeAtActivate, 0.25))
+    }
+
+    @Test("A recreate silences the old tap, starts the new one, and only then releases the old")
+    func recreateIsMakeBeforeBreak() async throws {
+        let fix = makeFixture()
+        let app = makePlayer()
+        let oldTap = try startPlaying(fix, app)
+        stayIdle(fix, app, for: 10)
+        oldTap.resumeError = FakeTapError()
+
+        fix.running.ids.insert(mainProcess)
+        fix.publish([app])
+        #expect(await waitUntil { oldTap.isInvalidated })
+
+        let silenced = try #require(fix.taps.position(of: "mute true 0"))
+        let started = try #require(fix.taps.position(of: "activate 1"))
+        let released = try #require(fix.taps.position(of: "invalidate 0"))
+        #expect(silenced < started)
+        #expect(started < released)
+    }
+
+    @Test("If the replacement cannot be built, the old tap stays and keeps working")
+    func failedReplacementKeepsOldTap() async throws {
+        let fix = makeFixture()
+        let app = makePlayer()
+        let oldTap = try startPlaying(fix, app)
+        stayIdle(fix, app, for: 10)
+        oldTap.resumeError = FakeTapError()
+        fix.taps.failCreations = true
+
+        fix.running.ids.insert(mainProcess)
+        fix.publish([app])
+        await settle()
+
+        #expect(!oldTap.isInvalidated)
+        #expect(!oldTap.isMuted)
+        // Still registered: TV volume changes reach it
+        fix.deviceVolume.setVolume(for: AudioDeviceID(42), to: 0.5)
+        #expect(approx(oldTap.volume, 0.5))
+    }
+
+    @Test("A recreated tap follows the current routing when the old output is gone")
+    func recreateUsesCurrentRouting() async throws {
+        let fix = makeFixture()
+        let app = makePlayer()
+        let oldTap = try startPlaying(fix, app)
+        stayIdle(fix, app, for: 10)
+        oldTap.resumeError = FakeTapError()
+
+        // The TV disappeared and the speakers became the default before anything rerouted
+        fix.deviceMonitor.removeOutputDevice(uid: fix.tvUID)
+        fix.deviceVolume.defaultDeviceID = AudioDeviceID(43)
+        fix.deviceVolume.defaultDeviceUID = fix.speakersUID
+        fix.running.ids.insert(mainProcess)
+        fix.publish([app])
+
+        #expect(await waitUntil { fix.taps.created.count == 2 })
+        let newTap = try #require(fix.taps.last)
+        #expect(newTap.currentDeviceUIDs == [fix.speakersUID])
     }
 
     @Test("A muted app is still muted when its tap is recreated")
