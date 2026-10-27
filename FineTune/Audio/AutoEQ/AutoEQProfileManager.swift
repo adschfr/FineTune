@@ -26,7 +26,8 @@ final class AutoEQProfileManager {
     /// Normalized names for fuzzy search (parallel array with sortedEntries).
     private var normalizedNames: [String] = []
 
-    init(loader: AutoEQProfileLoader = AutoEQProfileLoader(), fetcher: AutoEQFetcher? = nil) {
+    /// `loadCatalog: false` skips the catalog cache and the GitHub download (tests).
+    init(loader: AutoEQProfileLoader = AutoEQProfileLoader(), fetcher: AutoEQFetcher? = nil, loadCatalog: Bool = true) {
         self.loader = loader
         self.fetcher = fetcher ?? AutoEQFetcher()
 
@@ -35,6 +36,8 @@ final class AutoEQProfileManager {
         for profile in imported {
             profiles[profile.id] = profile
         }
+
+        guard loadCatalog else { return }
 
         // Load catalog from cache/GitHub
         Task { @MainActor in

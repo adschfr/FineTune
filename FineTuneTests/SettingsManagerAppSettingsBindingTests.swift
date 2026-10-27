@@ -1,4 +1,5 @@
 // FineTuneTests/SettingsManagerAppSettingsBindingTests.swift
+import Foundation
 import Testing
 @testable import FineTune
 
@@ -8,7 +9,7 @@ struct SettingsManagerAppSettingsBindingTests {
 
     @Test("Direct assignment to appSettings persists the new value")
     func directAssignmentPersists() async {
-        let manager = SettingsManager()
+        let manager = SettingsManager(directory: Self.makeTempDirectory())
         var newSettings = manager.appSettings
         newSettings.defaultNewAppVolume = 0.42
         newSettings.lockInputDevice = true
@@ -19,26 +20,26 @@ struct SettingsManagerAppSettingsBindingTests {
         #expect(manager.appSettings.lockInputDevice == true)
     }
 
-    @Test("Direct assignment forwards launch-at-login change to LaunchAtLoginService")
+    @Test("Direct assignment forwards launch-at-login change to the login item")
     func directAssignmentForwardsLaunchAtLogin() async {
-        let manager = SettingsManager()
+        let loginItem = RecordingLaunchAtLogin()
+        let manager = SettingsManager(directory: Self.makeTempDirectory(), launchAtLogin: loginItem)
         var newSettings = manager.appSettings
-        let original = newSettings.launchAtLogin
-        newSettings.launchAtLogin = !original
+        newSettings.launchAtLogin = true
 
         manager.appSettings = newSettings
+        #expect(manager.appSettings.launchAtLogin == true)
+        #expect(loginItem.calls == [.register])
 
-        // Behavioral assertion: the setter ran updateAppSettings's full side-effect path.
-        // We verify by reading back the persisted toggle — the side-effect plumbing
-        // is covered by existing updateAppSettings tests, so we only need to confirm
-        // the new setter doesn't bypass it.
-        #expect(manager.appSettings.launchAtLogin == !original)
+        newSettings.launchAtLogin = false
+        manager.appSettings = newSettings
+        #expect(loginItem.calls == [.register, .unregister])
     }
 
     @Test("Direct assignment is equivalent to updateAppSettings for the same input")
     func directAssignmentEquivalentToUpdate() async {
-        let managerA = SettingsManager()
-        let managerB = SettingsManager()
+        let managerA = SettingsManager(directory: Self.makeTempDirectory())
+        let managerB = SettingsManager(directory: Self.makeTempDirectory())
 
         var modified = managerA.appSettings
         modified.defaultNewAppVolume = 0.7
@@ -50,4 +51,27 @@ struct SettingsManagerAppSettingsBindingTests {
 
         #expect(managerA.appSettings == managerB.appSettings)
     }
+
+    @Test("Reset unregisters the login item")
+    func resetUnregistersLoginItem() async {
+        let loginItem = RecordingLaunchAtLogin()
+        let manager = SettingsManager(directory: Self.makeTempDirectory(), launchAtLogin: loginItem)
+
+        manager.resetAllSettings()
+
+        #expect(loginItem.calls == [.unregister])
+    }
+
+    private static func makeTempDirectory() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("FineTuneTests-\(UUID().uuidString)")
+    }
+}
+
+@MainActor
+final class RecordingLaunchAtLogin: LaunchAtLoginControlling {
+    enum Call: Equatable { case register, unregister }
+    private(set) var calls: [Call] = []
+
+    func register() throws { calls.append(.register) }
+    func unregister() throws { calls.append(.unregister) }
 }

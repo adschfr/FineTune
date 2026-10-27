@@ -71,7 +71,7 @@ private func makeFixture(activeApp: AudioApp) -> Fixture {
     let engine = AudioEngine(
         permission: permission,
         settingsManager: settings,
-        autoEQProfileManager: AutoEQProfileManager(),
+        autoEQProfileManager: AutoEQProfileManager.isolated(),
         deviceProvider: deviceMonitor,
         processMonitor: processMonitor,
         deviceVolumeMonitor: mockVolume,

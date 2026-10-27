@@ -104,6 +104,28 @@ nonisolated struct AppSettings: Codable, Equatable {
     }
 }
 
+// MARK: - Launch at Login
+
+/// The login-item registration behind `AppSettings.launchAtLogin`. Injected so that
+/// isolated (test) instances never change the host app's real login item.
+@MainActor
+protocol LaunchAtLoginControlling {
+    func register() throws
+    func unregister() throws
+}
+
+/// Registers the running app bundle via ServiceManagement.
+struct SystemLaunchAtLogin: LaunchAtLoginControlling {
+    func register() throws { try SMAppService.mainApp.register() }
+    func unregister() throws { try SMAppService.mainApp.unregister() }
+}
+
+/// Default for instances with their own settings directory, which only tests create.
+struct NoLaunchAtLogin: LaunchAtLoginControlling {
+    func register() throws {}
+    func unregister() throws {}
+}
+
 // MARK: - Settings Manager
 
 @Observable
@@ -112,6 +134,7 @@ final class SettingsManager {
     private var settings: Settings
     private var saveTask: Task<Void, Never>?
     private let settingsURL: URL
+    private let launchAtLogin: any LaunchAtLoginControlling
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
@@ -214,9 +237,12 @@ final class SettingsManager {
         }
     }
 
-    init(directory: URL? = nil) {
+    /// A custom `directory` makes an isolated instance. Unless a controller is passed, it
+    /// does not touch the login item, so tests cannot register or remove the host app.
+    init(directory: URL? = nil, launchAtLogin: (any LaunchAtLoginControlling)? = nil) {
         let baseDir = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("FineTune")
         self.settingsURL = baseDir.appendingPathComponent("settings.json")
+        self.launchAtLogin = launchAtLogin ?? (directory == nil ? SystemLaunchAtLogin() : NoLaunchAtLogin())
         self.settings = Settings()
         loadFromDisk()
     }
@@ -842,10 +868,10 @@ final class SettingsManager {
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled {
-                try SMAppService.mainApp.register()
+                try launchAtLogin.register()
                 logger.info("Registered for launch at login")
             } else {
-                try SMAppService.mainApp.unregister()
+                try launchAtLogin.unregister()
                 logger.info("Unregistered from launch at login")
             }
         } catch {
@@ -895,7 +921,7 @@ final class SettingsManager {
         settings.userEQPresets.removeAll()
 
         // Also unregister from launch at login
-        try? SMAppService.mainApp.unregister()
+        try? launchAtLogin.unregister()
 
         scheduleSave()
         logger.info("Reset all settings to defaults")
