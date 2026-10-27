@@ -337,10 +337,7 @@ final class AudioEngine {
                        self.outputVolumeBackend(for: deviceID) == .software {
                         tap.volume = self.effectiveVolume(for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
                     }
-                    tap.updateLoudnessCompensation(
-                        volume: self.effectiveLoudnessVolume(for: tap),
-                        enabled: loudnessEnabled
-                    )
+                    self.syncLoudnessCompensation(for: tap, enabled: loudnessEnabled)
                 }
             }
         }
@@ -643,7 +640,7 @@ final class AudioEngine {
             applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
-            tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: false)
+            syncLoudnessCompensation(for: tap, enabled: false)
         }
 
         // 6. Re-apply from clean settings (re-establishes routing to system default)
@@ -660,10 +657,7 @@ final class AudioEngine {
         if let tap = taps[app.id] {
             tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
             if settingsManager.appSettings.loudnessCompensationEnabled {
-                tap.updateLoudnessCompensation(
-                    volume: effectiveLoudnessVolume(for: tap),
-                    enabled: true
-                )
+                syncLoudnessCompensation(for: tap, enabled: true)
             }
         }
     }
@@ -678,6 +672,10 @@ final class AudioEngine {
         volumeState.setBoost(for: app.id, to: boost, identifier: app.persistenceIdentifier)
         if let tap = taps[app.id] {
             tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+            // Boost changes the digital gain (headroom) but not the listening level.
+            if settingsManager.appSettings.loudnessCompensationEnabled {
+                syncLoudnessCompensation(for: tap, enabled: true)
+            }
         }
     }
 
@@ -710,6 +708,23 @@ final class AudioEngine {
         tap.currentDeviceVolume * volumeState.getVolume(for: tap.app.id)
     }
 
+    /// Linear gain already applied inside the tap before the loudness compensator —
+    /// the digital headroom its boost may consume. This is `tap.volume`, i.e. the
+    /// `effectiveVolume(for:deviceUIDs:)` result (app volume × boost × software device
+    /// gain). Hardware/DDC device volume acts after the DSP and is deliberately absent.
+    private func loudnessDigitalGain(for tap: any ProcessTapControlling) -> Float {
+        tap.volume
+    }
+
+    /// Push both loudness inputs (listening level and digital headroom) to a tap.
+    private func syncLoudnessCompensation(for tap: any ProcessTapControlling, enabled: Bool) {
+        tap.updateLoudnessCompensation(
+            listeningVolume: effectiveLoudnessVolume(for: tap),
+            digitalGain: loudnessDigitalGain(for: tap),
+            enabled: enabled
+        )
+    }
+
     private func applyTapOutputState(to tap: any ProcessTapControlling, for pid: pid_t, deviceUIDs: [String]? = nil) {
         let resolvedUIDs = deviceUIDs ?? tap.currentDeviceUIDs
         tap.volume = effectiveVolume(for: pid, deviceUIDs: resolvedUIDs)
@@ -722,6 +737,14 @@ final class AudioEngine {
         } else {
             tap.currentDeviceVolume = 1.0
             tap.isDeviceMuted = false
+        }
+
+        // Device/routing changes alter both the listening level (device volume) and the
+        // digital gain (software device gain), so refresh loudness compensation. Only for
+        // registered (activated) taps: during creation this runs before activate(initial:),
+        // and TapInitialState carries the values instead.
+        if taps[pid] != nil, settingsManager.appSettings.loudnessCompensationEnabled {
+            syncLoudnessCompensation(for: tap, enabled: true)
         }
     }
 
@@ -812,7 +835,7 @@ final class AudioEngine {
 
     func setLoudnessCompensationEnabled(_ enabled: Bool) {
         for tap in taps.values {
-            tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: enabled)
+            syncLoudnessCompensation(for: tap, enabled: enabled)
         }
     }
 
@@ -853,7 +876,7 @@ final class AudioEngine {
         return autoEQProfileManager.profile(for: selection.profileID)
     }
 
-    private func tapInitialState(forApp app: AudioApp, primaryDeviceUID: String, deviceVolume: Float) -> TapInitialState {
+    private func tapInitialState(forApp app: AudioApp, primaryDeviceUID: String, deviceVolume: Float, digitalGain: Float) -> TapInitialState {
         var loudnessEqSettings = LoudnessEqualizerSettings()
         loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
         return TapInitialState(
@@ -861,6 +884,7 @@ final class AudioEngine {
             autoEQProfile: autoEQProfileForActivation(deviceUID: primaryDeviceUID),
             autoEQPreampEnabled: settingsManager.autoEQPreampEnabled,
             loudnessVolume: deviceVolume * volumeState.getVolume(for: app.id),
+            loudnessDigitalGain: digitalGain,
             loudnessCompensationEnabled: settingsManager.appSettings.loudnessCompensationEnabled,
             loudnessEqualizerSettings: loudnessEqSettings
         )
@@ -1096,7 +1120,8 @@ final class AudioEngine {
             let initial = tapInitialState(
                 forApp: app,
                 primaryDeviceUID: deviceUIDs[0],
-                deviceVolume: tap.currentDeviceVolume
+                deviceVolume: tap.currentDeviceVolume,
+                digitalGain: tap.volume
             )
             try tap.activate(initial: initial)
             taps[app.id] = tap
@@ -1259,7 +1284,8 @@ final class AudioEngine {
             let initial = tapInitialState(
                 forApp: app,
                 primaryDeviceUID: deviceUID,
-                deviceVolume: tap.currentDeviceVolume
+                deviceVolume: tap.currentDeviceVolume,
+                digitalGain: tap.volume
             )
             try tap.activate(initial: initial)
             taps[app.id] = tap
