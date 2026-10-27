@@ -42,7 +42,7 @@ private func makeApp(isRunningInput: Bool) -> AudioApp {
 }
 
 @MainActor
-private func makeFixture(activeApp: AudioApp) -> Fixture {
+private func makeFixture(activeApp: AudioApp, outputTier: VolumeControlTier = .hardware) -> Fixture {
     let tempDir = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
     let settings = SettingsManager(directory: tempDir)
@@ -59,6 +59,7 @@ private func makeFixture(activeApp: AudioApp) -> Fixture {
 
     let mockVolume = MockDeviceVolumeProviding(deviceMonitor: deviceMonitor)
     mockVolume.volumes[device.id] = 0.75
+    mockVolume.autoDetectedTiersByID[device.id] = outputTier
 
     let processMonitor = StubProcessMonitor()
     processMonitor.activeApps = [activeApp]
@@ -190,5 +191,33 @@ struct AudioEngineCallPassthroughTests {
         fix.engine.reconcileCallPassthrough()
 
         #expect(tap?.events.contains(.invalidate) == true)
+    }
+
+    // On an output without hardware volume the tap applies the device volume, so an
+    // untapped call would play at full scale (e.g. a TV over HDMI without DDC).
+
+    @Test("On a software-volume output an app capturing input is still tapped")
+    func softwareOutputKeepsCallTapped() {
+        let app = makeApp(isRunningInput: true)
+        let fix = makeFixture(activeApp: app, outputTier: .software)
+
+        fix.engine.setDevice(for: app, deviceUID: fix.device.uid)
+
+        #expect(fix.lastTap() != nil)
+    }
+
+    @Test("On a software-volume output a live tap is kept when a call starts")
+    func softwareOutputKeepsTapWhenCallStarts() {
+        let idle = makeApp(isRunningInput: false)
+        let fix = makeFixture(activeApp: idle, outputTier: .software)
+        fix.engine.setDevice(for: idle, deviceUID: fix.device.uid)
+        let tap = fix.lastTap()
+        #expect(tap != nil)
+
+        let onCall = makeApp(isRunningInput: true)
+        fix.processMonitor.activeApps = [onCall]
+        fix.processMonitor.onAppsChanged?([onCall])
+
+        #expect(tap?.events.contains(.invalidate) == false)
     }
 }
