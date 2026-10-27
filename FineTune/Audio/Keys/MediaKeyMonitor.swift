@@ -59,6 +59,20 @@ final class MediaKeyMonitor {
     /// Plays the system volume-feedback pop on volume key steps. Wired by FineTuneApp after init.
     var feedbackPlayer: VolumeFeedbackPlayer?
 
+    /// Creates the HID event tap. Tests replace it so they never install a real tap, which
+    /// would intercept the user's media keys and make WindowServer check (and record) the
+    /// test host's Accessibility permission.
+    var makeEventTap: (_ mask: CGEventMask, _ userInfo: UnsafeMutableRawPointer) -> CFMachPort? = { mask, userInfo in
+        CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: mediaKeyTapCallback,
+            userInfo: userInfo
+        )
+    }
+
     init(
         decoder: any MediaKeyEventDecoding,
         audioEngine: AudioEngine,
@@ -108,14 +122,7 @@ final class MediaKeyMonitor {
         let mask = CGEventMask(1 << 14)
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
-        guard let newTap = CGEvent.tapCreate(
-            tap: .cghidEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: mediaKeyTapCallback,
-            userInfo: userInfo
-        ) else {
+        guard let newTap = makeEventTap(mask, userInfo) else {
             logger.error("CGEvent.tapCreate returned nil — media keys will not be intercepted")
             mediaKeyStatus.isOffline = true
             return

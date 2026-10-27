@@ -50,6 +50,7 @@ struct MediaKeyMonitorLifecycleTests {
             popupVisibility: popup,
             mediaKeyStatus: status
         )
+        monitor.makeEventTap = { _, _ in nil }  // never install a real HID tap in tests
         return (monitor, status, settings, hud)
     }
 
