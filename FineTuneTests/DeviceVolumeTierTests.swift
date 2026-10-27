@@ -202,6 +202,14 @@ final class MockDeviceVolumeProviding: DeviceVolumeProviding {
         applyTierOverrideChangeCalls.append(deviceID)
     }
 
+    /// Mirrors DeviceVolumeMonitor for devices with a known state: software-tier devices
+    /// contribute their volume (0 while muted) to the tap gain, others 1.0. The
+    /// persisted-UID fallback for unknown IDs (#375) is covered by DeviceVolumeMonitor tests.
+    func outputProcessingGain(for deviceID: AudioDeviceID) -> Float {
+        guard outputVolumeBackend(for: deviceID) == .software else { return 1.0 }
+        return (muteStates[deviceID] ?? false) ? 0.0 : (volumes[deviceID] ?? 1.0)
+    }
+
     func start() {}
     func stop() {}
 }
