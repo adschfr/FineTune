@@ -195,5 +195,23 @@ struct AudioEngineSoftwareVolumeTests {
         fix.deviceVolume.setVolume(for: fix.tv.id, to: 0.9)
 
         #expect(approx(speakersTap.volume, before))
+        #expect(approx(speakersTap.currentDeviceVolume, 0.6))
+        #expect(!speakersTap.isDeviceMuted)
+    }
+
+    @Test("A suspended tap follows TV mute and unmute")
+    func suspendedTapFollowsTVMute() throws {
+        let fix = makeFixture(tvVolume: 0.25)
+        let app = makeApp()
+        fix.engine.setVolume(for: app, to: 0.8)
+        fix.engine.setDevice(for: app, deviceUID: fix.tv.uid)
+        let tap = try #require(fix.taps.last)
+        tap.suspend()
+
+        fix.deviceVolume.setMute(for: fix.tv.id, to: true)
+        #expect(approx(tap.volume, 0))
+
+        fix.deviceVolume.setMute(for: fix.tv.id, to: false)
+        #expect(approx(tap.volume, 0.2))
     }
 }

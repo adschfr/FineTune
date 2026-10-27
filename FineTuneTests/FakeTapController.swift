@@ -101,6 +101,13 @@ final class FakeTapFactory {
     }
 }
 
+/// Gives tasks the engine scheduled on the main actor time to run, so a test can assert
+/// that something did not happen afterwards (e.g. no tap recreation).
+@MainActor
+func settle() async {
+    try? await Task.sleep(for: .milliseconds(50))
+}
+
 /// Polls `condition` on the main actor until it holds or `timeout` passes. For
 /// engine paths that hop through an unstructured Task (e.g. tap recreation).
 @MainActor

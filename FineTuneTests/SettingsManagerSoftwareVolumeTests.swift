@@ -35,24 +35,24 @@ struct SettingsManagerSoftwareVolumeTests {
         #expect(reloaded.getSoftwareDeviceMuteState(for: "uid-tv"))
     }
 
-    @Test("Stored levels are sanitized on load: negative dropped, above 1 clamped")
-    func storedLevelsAreSanitized() throws {
+    // Negative stored levels are left out on purpose: today they are dropped, which leaves
+    // the device at unity gain. Whether to drop or clamp them to 0 is still open.
+    @Test("Stored levels above 1 are clamped on load, valid levels kept")
+    func storedLevelsAboveOneAreClamped() throws {
         let directory = try makeDirectory()
         let json = """
         {
           "version": 12,
-          "softwareDeviceVolumes": { "uid-negative": -0.5, "uid-loud": 1.7, "uid-ok": 0.3 },
-          "softwareDeviceSavedVolumes": { "uid-negative": -1, "uid-loud": 2.5, "uid-ok": 0.6 }
+          "softwareDeviceVolumes": { "uid-loud": 1.7, "uid-ok": 0.3 },
+          "softwareDeviceSavedVolumes": { "uid-loud": 2.5, "uid-ok": 0.6 }
         }
         """
         try Data(json.utf8).write(to: directory.appendingPathComponent("settings.json"))
 
         let manager = SettingsManager(directory: directory)
 
-        #expect(manager.getSoftwareDeviceVolume(for: "uid-negative") == nil)
         #expect(manager.getSoftwareDeviceVolume(for: "uid-loud") == 1.0)
         #expect(manager.getSoftwareDeviceVolume(for: "uid-ok") == 0.3)
-        #expect(manager.getSoftwareDeviceSavedVolume(for: "uid-negative") == nil)
         #expect(manager.getSoftwareDeviceSavedVolume(for: "uid-loud") == 1.0)
         #expect(manager.getSoftwareDeviceSavedVolume(for: "uid-ok") == 0.6)
     }
