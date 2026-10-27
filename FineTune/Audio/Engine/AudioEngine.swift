@@ -1618,6 +1618,13 @@ final class AudioEngine {
 
     /// Called when a device appears - switches pinned apps back to their preferred device
     private func handleDeviceConnected(_ deviceUID: String, name deviceName: String) {
+        // A power-cycled display gets a new AudioDeviceID for the same UID. Re-read device
+        // volume state and push it into every tap so a software-volume device never renders
+        // at unity gain until restart (#375). Re-entered by the alive-watcher, so a device
+        // that was not alive yet is healed once it is.
+        deviceVolumeMonitor.refreshOutputDeviceStates()
+        refreshAllTapOutputStates()
+
         // Register newly connected device in priority list
         settingsManager.ensureDeviceInPriority(deviceUID)
 

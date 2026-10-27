@@ -188,8 +188,19 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
     func outputProcessingGain(for deviceID: AudioDeviceID) -> Float {
         guard outputVolumeBackend(for: deviceID) == .software else { return 1.0 }
-        if muteStates[deviceID] ?? false { return 0.0 }
-        return volumes[deviceID] ?? 1.0
+        if let volume = volumes[deviceID] {
+            return (muteStates[deviceID] ?? false) ? 0.0 : volume
+        }
+        // No state read yet for this AudioDeviceID (e.g. a display that just powered back on
+        // gets a new ID for the same UID). Use the persisted UID-keyed level instead of
+        // unity, which would play at full volume (#375).
+        if let uid = deviceMonitor.device(for: deviceID)?.uid {
+            if settingsManager.getSoftwareDeviceMuteState(for: uid) { return 0.0 }
+            if let saved = settingsManager.getSoftwareDeviceVolume(for: uid) {
+                return Self.storedVolume(saved, tier: .software)
+            }
+        }
+        return 1.0
     }
 
     func refreshOutputDeviceStates() {
@@ -956,10 +967,21 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     /// Extracted from `readAllStates()` so a tier override change can refresh
     /// one device without enumerating the whole device list.
     private func readOneState(for deviceID: AudioDeviceID, device: AudioDevice) {
-        // Skip devices that HAL reports as dead (mid-disconnect)
-        guard deviceID.isDeviceAlive() else { return }
-
         let backend = outputVolumeBackend(for: deviceID)
+
+        // Skip devices that HAL reports as dead (mid-disconnect). DP/USB-C displays also
+        // enumerate present-but-not-alive while reconnecting; seed a software-tier device
+        // from its persisted UID-keyed state anyway (no HAL access needed), so it never
+        // falls back to unity gain (#375). Existing entries are left for the live read.
+        guard deviceID.isDeviceAlive() else {
+            if backend == .software, volumes[deviceID] == nil {
+                let muted = settingsManager.getSoftwareDeviceMuteState(for: device.uid)
+                let visibleVolume = settingsManager.getSoftwareDeviceVolume(for: device.uid) ?? (muted ? 0 : 1.0)
+                volumes[deviceID] = Self.storedVolume(visibleVolume, tier: backend)
+                muteStates[deviceID] = muted
+            }
+            return
+        }
 
         if backend == .software {
             let muted = settingsManager.getSoftwareDeviceMuteState(for: device.uid)
