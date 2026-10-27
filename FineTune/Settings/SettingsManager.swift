@@ -47,6 +47,12 @@ nonisolated struct AppSettings: Codable, Equatable {
     // video link (monitor goes dark). Disable to skip all DDC probing/writes.
     var ddcVolumeControlEnabled: Bool = true
 
+    // Call Passthrough
+    // Leave apps untapped while they capture audio input (voice/video calls).
+    // Tapping a call app desyncs macOS's acoustic echo canceller reference,
+    // which leaks echo to the far end and ducks the call's output (#113, #404).
+    var callPassthroughEnabled: Bool = true
+
     // Media Keys & HUD
     var hudStyle: HUDStyle = .tahoe                // Visual style of the volume HUD
     var mediaKeyControlEnabled: Bool = true        // Intercept F10/F11/F12 to drive the default output device
@@ -80,6 +86,7 @@ nonisolated struct AppSettings: Codable, Equatable {
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
         ddcVolumeControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .ddcVolumeControlEnabled) ?? true
+        callPassthroughEnabled = try c.decodeIfPresent(Bool.self, forKey: .callPassthroughEnabled) ?? true
         hudStyle = try c.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .tahoe
         mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
         volumeHotkeyStep = try c.decodeIfPresent(VolumeHotkeyStep.self, forKey: .volumeHotkeyStep) ?? .normal
