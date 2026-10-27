@@ -67,7 +67,7 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
     ]
 
     /// Returns true if the bundle ID or process name indicates a system daemon that should be filtered
-    private func isSystemDaemon(bundleID: String?, name: String) -> Bool {
+    static func isSystemDaemon(bundleID: String?, name: String) -> Bool {
         // Check bundle ID prefixes
         if let bundleID {
             if Self.systemDaemonPrefixes.contains(where: { bundleID.hasPrefix($0) }) {
@@ -283,7 +283,7 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                 let bundleID = resolvedApp?.bundleIdentifier ?? objectID.readProcessBundleID()
 
                 // Skip system daemons (siri, coreaudio, etc.) - they shouldn't appear in the apps list
-                if isSystemDaemon(bundleID: bundleID, name: name) { continue }
+                if Self.isSystemDaemon(bundleID: bundleID, name: name) { continue }
 
                 // Merge helper process objectIDs into parent app entry
                 if let existing = appsByPID[parentPID] {
