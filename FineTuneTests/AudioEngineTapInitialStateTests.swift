@@ -180,7 +180,7 @@ private func makeFixture(
     let engine = AudioEngine(
         permission: permission,
         settingsManager: settings,
-        autoEQProfileManager: AutoEQProfileManager(),
+        autoEQProfileManager: AutoEQProfileManager.isolated(),
         deviceProvider: deviceMonitor,
         processMonitor: processMonitor,
         deviceVolumeMonitor: mockVolume,
