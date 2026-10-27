@@ -36,6 +36,11 @@ final class AudioEngine {
     /// Clock for tap suspension and recovery timing. Overridable for testing.
     private let currentDate: () -> Date
 
+    /// Coalesces app-list changes before stale taps are looked for. Overridable for testing.
+    private let staleCleanupDebounce: Duration
+    /// How long a tap whose process vanished is kept in case it comes back. Overridable for testing.
+    private let staleTapGracePeriod: Duration
+
     /// One-shot HAL listeners for devices that were present but not alive during priority resolution.
     /// Keyed by AudioDeviceID. Each entry holds the device UID, listener block, and a timeout task.
     private var aliveWatchers: [AudioDeviceID: (uid: String, block: AudioObjectPropertyListenerBlock, timeout: Task<Void, Never>)] = [:]
@@ -224,6 +229,8 @@ final class AudioEngine {
         isAlive: ((AudioDeviceID) -> Bool)? = nil,
         isProcessRunning: ((AudioObjectID) -> Bool)? = nil,
         currentDate: (() -> Date)? = nil,
+        staleCleanupDebounce: Duration = .milliseconds(350),
+        staleTapGracePeriod: Duration = .seconds(30),
         startMonitorsAutomatically: Bool = true
     ) {
         self.permission = permission
@@ -235,6 +242,8 @@ final class AudioEngine {
         self.isAliveCheck = isAlive ?? { $0.isDeviceAlive() }
         self.isProcessRunning = isProcessRunning ?? { $0.readProcessIsRunning() }
         self.currentDate = currentDate ?? { Date() }
+        self.staleCleanupDebounce = staleCleanupDebounce
+        self.staleTapGracePeriod = staleTapGracePeriod
 
         // If a custom deviceProvider is given, use it directly.
         // Otherwise create a real AudioDeviceMonitor (needed by DeviceVolumeMonitor and default tap factory).
@@ -2065,7 +2074,7 @@ final class AudioEngine {
             guard pendingCleanup[pid] == nil else { continue }  // Already pending
 
             pendingCleanup[pid] = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: self.staleTapGracePeriod)
                 guard !Task.isCancelled else { return }
 
                 // Double-check still stale
@@ -2147,7 +2156,7 @@ final class AudioEngine {
     private func scheduleStaleCleanup() {
         staleCleanupTask?.cancel()
         staleCleanupTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
+            try? await Task.sleep(for: self.staleCleanupDebounce)
             guard !Task.isCancelled else { return }
             self.cleanupStaleTaps()
         }
