@@ -14,6 +14,14 @@ Builds an ad-hoc signed Release (hardened runtime off, so the embedded Sparkle f
 installs it to `/Applications/FineTune Fork.app` and launches it. Requires Xcode. Sparkle updates are
 disabled, so the fork never replaces itself with an upstream release.
 
+```bash
+./scripts/test.sh
+```
+
+Runs the unit tests with their own DerivedData in `build/test`. Debug builds use the bundle ID
+`com.adschfr.FineTuneFork.dev`, and the test host starts a minimal app (`AppEntry.swift`) instead of
+FineTune, so a test run does not create taps, request permissions or touch the installed fork.
+
 ## Fixes in this fork
 
 - **No full-volume blast when playback starts** (#170, #268, #273, #455). Taps use `CATapMuted`, so
