@@ -195,7 +195,7 @@ struct OutputGateRampingTests {
 struct OutputGateOpenTests {
 
     @Test("Open stays open and passes through for silent and non-silent input",
-          arguments: [belowThreshold, aboveThreshold])
+          arguments: [Float(0.00005), Float(0.01)])  // below / above the silence threshold
     func openStaysOpen(peak: Float) {
         // Re-arming is driven by the IO callback on a resume gap or unmute edge,
         // never by input silence, so short sounds after a pause are not faded (#388).
