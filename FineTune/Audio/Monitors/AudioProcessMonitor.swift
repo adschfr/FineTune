@@ -73,6 +73,11 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
             if Self.systemDaemonPrefixes.contains(where: { bundleID.hasPrefix($0) }) {
                 return true
             }
+            // System Settings panes (e.g. com.apple.Sound-Settings.extension) become audio
+            // clients while open; they are not apps a user would control (#427).
+            if bundleID.hasPrefix("com.apple."), bundleID.hasSuffix("-Settings.extension") {
+                return true
+            }
         }
 
         // Check process name (handles nil bundleID and format variations)
@@ -166,6 +171,16 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
         return nil
     }
 
+    /// True if `pid` runs as the current user. Unknown owners count as ours, so a failed
+    /// lookup never hides an app that would have been listed before.
+    nonisolated static func isOwnedByCurrentUser(_ pid: pid_t) -> Bool {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.size
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return true }
+        return info.kp_eproc.e_ucred.cr_uid == getuid()
+    }
+
     func start() {
         guard processListListenerBlock == nil else { return }
 
@@ -240,6 +255,10 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
 
             for objectID in processIDs {
                 guard let pid = try? objectID.readProcessPID(), pid != myPID else { continue }
+                // The HAL lists audio processes of every logged-in user. Tapping another
+                // user's process mutes it in their session and routes it into ours, so
+                // their session goes silent while FineTune runs (#418).
+                guard Self.isOwnedByCurrentUser(pid) else { continue }
                 // Keep non-streaming Core Audio process objects visible so AudioEngine
                 // can create process taps before the first audible buffer.
 
