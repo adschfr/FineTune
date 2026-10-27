@@ -43,7 +43,10 @@ private struct Fixture {
 }
 
 @MainActor
-private func makeFixture() -> Fixture {
+private func makeFixture(
+    staleCleanupDebounce: Duration = .milliseconds(350),
+    staleTapGracePeriod: Duration = .seconds(30)
+) -> Fixture {
     let settings = SettingsManager(directory: FileManager.default.temporaryDirectory
         .appendingPathComponent("FineTuneTests-\(UUID().uuidString)"))
 
@@ -75,6 +78,8 @@ private func makeFixture() -> Fixture {
         tapFactory: { app, uids, _ in taps.make(app: app, deviceUIDs: uids) },
         isProcessRunning: { running.ids.contains($0) },
         currentDate: { clock.now },
+        staleCleanupDebounce: staleCleanupDebounce,
+        staleTapGracePeriod: staleTapGracePeriod,
         startMonitorsAutomatically: false
     )
     return Fixture(engine: engine, settings: settings, processMonitor: processMonitor, taps: taps,
@@ -308,5 +313,48 @@ struct AudioEngineTapLifecycleTests {
         #expect(await waitUntil { fix.taps.created.count == 2 })
         try await Task.sleep(for: .milliseconds(100))
         #expect(fix.taps.created.count == 2)
+    }
+
+    // Stale cleanup: upstream drops taps of apps that are not playing; the fork keeps
+    // them (suspended) for as long as the app has a Core Audio process object.
+
+    @Test("A silent app that is still present keeps its tap past the stale-cleanup grace period")
+    func silentPresentAppKeepsTap() async throws {
+        let fix = makeFixture(staleCleanupDebounce: .milliseconds(5), staleTapGracePeriod: .milliseconds(20))
+        let app = makePlayer()
+        let tap = try startPlaying(fix, app)
+
+        fix.running.ids = []
+        fix.publish([app])
+        try await Task.sleep(for: .milliseconds(150))
+
+        #expect(!tap.isInvalidated)
+        #expect(fix.taps.created.count == 1)
+    }
+
+    @Test("A tap is removed once its app has no Core Audio process object left")
+    func vanishedAppLosesTap() async throws {
+        let fix = makeFixture(staleCleanupDebounce: .milliseconds(5), staleTapGracePeriod: .milliseconds(20))
+        let tap = try startPlaying(fix)
+
+        fix.running.ids = []
+        fix.publish([])
+
+        #expect(await waitUntil { tap.isInvalidated })
+    }
+
+    @Test("An app that comes back within the grace period keeps its tap")
+    func returningAppKeepsTap() async throws {
+        let fix = makeFixture(staleCleanupDebounce: .milliseconds(5), staleTapGracePeriod: .milliseconds(100))
+        let app = makePlayer()
+        let tap = try startPlaying(fix, app)
+
+        fix.publish([])
+        try await Task.sleep(for: .milliseconds(30))
+        fix.publish([app])
+        try await Task.sleep(for: .milliseconds(250))
+
+        #expect(!tap.isInvalidated)
+        #expect(fix.taps.created.count == 1)
     }
 }
