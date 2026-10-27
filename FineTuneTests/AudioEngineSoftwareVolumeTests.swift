@@ -16,6 +16,7 @@ import AudioToolbox
 @MainActor
 private struct Fixture {
     let engine: AudioEngine
+    let deviceMonitor: MockAudioDeviceMonitor
     let deviceVolume: MockDeviceVolumeProviding
     let taps: FakeTapFactory
     let tv: AudioDevice
@@ -52,14 +53,17 @@ private func makeFixture(tvVolume: Float = 0.25, tvMuted: Bool = false) -> Fixtu
         processMonitor: StubProcessMonitor(),
         deviceVolumeMonitor: deviceVolume,
         tapFactory: { app, uids, _ in taps.make(app: app, deviceUIDs: uids) },
+        // Fake device IDs must not reach the HAL's alive check (it would install listeners)
+        isAlive: { _ in true },
         startMonitorsAutomatically: false
     )
-    return Fixture(engine: engine, deviceVolume: deviceVolume, taps: taps, tv: tv, speakers: speakers)
+    return Fixture(engine: engine, deviceMonitor: deviceMonitor, deviceVolume: deviceVolume,
+                   taps: taps, tv: tv, speakers: speakers)
 }
 
 @MainActor
-private func makeApp(pid: pid_t = 4242, bundleID: String = "com.test.softwarevolume") -> AudioApp {
-    AudioApp(id: pid, processObjectIDs: [], name: "Player", icon: NSImage(), bundleID: bundleID)
+private func makeApp(pid: pid_t = 4242, bundleID: String = "com.test.softwarevolume", isRunningInput: Bool = false) -> AudioApp {
+    AudioApp(id: pid, processObjectIDs: [], name: "Player", icon: NSImage(), bundleID: bundleID, isRunningInput: isRunningInput)
 }
 
 private func approx(_ a: Float?, _ b: Float) -> Bool {
@@ -213,5 +217,76 @@ struct AudioEngineSoftwareVolumeTests {
 
         fix.deviceVolume.setMute(for: fix.tv.id, to: false)
         #expect(approx(tap.volume, 0.2))
+    }
+
+    @Test("When the TV comes back with a new device ID, its taps get the TV volume again (#375)")
+    func tvReappearingRestoresGain() throws {
+        let fix = makeFixture(tvVolume: 0.25)
+        let app = makeApp()
+        fix.engine.setVolume(for: app, to: 0.8)
+        fix.engine.setDevice(for: app, deviceUID: fix.tv.uid)
+        let tap = try #require(fix.taps.last)
+        tap.volume = 0.8  // stale gain, as if the TV's state had been lost
+
+        // Power-on: same UID, new AudioDeviceID, state seeded from the saved level
+        let tvAgain = AudioDevice(id: AudioDeviceID(900_044), uid: fix.tv.uid, name: "LG TV", icon: nil, supportsAutoEQ: false)
+        fix.deviceMonitor.addOutputDevice(tvAgain)
+        fix.deviceVolume.autoDetectedTiersByID[tvAgain.id] = .software
+        fix.deviceVolume.volumes[tvAgain.id] = 0.25
+        fix.deviceMonitor.onDeviceConnected?(fix.tv.uid, "LG TV")
+
+        #expect(approx(tap.volume, 0.2))
+    }
+
+    @Test("When the default output changes to the TV, a following app ends at app volume × TV volume")
+    func defaultChangeToTVAppliesSoftwareGain() async throws {
+        let fix = makeFixture(tvVolume: 0.25)
+        fix.deviceVolume.defaultDeviceID = fix.speakers.id
+        fix.deviceVolume.defaultDeviceUID = fix.speakers.uid
+        let app = makeApp()
+        fix.engine.setVolume(for: app, to: 0.8)
+        fix.engine.setDevice(for: app, deviceUID: nil)
+        let tap = try #require(fix.taps.last)
+        #expect(tap.currentDeviceUIDs == [fix.speakers.uid])
+        #expect(approx(tap.volume, 0.8))
+
+        fix.deviceVolume.defaultDeviceID = fix.tv.id
+        fix.deviceVolume.defaultDeviceUID = fix.tv.uid
+        fix.deviceVolume.onDefaultDeviceChanged?(fix.tv.uid)
+
+        #expect(await waitUntil { tap.currentDeviceUIDs == [fix.tv.uid] && approx(tap.volume, 0.2) })
+    }
+
+    @Test("Moving a playing app from the speakers to the TV ends at app volume × TV volume")
+    func explicitSwitchToTVAppliesSoftwareGain() async throws {
+        let fix = makeFixture(tvVolume: 0.25)
+        let app = makeApp()
+        fix.engine.setVolume(for: app, to: 0.8)
+        fix.engine.setDevice(for: app, deviceUID: fix.speakers.uid)
+        let tap = try #require(fix.taps.last)
+
+        fix.engine.setDevice(for: app, deviceUID: fix.tv.uid)
+
+        #expect(await waitUntil { tap.currentDeviceUIDs == [fix.tv.uid] && approx(tap.volume, 0.2) })
+        #expect(fix.taps.created.count == 1)
+    }
+
+    @Test("A call app pinned to the speakers while the TV is the default output stays tapped")
+    func callOnSpeakersWithTVDefaultStaysTapped() throws {
+        // Without its tap the process plays to the default output, here the TV, at full scale.
+        withKnownIssue("Passthrough checks the tap's target, not the default output an untapped process plays to") {
+            let fix = makeFixture(tvVolume: 0.25)
+            let idle = makeApp()
+            let processMonitor = try #require(fix.engine.processMonitor as? StubProcessMonitor)
+            processMonitor.activeApps = [idle]
+            fix.engine.setDevice(for: idle, deviceUID: fix.speakers.uid)
+            let tap = try #require(fix.taps.last)
+
+            let onCall = makeApp(isRunningInput: true)
+            processMonitor.activeApps = [onCall]
+            processMonitor.onAppsChanged?([onCall])
+
+            #expect(!tap.isInvalidated)
+        }
     }
 }

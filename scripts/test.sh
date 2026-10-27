@@ -46,7 +46,7 @@ grep -E ": (warning|error):" "$LOG" | sed "s#$PROJECT_DIR/##" | sort -u
 SUMMARY="$TEST_DIR/summary.json"
 if xcrun xcresulttool get test-results summary --path "$RESULT" > "$SUMMARY" 2>/dev/null; then
     field() { plutil -extract "$1" raw -o - "$SUMMARY" 2>/dev/null; }
-    echo "==> $(field result): $(field passedTests) passed, $(field failedTests) failed, $(field skippedTests) skipped of $(field totalTestCount)"
+    echo "==> $(field result): $(field passedTests) passed, $(field failedTests) failed, $(field skippedTests) skipped, $(field expectedFailures) known issues of $(field totalTestCount)"
     if [ $STATUS -eq 0 ] && [ "$(field totalTestCount)" = "0" ]; then
         echo "No tests matched the selection."
         STATUS=1
