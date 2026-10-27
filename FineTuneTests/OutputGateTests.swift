@@ -13,7 +13,6 @@ private let silenceThreshold: Float = 0.0001
 private let belowThreshold: Float = 0.00005  // ½ of threshold → silent
 private let aboveThreshold: Float = 0.01     // 100× threshold → non-silent
 private let defaultRampSamples: Float = 1920          // 40 ms @ 48 kHz
-private let defaultSilenceHold: Int32 = 9600          // 200 ms @ 48 kHz
 private let cosineTolerance: Float = 1e-5
 
 // MARK: - Armed phase
@@ -25,22 +24,18 @@ struct OutputGateArmedTests {
     func armedAndSilentStaysArmed() {
         var phase: UInt8 = 0
         var progress: Float = 0
-        var silent: Int32 = 0
 
         let mult = ProcessTapController.advanceOutputGate(
             phase: &phase,
             progress: &progress,
-            silentSamples: &silent,
             maxPeak: belowThreshold,
             frameCount: 512,
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
+            rampSamples: defaultRampSamples
         )
 
         #expect(mult == 0)
         #expect(phase == 0)
         #expect(progress == 0)
-        #expect(silent == 0)
     }
 
     @Test("Armed + non-silent input enters ramping; entry buffer outputs 0")
@@ -49,38 +44,31 @@ struct OutputGateArmedTests {
         // returns 0 immediately. The FIRST audible ramp output is the NEXT buffer.
         var phase: UInt8 = 0
         var progress: Float = 0.5      // garbage prior value
-        var silent: Int32 = 12345      // garbage prior value
 
         let mult = ProcessTapController.advanceOutputGate(
             phase: &phase,
             progress: &progress,
-            silentSamples: &silent,
             maxPeak: aboveThreshold,
             frameCount: 512,
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
+            rampSamples: defaultRampSamples
         )
 
         #expect(mult == 0)
         #expect(phase == 1, "armed→ramping transition")
         #expect(progress == 0, "progress reset on entry to ramping")
-        #expect(silent == 0, "silentSamples cleared on entry to ramping")
     }
 
     @Test("Boundary: peak exactly == threshold is treated as silent (uses <=)")
     func peakEqualToThresholdIsSilent() {
         var phase: UInt8 = 0
         var progress: Float = 0
-        var silent: Int32 = 0
 
         let mult = ProcessTapController.advanceOutputGate(
             phase: &phase,
             progress: &progress,
-            silentSamples: &silent,
             maxPeak: silenceThreshold,  // == 0.0001
             frameCount: 512,
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
+            rampSamples: defaultRampSamples
         )
 
         #expect(mult == 0)
@@ -99,18 +87,15 @@ struct OutputGateRampingTests {
         // Start in ramping with progress=0, then issue a single non-silent buffer.
         var phase: UInt8 = 1
         var progress: Float = 0
-        var silent: Int32 = 0
 
         let delta = Float(frameCount) / defaultRampSamples
         // After 1 call, progress should be delta (assuming delta < 1.0).
         _ = ProcessTapController.advanceOutputGate(
             phase: &phase,
             progress: &progress,
-            silentSamples: &silent,
             maxPeak: aboveThreshold,
             frameCount: frameCount,
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
+            rampSamples: defaultRampSamples
         )
         #expect(abs(progress - delta) < 1e-6, "expected progress=\(delta), got \(progress)")
         #expect(phase == 1)
@@ -120,11 +105,9 @@ struct OutputGateRampingTests {
         _ = ProcessTapController.advanceOutputGate(
             phase: &phase,
             progress: &progress,
-            silentSamples: &silent,
             maxPeak: aboveThreshold,
             frameCount: frameCount,
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
+            rampSamples: defaultRampSamples
         )
         let expectedProgress = min(Float(1.0), 2 * delta)
         #expect(abs(progress - expectedProgress) < 1e-6, "expected progress=\(expectedProgress), got \(progress)")
@@ -137,7 +120,6 @@ struct OutputGateRampingTests {
     func rampingReachesOpenAtProgressOne() {
         var phase: UInt8 = 1
         var progress: Float = 0
-        var silent: Int32 = 0
         let frameCount = 256
         let stepsToOpen = Int((defaultRampSamples / Float(frameCount)).rounded(.up))  // 8 calls
 
@@ -149,11 +131,9 @@ struct OutputGateRampingTests {
             let mult = ProcessTapController.advanceOutputGate(
                 phase: &phase,
                 progress: &progress,
-                silentSamples: &silent,
                 maxPeak: aboveThreshold,
                 frameCount: frameCount,
-                rampSamples: defaultRampSamples,
-                silenceHoldSamples: defaultSilenceHold
+                rampSamples: defaultRampSamples
             )
             if phase == 2 && promotionStep < 0 {
                 promotionStep = step
@@ -189,16 +169,13 @@ struct OutputGateRampingTests {
         // the helper returns, not what cos would yield.
         var phase: UInt8 = 1
         var progress: Float = target
-        var silent: Int32 = 0
 
         let mult = ProcessTapController.advanceOutputGate(
             phase: &phase,
             progress: &progress,
-            silentSamples: &silent,
             maxPeak: aboveThreshold,
             frameCount: 0,                       // delta = 0; progress is unchanged by the call
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
+            rampSamples: defaultRampSamples
         )
 
         #expect(abs(mult - expected) < cosineTolerance,
@@ -217,144 +194,69 @@ struct OutputGateRampingTests {
 @Suite("OutputGate — open phase (2)")
 struct OutputGateOpenTests {
 
-    @Test("Open + non-silent input resets silentSamples, stays open, returns 1.0")
-    func openAndNonSilentResetsSilentCounter() {
+    @Test("Open stays open and passes through for silent and non-silent input",
+          arguments: [belowThreshold, aboveThreshold])
+    func openStaysOpen(peak: Float) {
+        // Re-arming is driven by the IO callback on a resume gap or unmute edge,
+        // never by input silence, so short sounds after a pause are not faded (#388).
         var phase: UInt8 = 2
         var progress: Float = 1.0
-        var silent: Int32 = 5000
 
-        let mult = ProcessTapController.advanceOutputGate(
-            phase: &phase,
-            progress: &progress,
-            silentSamples: &silent,
-            maxPeak: aboveThreshold,
-            frameCount: 512,
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
-        )
-
-        #expect(mult == 1.0)
-        #expect(phase == 2)
-        #expect(silent == 0, "non-silent input must reset silentSamples to 0")
-    }
-
-    @Test("Open + silent input accumulates silentSamples by frameCount, stays open, returns 1.0")
-    func openAndSilentAccumulatesSilentCounter() {
-        var phase: UInt8 = 2
-        var progress: Float = 1.0
-        var silent: Int32 = 0
-
-        let mult = ProcessTapController.advanceOutputGate(
-            phase: &phase,
-            progress: &progress,
-            silentSamples: &silent,
-            maxPeak: belowThreshold,
-            frameCount: 512,
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
-        )
-
-        #expect(mult == 1.0)
-        #expect(phase == 2)
-        #expect(silent == 512)
-    }
-
-    @Test("Open → armed once silentSamples crosses silenceHoldSamples")
-    func openReArmsAfterSilenceHold() {
-        var phase: UInt8 = 2
-        var progress: Float = 1.0
-        var silent: Int32 = 9000  // 600 samples below 9600 hold
-
-        let mult = ProcessTapController.advanceOutputGate(
-            phase: &phase,
-            progress: &progress,
-            silentSamples: &silent,
-            maxPeak: belowThreshold,
-            frameCount: 1024,                       // 9000 + 1024 = 10024 ≥ 9600
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
-        )
-
-        #expect(mult == 1.0, "this buffer is still open passthrough")
-        #expect(phase == 0, "must re-arm after hold threshold")
-        #expect(silent == 0, "silentSamples reset on re-arm")
-        // progress is intentionally NOT reset here — only armed→ramping clears it.
+        for _ in 0..<50 {
+            let mult = ProcessTapController.advanceOutputGate(
+                phase: &phase,
+                progress: &progress,
+                maxPeak: peak,
+                frameCount: 1024,
+                rampSamples: defaultRampSamples
+            )
+            #expect(mult == 1.0)
+            #expect(phase == 2)
+        }
     }
 }
 
 // MARK: - Full cycle integration
 
-@Suite("OutputGate — full re-arm cycle")
+@Suite("OutputGate — re-armed cycle")
 struct OutputGateCycleTests {
 
-    @Test("open → armed → ramping → open across multiple silent/non-silent transitions")
-    func fullReArmCycle() {
-        // Start open.
-        var phase: UInt8 = 2
-        var progress: Float = 1.0
-        var silent: Int32 = 0
+    @Test("armed (after external re-arm) → ramping → open")
+    func reArmedCycle() {
+        // The callback re-arms by resetting phase/progress to 0.
+        var phase: UInt8 = 0
+        var progress: Float = 0
         let frameCount = 1024
 
-        // Phase 1: feed silent buffers until re-arm.
-        // 200 ms hold @ 48 kHz = 9600 samples → 10 × 1024 = 10240 ≥ 9600 → re-arms
-        // on the 10th silent buffer (cumulative 9 × 1024 = 9216 still < 9600,
-        // 10th call: 9216 + 1024 = 10240 ≥ 9600 → flip).
-        var silentBuffersConsumed = 0
-        for _ in 0..<20 {
-            let mult = ProcessTapController.advanceOutputGate(
-                phase: &phase,
-                progress: &progress,
-                silentSamples: &silent,
-                maxPeak: belowThreshold,
-                frameCount: frameCount,
-                rampSamples: defaultRampSamples,
-                silenceHoldSamples: defaultSilenceHold
-            )
-            silentBuffersConsumed += 1
-            #expect(mult == 1.0, "open passthrough during silence accumulation")
-            if phase == 0 { break }
-        }
-        #expect(phase == 0, "must have re-armed after sustained silence")
-        #expect(silentBuffersConsumed <= 10, "should re-arm by buffer 10, got \(silentBuffersConsumed)")
-
-        // Phase 2: feed one armed-silent buffer → stays armed.
         _ = ProcessTapController.advanceOutputGate(
             phase: &phase,
             progress: &progress,
-            silentSamples: &silent,
             maxPeak: belowThreshold,
             frameCount: frameCount,
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
+            rampSamples: defaultRampSamples
         )
-        #expect(phase == 0)
+        #expect(phase == 0, "armed + silent stays armed")
 
-        // Phase 3: feed one non-silent buffer → enters ramping (entry returns 0).
         let entryMult = ProcessTapController.advanceOutputGate(
             phase: &phase,
             progress: &progress,
-            silentSamples: &silent,
             maxPeak: aboveThreshold,
             frameCount: frameCount,
-            rampSamples: defaultRampSamples,
-            silenceHoldSamples: defaultSilenceHold
+            rampSamples: defaultRampSamples
         )
         #expect(entryMult == 0, "armed→ramping entry returns 0")
         #expect(phase == 1)
         #expect(progress == 0)
 
-        // Phase 4: feed enough ramping buffers to reach open.
         // delta per call = 1024/1920 ≈ 0.533 → 2 calls reach progress 1.066 → promote on 2nd.
         var promoted = false
         for _ in 0..<5 {
             let mult = ProcessTapController.advanceOutputGate(
                 phase: &phase,
                 progress: &progress,
-                silentSamples: &silent,
                 maxPeak: aboveThreshold,
                 frameCount: frameCount,
-                rampSamples: defaultRampSamples,
-                silenceHoldSamples: defaultSilenceHold
+                rampSamples: defaultRampSamples
             )
             if phase == 2 {
                 #expect(mult == 1.0, "open output is exactly 1.0")
