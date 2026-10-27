@@ -91,8 +91,12 @@ final class FakeTapController: ProcessTapControlling {
         currentDeviceUIDs = newDeviceUIDs
     }
 
-    func hasRecentAudioCallback(within seconds: Double) -> Bool { true }
-    func isHealthCheckEligible(minActiveSeconds: Double) -> Bool { false }
+    /// What the health monitor sees: a healthy tap renders; checks start once it is eligible.
+    var hasRecentCallback = true
+    var healthCheckEligible = false
+
+    func hasRecentAudioCallback(within seconds: Double) -> Bool { hasRecentCallback }
+    func isHealthCheckEligible(minActiveSeconds: Double) -> Bool { healthCheckEligible }
 }
 
 /// Collects every tap a test engine's factory hands out, with an ordered event log

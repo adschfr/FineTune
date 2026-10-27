@@ -15,7 +15,7 @@ import os
 // 2. **HAL I/O thread (real-time)**: Audio processing callback.
 //    - processAudioCallback() — unified callback with runtime role via callbackID
 //    - Reads nonisolated(unsafe) vars; writes _peakLevel/_secondaryPeakLevel,
-//      _primaryCurrentVolume/_secondaryCurrentVolume, _lastRenderHostTime, _hasRenderedAudio
+//      _primaryCurrentVolume/_secondaryCurrentVolume, _lastRenderHostTime
 //    - MUST NOT allocate, lock, log, or call ObjC. See .claude/rules/rt-safety.md
 //
 // The nonisolated(unsafe) annotation marks variables that cross the thread boundary.
@@ -75,8 +75,6 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var _lastRenderHostTime: UInt64 = 0
     /// Monotonic host tick of successful activation.
     private nonisolated(unsafe) var _activationHostTime: UInt64 = 0
-    /// Set once any audio callback has rendered at least one buffer.
-    private nonisolated(unsafe) var _hasRenderedAudio: Bool = false
 
     /// Callback role identification — RT-safe via atomic UInt32 reads.
     /// Each IO proc closure captures an immutable callbackID at creation.
@@ -183,9 +181,10 @@ final class ProcessTapController: ProcessTapControlling {
         return deltaNanos <= (seconds * 1_000_000_000.0)
     }
 
-    /// Health checks should only run after activation has settled and at least one callback occurred.
+    /// Health checks run once activation (or resume) has settled. A tap that has not rendered
+    /// a single callback by then is checked too: AudioDeviceStart can succeed without the HAL
+    /// ever calling the IO proc, and under CATapMuted that leaves the app silent unnoticed.
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool {
-        guard _hasRenderedAudio else { return false }
         let started = _activationHostTime
         guard started != 0 else { return false }
         let deltaNanos = Double(mach_absolute_time() &- started) * Self.hostTimeNanosScale
@@ -647,7 +646,6 @@ final class ProcessTapController: ProcessTapControlling {
         // Reset health tracking for fresh activation
         _lastRenderHostTime = 0
         _activationHostTime = mach_absolute_time()
-        _hasRenderedAudio = false
 
         // Create process tap. Prefer stream-specific tap for multichannel devices to avoid
         // stereo matrix attenuation on interfaces with many output channels.
@@ -903,7 +901,6 @@ final class ProcessTapController: ProcessTapControlling {
         _primaryCurrentVolume = _volume
         _lastRenderHostTime = 0
         _activationHostTime = mach_absolute_time()
-        _hasRenderedAudio = false
 
         let err = AudioDeviceStart(primaryResources.aggregateDeviceID, procID)
         guard err == noErr else {
@@ -997,7 +994,6 @@ final class ProcessTapController: ProcessTapControlling {
 
         _lastRenderHostTime = 0
         _activationHostTime = 0
-        _hasRenderedAudio = false
 
         crossfadeTask?.cancel()
         crossfadeTask = nil
@@ -1668,7 +1664,6 @@ final class ProcessTapController: ProcessTapControlling {
         let renderHostTime = mach_absolute_time()
         let previousRenderHostTime = _lastRenderHostTime
         _lastRenderHostTime = renderHostTime
-        _hasRenderedAudio = true
 
         let isPrimary = (callbackID == _primaryCallbackID)
         let isSecondary = !isPrimary && (callbackID == _secondaryCallbackID)
