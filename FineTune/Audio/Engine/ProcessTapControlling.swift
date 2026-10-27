@@ -30,6 +30,9 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool, autoEQProfile: AutoEQProfile?) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool
+    func hasOutputSampleRateMismatch() -> Bool
+    func prepareForOutputFormatChange()
+    func cancelOutputFormatChangePreparation()
 
     var tapSourceDeviceUID: String? { get }
     func refreshTapSource(_ preferredDeviceUID: String?) async throws
@@ -76,4 +79,10 @@ extension ProcessTapControlling {
     func suspend() {}
     func resume() throws {}
     func updateProcesses(for newApp: AudioApp) -> Bool { true }
+
+    func hasOutputSampleRateMismatch() -> Bool { false }
+
+    func prepareForOutputFormatChange() {}
+
+    func cancelOutputFormatChangePreparation() {}
 }
