@@ -14,7 +14,7 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
     private let deviceVolumeMonitor: DeviceVolumeMonitor
     private let deviceProvider: any AudioDeviceProviding
     private let settings: SettingsManager
-    private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MenuBarIconCoordinator")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "MenuBarIconCoordinator")
 
     private weak var cachedButton: NSStatusBarButton?
     private var flashWorkItem: DispatchWorkItem?

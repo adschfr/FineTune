@@ -25,7 +25,7 @@ final class AccessibilityPermissionService: AccessibilityTrustProviding {
     private var trustObserver: NSObjectProtocol?
     private var debounceTask: Task<Void, Never>?
 
-    private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "AccessibilityPermissionService")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "AccessibilityPermissionService")
 
     var refreshDidFinish: (() -> Void)?
 

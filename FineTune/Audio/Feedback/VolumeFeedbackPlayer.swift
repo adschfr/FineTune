@@ -35,7 +35,7 @@ final class VolumeFeedbackPlayer {
     // playback device after long process uptime (Apple #12506583).
     private static nonisolated let fallbackSoundPath = "/System/Library/Sounds/Tink.aiff"
 
-    private nonisolated let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "VolumeFeedbackPlayer")
+    private nonisolated let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "VolumeFeedbackPlayer")
 
     private var lastPlay: TimeInterval = -.infinity
 

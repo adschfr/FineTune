@@ -29,7 +29,7 @@ final class BluetoothDeviceMonitor {
     // MARK: - Private
 
     private let logger = Logger(
-        subsystem: "com.finetuneapp.FineTune",
+        subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune",
         category: "BluetoothDeviceMonitor"
     )
 
