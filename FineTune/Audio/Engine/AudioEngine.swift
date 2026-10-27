@@ -30,6 +30,12 @@ final class AudioEngine {
     /// Closure to check if a device is alive. Overridable for testing.
     private let isAliveCheck: (AudioDeviceID) -> Bool
 
+    /// Whether a Core Audio process object is currently playing. Overridable for testing.
+    private let isProcessRunning: (AudioObjectID) -> Bool
+
+    /// Clock for tap suspension and recovery timing. Overridable for testing.
+    private let currentDate: () -> Date
+
     /// One-shot HAL listeners for devices that were present but not alive during priority resolution.
     /// Keyed by AudioDeviceID. Each entry holds the device UID, listener block, and a timeout task.
     private var aliveWatchers: [AudioDeviceID: (uid: String, block: AudioObjectPropertyListenerBlock, timeout: Task<Void, Never>)] = [:]
@@ -216,6 +222,8 @@ final class AudioEngine {
         deviceVolumeMonitor: (any DeviceVolumeProviding)? = nil,
         tapFactory: (@MainActor (AudioApp, [String], String?) throws -> any ProcessTapControlling)? = nil,
         isAlive: ((AudioDeviceID) -> Bool)? = nil,
+        isProcessRunning: ((AudioObjectID) -> Bool)? = nil,
+        currentDate: (() -> Date)? = nil,
         startMonitorsAutomatically: Bool = true
     ) {
         self.permission = permission
@@ -225,6 +233,8 @@ final class AudioEngine {
         self.autoEQProfileManager = autoEQProfileManager
         self.volumeState = VolumeState(settingsManager: manager)
         self.isAliveCheck = isAlive ?? { $0.isDeviceAlive() }
+        self.isProcessRunning = isProcessRunning ?? { $0.readProcessIsRunning() }
+        self.currentDate = currentDate ?? { Date() }
 
         // If a custom deviceProvider is given, use it directly.
         // Otherwise create a real AudioDeviceMonitor (needed by DeviceVolumeMonitor and default tap factory).
@@ -455,7 +465,7 @@ final class AudioEngine {
     /// that waste CPU on silent identity-processed audio (#245).
     var apps: [AudioApp] {
         processMonitor.activeApps
-            .filter { $0.processObjectIDs.contains { $0.readProcessIsRunning() } }
+            .filter { $0.processObjectIDs.contains(where: isProcessRunning) }
     }
 
     // MARK: - Displayable Apps (Active + Pinned Inactive)
@@ -872,7 +882,7 @@ final class AudioEngine {
         guard let app = apps.first(where: { $0.bundleID == bundleID }) else {
             return false
         }
-        return app.processObjectIDs.contains { $0.readProcessIsRunning() }
+        return app.processObjectIDs.contains(where: isProcessRunning)
     }
 
     func setMute(for app: AudioApp, to muted: Bool) {
@@ -2092,7 +2102,7 @@ final class AudioEngine {
     /// - a tap whose app has been silent for `tapSuspendDelay` is suspended.
     /// Called on every app-list change and from the health monitor loop.
     private func syncTapsWithProcessState() {
-        let now = Date()
+        let now = currentDate()
         let presentApps = Dictionary(processMonitor.activeApps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         for (pid, tap) in taps {
@@ -2104,7 +2114,7 @@ final class AudioEngine {
                 continue
             }
 
-            if current.processObjectIDs.contains(where: { $0.readProcessIsRunning() }) {
+            if current.processObjectIDs.contains(where: isProcessRunning) {
                 tapSilentSince.removeValue(forKey: pid)
                 guard tap.isSuspended else { continue }
                 do {
@@ -2162,7 +2172,7 @@ final class AudioEngine {
                 // Safety net for missed isRunning notifications, and drives suspension timing
                 self.syncTapsWithProcessState()
 
-                let now = Date()
+                let now = self.currentDate()
 
                 for (pid, tap) in self.taps {
                     // Suspended taps have no IO proc running — no callbacks is expected
@@ -2185,7 +2195,7 @@ final class AudioEngine {
                     // Paused apps can still be present in activeApps for proactive tap setup,
                     // but no callbacks while paused is normal — not a health signal.
                     let isActivelyStreaming = self.apps.first { $0.id == pid }?
-                        .processObjectIDs.contains { $0.readProcessIsRunning() } ?? false
+                        .processObjectIDs.contains(where: self.isProcessRunning) ?? false
                     guard isActivelyStreaming else {
                         consecutiveMisses[pid] = 0
                         consecutiveRateMismatches[pid] = 0
@@ -2243,7 +2253,7 @@ final class AudioEngine {
         await oldTap.invalidateAsync()
 
         // Set cooldown to prevent thrashing
-        tapRecoveryCooldownUntil[pid] = Date().addingTimeInterval(20)
+        tapRecoveryCooldownUntil[pid] = currentDate().addingTimeInterval(20)
 
         // Find the current AudioApp entry for this PID (may be silent; its new tap is
         // suspended again by syncTapsWithProcessState)
@@ -2313,7 +2323,7 @@ final class AudioEngine {
         for (pid, tap) in affected {
             do {
                 try await tap.recreateForOutputRateChange()
-                tapRecoveryCooldownUntil[pid] = Date().addingTimeInterval(20)
+                tapRecoveryCooldownUntil[pid] = currentDate().addingTimeInterval(20)
             } catch {
                 logger.error("[RATE] Recreate failed for PID \(pid): \(error.localizedDescription) — falling back to full recreate")
                 await recreateTap(for: pid)
