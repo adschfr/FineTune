@@ -48,7 +48,8 @@ private struct Fixture {
 @MainActor
 private func makeFixture(
     staleCleanupDebounce: Duration = .milliseconds(350),
-    staleTapGracePeriod: Duration = .seconds(30)
+    staleTapGracePeriod: Duration = .seconds(30),
+    healthCheckInterval: Duration = .seconds(2)
 ) -> Fixture {
     let settings = SettingsManager(directory: FileManager.default.temporaryDirectory
         .appendingPathComponent("FineTuneTests-\(UUID().uuidString)"))
@@ -85,6 +86,7 @@ private func makeFixture(
         currentDate: { clock.now },
         staleCleanupDebounce: staleCleanupDebounce,
         staleTapGracePeriod: staleTapGracePeriod,
+        healthCheckInterval: healthCheckInterval,
         startMonitorsAutomatically: false
     )
     return Fixture(engine: engine, settings: settings, deviceMonitor: deviceMonitor, deviceVolume: deviceVolume,
@@ -429,5 +431,81 @@ struct AudioEngineTapLifecycleTests {
 
         #expect(await waitUntil(timeout: .seconds(10)) { controlTap.isInvalidated })
         #expect(!returningTap.isInvalidated)
+    }
+
+    // Health monitor: runs only while a tap is active, drives the 10 s suspension and
+    // recreates taps whose IO stopped.
+
+    @Test("Health monitoring does not run while there is no active tap")
+    func healthMonitorIdleWithoutActiveTaps() throws {
+        let fix = makeFixture(healthCheckInterval: .milliseconds(10))
+
+        fix.engine.startHealthMonitoring()
+        #expect(!fix.engine.isHealthMonitorRunning)
+
+        _ = try startPlaying(fix)
+        #expect(fix.engine.isHealthMonitorRunning)
+    }
+
+    @Test("Health monitoring suspends a silent tap without another app-list change")
+    func healthMonitorSuspendsSilentTap() async throws {
+        let fix = makeFixture(healthCheckInterval: .milliseconds(10))
+        let app = makePlayer()
+        let tap = try startPlaying(fix, app)
+        fix.engine.startHealthMonitoring()
+
+        fix.running.ids = []
+        fix.publish([app])  // the only app-list change
+        fix.clock.advance(10)
+
+        #expect(await waitUntil(timeout: .seconds(10)) { tap.isSuspended })
+    }
+
+    @Test("Health monitoring stops once every tap is suspended and restarts on playback")
+    func healthMonitorStopsWhenIdleAndRestarts() async throws {
+        let fix = makeFixture(healthCheckInterval: .milliseconds(10))
+        let app = makePlayer()
+        let tap = try startPlaying(fix, app)
+        fix.engine.startHealthMonitoring()
+        stayIdle(fix, app, for: 10)
+        #expect(tap.isSuspended)
+
+        #expect(await waitUntil(timeout: .seconds(10)) { !fix.engine.isHealthMonitorRunning })
+
+        fix.running.ids.insert(mainProcess)
+        fix.publish([app])
+        #expect(!tap.isSuspended)
+        #expect(fix.engine.isHealthMonitorRunning)
+    }
+
+    @Test("A playing tap without callbacks is recreated on the TV with the TV gain")
+    func healthMonitorRecreatesDeadTap() async throws {
+        let fix = makeFixture(healthCheckInterval: .milliseconds(10))
+        let tap = try startPlaying(fix)
+        tap.healthCheckEligible = true
+        tap.hasRecentCallback = false
+
+        fix.engine.startHealthMonitoring()
+
+        #expect(await waitUntil(timeout: .seconds(10)) { fix.taps.created.count == 2 && tap.isInvalidated })
+        let newTap = try #require(fix.taps.last)
+        #expect(newTap.currentDeviceUIDs == [fix.tvUID])
+        #expect(approx(newTap.volumeAtActivate, 0.25))
+    }
+
+    @Test("A muted app's tap is not recreated for missing callbacks")
+    func healthMonitorSkipsMutedTap() async throws {
+        let fix = makeFixture(healthCheckInterval: .milliseconds(10))
+        let (player, playerTap, _, controlTap) = try startTwoApps(fix)
+        fix.engine.setMute(for: player, to: true)
+        for tap in [playerTap, controlTap] {
+            tap.healthCheckEligible = true
+            tap.hasRecentCallback = false
+        }
+
+        fix.engine.startHealthMonitoring()
+
+        #expect(await waitUntil(timeout: .seconds(10)) { controlTap.isInvalidated })
+        #expect(!playerTap.isInvalidated)
     }
 }

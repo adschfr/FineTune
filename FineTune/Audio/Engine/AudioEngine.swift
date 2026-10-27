@@ -39,6 +39,9 @@ final class AudioEngine {
     /// False for engines built with `startMonitorsAutomatically: false` (unit tests).
     private let startsSystemMonitors: Bool
 
+    /// Interval of the tap health check. Overridable for testing.
+    private let healthCheckInterval: Duration
+
     /// Coalesces app-list changes before stale taps are looked for. Overridable for testing.
     private let staleCleanupDebounce: Duration
     /// How long a tap whose process vanished is kept in case it comes back. Overridable for testing.
@@ -63,6 +66,11 @@ final class AudioEngine {
     private var pendingCleanup: [pid_t: Task<Void, Never>] = [:]  // Grace period for stale tap cleanup
     private var staleCleanupTask: Task<Void, Never>?  // Debounced cleanup scheduling
     private var healthMonitorTask: Task<Void, Never>?  // Periodic tap health monitor
+    /// Set once the engine monitors taps (audio capture authorized); the loop itself only
+    /// runs while a tap is not suspended.
+    @ObservationIgnored private var healthMonitoringEnabled = false
+    /// True while the health monitor loop runs (exposed for testing).
+    var isHealthMonitorRunning: Bool { healthMonitorTask != nil }
     private var tapRecoveryCooldownUntil: [pid_t: Date] = [:]  // Prevents tap recreation thrashing
     private var tapSilentSince: [pid_t: Date] = [:]  // When a tapped app stopped streaming
     private var tapsBeingRecreated: Set<pid_t> = []  // Dedupes recreates scheduled by syncTapsWithProcessState
@@ -234,6 +242,7 @@ final class AudioEngine {
         currentDate: (() -> Date)? = nil,
         staleCleanupDebounce: Duration = .milliseconds(350),
         staleTapGracePeriod: Duration = .seconds(30),
+        healthCheckInterval: Duration = .seconds(2),
         startMonitorsAutomatically: Bool = true
     ) {
         self.permission = permission
@@ -248,6 +257,7 @@ final class AudioEngine {
         self.staleCleanupDebounce = staleCleanupDebounce
         self.staleTapGracePeriod = staleTapGracePeriod
         self.startsSystemMonitors = startMonitorsAutomatically
+        self.healthCheckInterval = healthCheckInterval
 
         // If a custom deviceProvider is given, use it directly.
         // Otherwise create a real AudioDeviceMonitor (needed by DeviceVolumeMonitor and default tap factory).
@@ -325,6 +335,7 @@ final class AudioEngine {
             Task { @MainActor [self] in
                 if self.permission.status == .authorized {
                     self.processMonitor.start()
+                    self.startHealthMonitoring()
                 }
                 self.deviceMonitor.start()
                 self.bluetoothDeviceMonitor.start()
@@ -370,7 +381,7 @@ final class AudioEngine {
                 if self.permission.status == .authorized {
                     self.processMonitor.start()
                     self.applyPersistedSettings()
-                    self.startHealthMonitor()
+                    self.startHealthMonitoring()
                     self.logger.info("Audio capture authorized — process monitor started")
                 } else {
                     self.observePermissionGranted()
@@ -707,7 +718,7 @@ final class AudioEngine {
         deviceMonitor.start()
         applyPersistedSettings()
         if permission.status == .authorized {
-            startHealthMonitor()
+            startHealthMonitoring()
         }
 
         // Restore locked input device if feature is enabled
@@ -725,6 +736,7 @@ final class AudioEngine {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             bluetoothWakeObserver = nil
         }
+        healthMonitoringEnabled = false
         stopHealthMonitor()
         processMonitor.stop()
         deviceMonitor.stop()
@@ -874,6 +886,9 @@ final class AudioEngine {
         if taps[pid] != nil, settingsManager.appSettings.loudnessCompensationEnabled {
             syncLoudnessCompensation(for: tap, enabled: true)
         }
+
+        // A device switch may have resumed a suspended tap
+        if taps[pid] != nil { ensureHealthMonitorRunning() }
     }
 
     private func refreshAllTapOutputStates() {
@@ -1254,6 +1269,7 @@ final class AudioEngine {
             )
             try tap.activate(initial: initial)
             taps[app.id] = tap
+            ensureHealthMonitorRunning()
 
             // Catalog AutoEQ may not have been cached yet — kick off async resolve.
             if initial.autoEQProfile == nil {
@@ -1423,6 +1439,7 @@ final class AudioEngine {
             )
             try tap.activate(initial: initial)
             taps[app.id] = tap
+            ensureHealthMonitorRunning()
 
             // Catalog AutoEQ may not have been cached yet — kick off async resolve.
             // Imported profiles always hit the synchronous path above.
@@ -2150,6 +2167,7 @@ final class AudioEngine {
         }
 
         tapSilentSince = tapSilentSince.filter { taps[$0.key] != nil }
+        ensureHealthMonitorRunning()
     }
 
     private func scheduleTapRecreation(for pid: pid_t) {
@@ -2174,17 +2192,32 @@ final class AudioEngine {
 
     /// Starts a periodic health check that recreates unresponsive taps.
     /// Checks every 2 seconds; after 3 consecutive misses (~6s), the tap is presumed dead.
+    /// Turns on tap health monitoring. The loop runs only while a tap is active and is
+    /// restarted by `ensureHealthMonitorRunning()` when one becomes active again.
+    func startHealthMonitoring() {
+        healthMonitoringEnabled = true
+        ensureHealthMonitorRunning()
+    }
+
+    /// Starts the health monitor loop if monitoring is on and some tap is not suspended.
+    /// Called wherever a tap may have started running: creation, resume, device switch.
+    private func ensureHealthMonitorRunning() {
+        guard healthMonitoringEnabled, healthMonitorTask == nil,
+              taps.values.contains(where: { !$0.isSuspended }) else { return }
+        startHealthMonitor()
+    }
+
+    /// Periodic health check while taps are active: drives the 10 s suspension of silent
+    /// taps and recreates taps whose IO stopped (with CATapMuted a dead tap is a silent app).
+    /// Ends once every tap is suspended, so an idle Mac gets no wakeups from it (#176, #465).
     private func startHealthMonitor() {
         guard healthMonitorTask == nil else { return }
         healthMonitorTask = Task { @MainActor [weak self] in
             var consecutiveMisses: [pid_t: Int] = [:]
             var consecutiveRateMismatches: [pid_t: Int] = [:]
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: self?.healthCheckInterval ?? .seconds(2))
                 guard !Task.isCancelled, let self else { return }
-
-                // Skip entirely when no taps exist — avoids unnecessary work at idle (#176)
-                guard !self.taps.isEmpty else { continue }
 
                 // Safety net for missed isRunning notifications, and drives suspension timing
                 self.syncTapsWithProcessState()
@@ -2252,6 +2285,12 @@ final class AudioEngine {
                 consecutiveMisses = consecutiveMisses.filter { self.taps[$0.key] != nil }
                 consecutiveRateMismatches = consecutiveRateMismatches.filter { self.taps[$0.key] != nil }
                 self.tapRecoveryCooldownUntil = self.tapRecoveryCooldownUntil.filter { self.taps[$0.key] != nil }
+
+                // Nothing left to watch: every tap is suspended (or none exist)
+                if !self.taps.values.contains(where: { !$0.isSuspended }) {
+                    self.healthMonitorTask = nil
+                    return
+                }
             }
         }
     }
@@ -2374,6 +2413,7 @@ final class AudioEngine {
                 await recreateTap(for: pid)
             }
         }
+        ensureHealthMonitorRunning()
     }
 
     // MARK: - Bluetooth input protection
