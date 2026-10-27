@@ -843,7 +843,7 @@ final class ProcessTapController: ProcessTapControlling {
         // health tracking restarted so the monitor waits for the first callbacks.
         _outputGateRawPhase = 0
         _outputGateProgress = 0
-        _outputGateSilentSamples = 0
+        _outputGateWasMuted = _isMuted
         _primaryCurrentVolume = _volume
         _lastRenderHostTime = 0
         _activationHostTime = mach_absolute_time()
