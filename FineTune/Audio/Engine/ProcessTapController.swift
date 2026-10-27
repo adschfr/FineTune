@@ -23,7 +23,8 @@ import os
 
 @MainActor
 final class ProcessTapController: ProcessTapControlling {
-    let app: AudioApp
+    /// Replaced by `updateProcesses(for:)` when the app's set of Core Audio process objects changes.
+    private(set) var app: AudioApp
     private let logger: Logger
     // Note: This queue is passed to AudioDeviceCreateIOProcIDWithBlock but the actual
     // audio callback runs on CoreAudio's real-time HAL I/O thread, not this queue.
@@ -147,6 +148,8 @@ final class ProcessTapController: ProcessTapControlling {
     // Core Audio resources (primary tap) — TapResources enforces correct teardown order
     private var primaryResources = TapResources()
     private var activated = false
+    /// True while the primary IO proc is stopped because the app went silent (see `suspend()`).
+    private(set) var isSuspended = false
 
     // Secondary tap for crossfade
     private var secondaryResources = TapResources()
@@ -428,6 +431,7 @@ final class ProcessTapController: ProcessTapControlling {
     func recreateForOutputRateChange() async throws {
         guard activated, let primaryUID = currentDeviceUIDs.first else { return }
         guard primaryResources.tapDescription != nil else { throw CrossfadeError.noTapDescription }
+        try resume()
         logger.info("[RATE] \(self.app.name): recreating aggregate at new rate")
         try await performDestructiveDeviceSwitch(to: primaryUID, allDeviceUIDs: currentDeviceUIDs, sourceAlreadySilent: true)
     }
@@ -525,6 +529,12 @@ final class ProcessTapController: ProcessTapControlling {
         logger.info("EQ processing is stereo-only and will be bypassed for tap format with \(asbd.mChannelsPerFrame) channels.")
     }
 
+    /// `.muted` rather than `.mutedWhenTapped`: the process stays muted for as long as the tap
+    /// exists, not only while the aggregate's IO proc reads it. Audio that starts before the IO
+    /// proc runs (tap still being built, or the tap suspended while the app was silent) is held
+    /// back instead of reaching the device unprocessed at full volume (#268, #273, #455).
+    private static let tapMuteBehavior: CATapMuteBehavior = .muted
+
     /// Creates a process tap, preferring a device-stream tap to preserve multichannel routing.
     /// Falls back to stereo mixdown if stream-specific tap creation fails.
     private func createProcessTap(preferredDeviceUID: String?) throws -> (description: CATapDescription, tapID: AudioObjectID) {
@@ -534,7 +544,7 @@ final class ProcessTapController: ProcessTapControlling {
             if let outputStream = outputStreamIndex(for: deviceUID) {
                 let streamTap = CATapDescription(processes: app.processObjectIDs, deviceUID: deviceUID, stream: outputStream)
                 streamTap.uuid = UUID()
-                streamTap.muteBehavior = .mutedWhenTapped
+                streamTap.muteBehavior = Self.tapMuteBehavior
                 streamTap.isPrivate = true
 
                 var tapID: AudioObjectID = .unknown
@@ -554,7 +564,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         let mixdownTap = CATapDescription(stereoMixdownOfProcesses: app.processObjectIDs)
         mixdownTap.uuid = UUID()
-        mixdownTap.muteBehavior = .mutedWhenTapped
+        mixdownTap.muteBehavior = Self.tapMuteBehavior
         mixdownTap.isPrivate = true
 
         var mixdownTapID: AudioObjectID = .unknown
@@ -714,6 +724,9 @@ final class ProcessTapController: ProcessTapControlling {
         precondition(!newDeviceUIDs.isEmpty, "Must have at least one target device")
         self.preferredTapSourceDeviceUID = preferredTapSourceDeviceUID
 
+        // Crossfade and destructive switch both expect a running primary IO proc.
+        if newDeviceUIDs != currentDeviceUIDs { try resume() }
+
         guard activated else {
             targetDeviceUIDs = newDeviceUIDs
             return
@@ -770,6 +783,7 @@ final class ProcessTapController: ProcessTapControlling {
         self.preferredTapSourceDeviceUID = preferredDeviceUID
         guard activated, let primaryUID = currentDeviceUIDs.first else { return }
         guard oldPreferred != preferredDeviceUID else { return }
+        try resume()
 
         let allUIDs = currentDeviceUIDs
         logger.info("[REFRESH] Tap source changing for \(self.app.name): \(oldPreferred ?? "mixdown") → \(preferredDeviceUID ?? "mixdown")")
@@ -793,6 +807,90 @@ final class ProcessTapController: ProcessTapControlling {
         crossfadeTask = nil
 
         logger.info("[REFRESH] Tap source refresh complete for \(self.app.name)")
+    }
+
+    // MARK: - Suspension
+
+    /// Stops the primary IO proc while the app is silent, keeping tap and aggregate alive.
+    /// A stopped aggregate costs no CPU and does not keep the output device running, and
+    /// because the tap is `.muted` the app cannot play unprocessed audio in the meantime.
+    /// `resume()` restarts the existing IO proc, which is much faster than rebuilding the tap.
+    func suspend() {
+        guard activated, !isSuspended, !isSwitching, crossfadeTask == nil, !_invalidating,
+              primaryResources.aggregateDeviceID.isValid,
+              let procID = primaryResources.deviceProcID else { return }
+
+        let err = AudioDeviceStop(primaryResources.aggregateDeviceID, procID)
+        guard err == noErr else {
+            logger.warning("Suspend failed for \(self.app.name): OSStatus \(err)")
+            return
+        }
+        isSuspended = true
+        logger.info("Tap suspended for \(self.app.name) (app silent)")
+    }
+
+    /// Restarts a suspended IO proc. No-op when not suspended. Throws if CoreAudio refuses
+    /// to start the aggregate; the caller should then recreate the tap.
+    func resume() throws {
+        guard isSuspended else { return }
+        guard activated, primaryResources.aggregateDeviceID.isValid,
+              let procID = primaryResources.deviceProcID else {
+            isSuspended = false
+            return
+        }
+
+        // Same starting state as activate(): gate armed for a fade-in, ramp seeded at target,
+        // health tracking restarted so the monitor waits for the first callbacks.
+        _outputGateRawPhase = 0
+        _outputGateProgress = 0
+        _outputGateSilentSamples = 0
+        _primaryCurrentVolume = _volume
+        _lastRenderHostTime = 0
+        _activationHostTime = mach_absolute_time()
+        _hasRenderedAudio = false
+
+        let err = AudioDeviceStart(primaryResources.aggregateDeviceID, procID)
+        guard err == noErr else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to resume device: \(err)"])
+        }
+        isSuspended = false
+        logger.info("Tap resumed for \(self.app.name)")
+    }
+
+    // MARK: - Process Set Updates
+
+    /// Points the live tap(s) at the app's current process objects, e.g. after a browser
+    /// started a new audio helper process. Without this the new process is not covered by
+    /// the tap and plays unprocessed. Returns false if CoreAudio rejected the change; the
+    /// caller should then recreate the tap.
+    func updateProcesses(for newApp: AudioApp) -> Bool {
+        guard newApp.id == app.id, newApp.processObjectIDs != app.processObjectIDs else { return true }
+        app = newApp
+        guard activated else { return true }
+
+        var succeeded = true
+        for (tapID, description) in [(primaryResources.tapID, primaryResources.tapDescription),
+                                     (secondaryResources.tapID, secondaryResources.tapDescription)] {
+            guard tapID.isValid, let description else { continue }
+            description.processes = newApp.processObjectIDs
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioTapPropertyDescription,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var descriptionRef = description
+            let err = withUnsafeMutablePointer(to: &descriptionRef) { ptr in
+                AudioObjectSetPropertyData(tapID, &address, 0, nil, UInt32(MemoryLayout<CATapDescription>.size), ptr)
+            }
+            if err != noErr {
+                logger.warning("Updating tap processes failed for \(self.app.name): OSStatus \(err)")
+                succeeded = false
+            }
+        }
+        if succeeded {
+            logger.info("Tap for \(self.app.name) now covers \(newApp.processObjectIDs.count) process object(s)")
+        }
+        return succeeded
     }
 
     /// Tears down the tap and releases all CoreAudio resources.
@@ -839,6 +937,7 @@ final class ProcessTapController: ProcessTapControlling {
         guard activated, !_invalidating else { return false }
         _invalidating = true
         activated = false
+        isSuspended = false
 
         _lastRenderHostTime = 0
         _activationHostTime = 0
