@@ -31,6 +31,7 @@ nonisolated struct AppSettings: Codable, Equatable {
     var defaultNewAppVolume: Float = 1.0      // 100% (unity gain)
 
     // Input Device Lock
+    var bluetoothInputProtection: Bool = false
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
 
     // Output Device Auto-Switch
@@ -85,6 +86,7 @@ nonisolated struct AppSettings: Codable, Equatable {
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
         menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
         defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
+        bluetoothInputProtection = try c.decodeIfPresent(Bool.self, forKey: .bluetoothInputProtection) ?? false
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
         autoSwitchToNewOutputDevices = try c.decodeIfPresent(Bool.self, forKey: .autoSwitchToNewOutputDevices) ?? true
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
