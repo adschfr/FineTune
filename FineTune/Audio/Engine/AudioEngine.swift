@@ -299,7 +299,7 @@ final class AudioEngine {
         wireCallbacks()
 
         if startMonitorsAutomatically {
-            Task { @MainActor in
+            Task { @MainActor [self] in
                 if self.permission.status == .authorized {
                     self.processMonitor.start()
                 }

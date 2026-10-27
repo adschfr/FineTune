@@ -41,9 +41,22 @@
 		79B1000A2F35000000000001 /* IOBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOBluetooth.framework; path = System/Library/Frameworks/IOBluetooth.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		79A6FF012F05C9E10008D52A /* Exceptions for "FineTune" folder in "FineTune" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 79A607AE2F05C9E00008D52A /* FineTune */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		79A607B12F05C9E00008D52A /* FineTune */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				79A6FF012F05C9E10008D52A /* Exceptions for "FineTune" folder in "FineTune" target */,
+			);
 			path = FineTune;
 			sourceTree = "<group>";
 		};
