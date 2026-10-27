@@ -49,6 +49,11 @@ final class AudioEngine {
     private var staleCleanupTask: Task<Void, Never>?  // Debounced cleanup scheduling
     private var healthMonitorTask: Task<Void, Never>?  // Periodic tap health monitor
     private var tapRecoveryCooldownUntil: [pid_t: Date] = [:]  // Prevents tap recreation thrashing
+    private var tapSilentSince: [pid_t: Date] = [:]  // When a tapped app stopped streaming
+    private var tapsBeingRecreated: Set<pid_t> = []  // Dedupes recreates scheduled by syncTapsWithProcessState
+    /// How long a tapped app must stay silent before its IO proc is suspended. Long enough
+    /// to ride out gaps between tracks or videos without stop/start churn.
+    private let tapSuspendDelay: TimeInterval = 10
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
 
     // MARK: - Priority State Machine
@@ -350,6 +355,8 @@ final class AudioEngine {
         }
 
         processMonitor.onAppsChanged = { [weak self] apps in
+            // First, so a suspended tap resumes before anything slower runs
+            self?.syncTapsWithProcessState()
             self?.applyPersistedSettings()
             self?.scheduleStaleCleanup()
         }
@@ -1819,7 +1826,11 @@ final class AudioEngine {
     }
 
     private func cleanupStaleTaps() {
-        let activePIDs = Set(apps.map { $0.id })
+        // A tap is stale once its process has no Core Audio process object left. Apps that
+        // are merely silent keep their (suspended) tap, so resuming playback does not have
+        // to build a new one while unprocessed audio plays (#268, #455).
+        let presentApps = processMonitor.activeApps
+        let activePIDs = Set(presentApps.map { $0.id })
         let stalePIDs = Set(taps.keys).subtracting(activePIDs)
 
         // Cancel cleanup for PIDs that reappeared — but only if bundleID matches.
@@ -1828,7 +1839,7 @@ final class AudioEngine {
         for pid in activePIDs {
             guard let task = pendingCleanup[pid] else { continue }
 
-            let reappearedApp = apps.first { $0.id == pid }
+            let reappearedApp = presentApps.first { $0.id == pid }
             let existingTap = taps[pid]
 
             if let reappearedApp, let existingTap,
@@ -1858,7 +1869,7 @@ final class AudioEngine {
                 guard !Task.isCancelled else { return }
 
                 // Double-check still stale
-                let currentPIDs = Set(self.apps.map { $0.id })
+                let currentPIDs = Set(self.processMonitor.activeApps.map { $0.id })
                 guard !currentPIDs.contains(pid) else {
                     self.pendingCleanup.removeValue(forKey: pid)
                     return
@@ -1872,6 +1883,7 @@ final class AudioEngine {
                 self.appDeviceRouting.removeValue(forKey: pid)
                 self.followsDefault.remove(pid)
                 self.appliedPIDs.remove(pid)  // Allow re-initialization if app resumes
+                self.tapSilentSince.removeValue(forKey: pid)
                 self.pendingCleanup.removeValue(forKey: pid)
             }
         }
@@ -1881,6 +1893,54 @@ final class AudioEngine {
         appliedPIDs = appliedPIDs.intersection(pidsToKeep)
         followsDefault = followsDefault.intersection(pidsToKeep)
         volumeState.cleanup(keeping: pidsToKeep)
+    }
+
+    /// Keeps live taps in step with their app's Core Audio processes:
+    /// - a changed set of process objects (e.g. a browser started a new audio helper) is
+    ///   pushed into the tap, falling back to a full recreate;
+    /// - a streaming app's suspended tap is resumed;
+    /// - a tap whose app has been silent for `tapSuspendDelay` is suspended.
+    /// Called on every app-list change and from the health monitor loop.
+    private func syncTapsWithProcessState() {
+        let now = Date()
+        let presentApps = Dictionary(processMonitor.activeApps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        for (pid, tap) in taps {
+            guard let current = presentApps[pid] else { continue }  // Stale — cleanupStaleTaps handles it
+            guard !tapsBeingRecreated.contains(pid) else { continue }
+
+            if current.processObjectIDs != tap.app.processObjectIDs, !tap.updateProcesses(for: current) {
+                scheduleTapRecreation(for: pid)
+                continue
+            }
+
+            if current.processObjectIDs.contains(where: { $0.readProcessIsRunning() }) {
+                tapSilentSince.removeValue(forKey: pid)
+                guard tap.isSuspended else { continue }
+                do {
+                    try tap.resume()
+                } catch {
+                    logger.error("Failed to resume tap for \(current.name): \(error.localizedDescription), recreating")
+                    scheduleTapRecreation(for: pid)
+                }
+            } else if let since = tapSilentSince[pid] {
+                if !tap.isSuspended, now.timeIntervalSince(since) >= tapSuspendDelay {
+                    tap.suspend()
+                }
+            } else {
+                tapSilentSince[pid] = now
+            }
+        }
+
+        tapSilentSince = tapSilentSince.filter { taps[$0.key] != nil }
+    }
+
+    private func scheduleTapRecreation(for pid: pid_t) {
+        guard tapsBeingRecreated.insert(pid).inserted else { return }
+        Task { @MainActor [weak self] in
+            await self?.recreateTap(for: pid)
+            self?.tapsBeingRecreated.remove(pid)
+        }
     }
 
     /// Debounced stale tap cleanup — coalesces rapid app-list changes into a single cleanup pass.
@@ -1908,9 +1968,18 @@ final class AudioEngine {
                 // Skip entirely when no taps exist — avoids unnecessary work at idle (#176)
                 guard !self.taps.isEmpty else { continue }
 
+                // Safety net for missed isRunning notifications, and drives suspension timing
+                self.syncTapsWithProcessState()
+
                 let now = Date()
 
                 for (pid, tap) in self.taps {
+                    // Suspended taps have no IO proc running — no callbacks is expected
+                    guard !tap.isSuspended else {
+                        consecutiveMisses[pid] = 0
+                        continue
+                    }
+
                     // Skip muted apps — no callbacks while muted isn't a health signal
                     guard !tap.isMuted else { continue }
 
@@ -1968,8 +2037,9 @@ final class AudioEngine {
         // Set cooldown to prevent thrashing
         tapRecoveryCooldownUntil[pid] = Date().addingTimeInterval(20)
 
-        // Find the current AudioApp entry for this PID
-        guard let app = apps.first(where: { $0.id == pid }) else {
+        // Find the current AudioApp entry for this PID (may be silent; its new tap is
+        // suspended again by syncTapsWithProcessState)
+        guard let app = processMonitor.activeApps.first(where: { $0.id == pid }) else {
             logger.debug("No active app for PID \(pid), skipping tap recreation")
             appliedPIDs.remove(pid)
             return
