@@ -1,3 +1,5 @@
+> **This is a fork.** See [FORK.md](FORK.md) for what it fixes and how to install it.
+
 <img src="assets/icon.png" width="170" height="170" alt="FineTune app icon" align="left"/>
 
 <h3>FineTune</h3>
