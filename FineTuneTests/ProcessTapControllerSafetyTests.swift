@@ -2,8 +2,9 @@
 //
 // Guards for the fork's spike fix: every tap keeps its processes muted for the tap's
 // whole lifetime (CATapMuted), so audio that starts before the IO proc runs, or while
-// the tap is suspended, never reaches the device unprocessed. Upstream uses
-// .mutedWhenTapped; a merge that brings it back must fail here.
+// the tap is suspended, never reaches the device unprocessed. Upstream builds the tap
+// descriptions inline with .mutedWhenTapped. The description tests check the factory;
+// the source check fails if a merge brings back an inline description.
 
 import Testing
 import Foundation
@@ -37,6 +38,25 @@ struct ProcessTapDescriptionTests {
         #expect(description.processes == [21])
     }
 
+    @Test("ProcessTapController builds tap descriptions only through the factories")
+    func sourceUsesFactoriesOnly() throws {
+        let source = try String(contentsOf: Self.controllerSourceURL, encoding: .utf8)
+
+        // Two constructions, both inside the factories; createProcessTap calls the factories.
+        #expect(source.components(separatedBy: "CATapDescription(").count - 1 == 2)
+        #expect(source.contains("Self.makeStreamTapDescription("))
+        #expect(source.contains("Self.makeMixdownTapDescription("))
+        #expect(!source.contains("= .mutedWhenTapped"))
+        #expect(!source.contains("= .unmuted"))
+    }
+
+    private static var controllerSourceURL: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("FineTune/Audio/Engine/ProcessTapController.swift")
+    }
+
     @Test("Each description gets its own UUID")
     func descriptionsHaveDistinctUUIDs() {
         let first = ProcessTapController.makeMixdownTapDescription(processes: [21])
@@ -63,8 +83,10 @@ struct ProcessTapControllerLifecycleGuardTests {
         #expect(!controller.isSuspended)
     }
 
-    @Test("resume() on a tap that is not suspended is a no-op")
-    func resumeWithoutSuspendIsNoOp() throws {
+    // That resume() leaves a running, activated tap untouched needs Core Audio; the
+    // engine tests' FakeTapController assumes it.
+    @Test("resume() before activation neither throws nor marks the tap suspended")
+    func resumeBeforeActivation() throws {
         let controller = ProcessTapController(app: makeApp(), targetDeviceUID: "uid-tv")
 
         try controller.resume()

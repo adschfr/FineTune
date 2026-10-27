@@ -28,6 +28,7 @@ private final class RunningProcesses {
 @MainActor
 private struct Fixture {
     let engine: AudioEngine
+    let settings: SettingsManager
     let processMonitor: StubProcessMonitor
     let taps: FakeTapFactory
     let clock: TestClock
@@ -76,7 +77,7 @@ private func makeFixture() -> Fixture {
         currentDate: { clock.now },
         startMonitorsAutomatically: false
     )
-    return Fixture(engine: engine, processMonitor: processMonitor, taps: taps,
+    return Fixture(engine: engine, settings: settings, processMonitor: processMonitor, taps: taps,
                    clock: clock, running: running, tvUID: tv.uid)
 }
 
@@ -87,6 +88,11 @@ private let helperProcess: AudioObjectID = 602
 @MainActor
 private func makePlayer(processes: [AudioObjectID] = [mainProcess]) -> AudioApp {
     AudioApp(id: playerPID, processObjectIDs: processes, name: "Browser", icon: NSImage(), bundleID: "com.test.lifecycle")
+}
+
+private func approx(_ a: Float?, _ b: Float) -> Bool {
+    guard let a else { return false }
+    return abs(a - b) < 1e-5
 }
 
 /// Starts playback of the player and returns its tap.
@@ -151,7 +157,7 @@ struct AudioEngineTapLifecycleTests {
     }
 
     @Test("Playback resumes the suspended tap instead of creating a new one")
-    func playbackResumesSuspendedTap() throws {
+    func playbackResumesSuspendedTap() async throws {
         let fix = makeFixture()
         let app = makePlayer()
         let tap = try startPlaying(fix, app)
@@ -159,10 +165,12 @@ struct AudioEngineTapLifecycleTests {
 
         fix.running.ids.insert(mainProcess)
         fix.publish([app])
+        await settle()
 
         #expect(!tap.isSuspended)
         #expect(tap.resumeCount == 1)
         #expect(fix.taps.created.count == 1)
+        #expect(!tap.isInvalidated)
     }
 
     @Test("After playback the silence timer starts over")
@@ -183,13 +191,14 @@ struct AudioEngineTapLifecycleTests {
     }
 
     @Test("A new helper process is pushed into the live tap")
-    func newHelperProcessUpdatesTapInPlace() throws {
+    func newHelperProcessUpdatesTapInPlace() async throws {
         let fix = makeFixture()
         let tap = try startPlaying(fix)
         let withHelper = makePlayer(processes: [mainProcess, helperProcess])
 
         fix.running.ids.insert(helperProcess)
         fix.publish([withHelper])
+        await settle()
 
         #expect(tap.updateProcessesCalls.map(\.processObjectIDs) == [[mainProcess, helperProcess]])
         #expect(tap.app.processObjectIDs == [mainProcess, helperProcess])
@@ -212,6 +221,8 @@ struct AudioEngineTapLifecycleTests {
         let newTap = try #require(fix.taps.last)
         #expect(newTap.app.processObjectIDs == [mainProcess, helperProcess])
         #expect(newTap.currentDeviceUIDs == [fix.tvUID])
+        // App volume 1.0 × TV 0.25, set before the new tap starts
+        #expect(approx(newTap.volumeAtActivate, 0.25))
     }
 
     @Test("A tap that fails to resume is recreated on the same output")
@@ -229,7 +240,57 @@ struct AudioEngineTapLifecycleTests {
         #expect(oldTap.isInvalidated)
         let newTap = try #require(fix.taps.last)
         #expect(newTap.currentDeviceUIDs == [fix.tvUID])
-        #expect(newTap.volumeAtActivate != nil)
+        #expect(approx(newTap.volumeAtActivate, 0.25))
+    }
+
+    @Test("A muted app is still muted when its tap is recreated")
+    func recreatedTapKeepsAppMute() async throws {
+        let fix = makeFixture()
+        let app = makePlayer()
+        let oldTap = try startPlaying(fix, app)
+        fix.engine.setMute(for: app, to: true)
+        stayIdle(fix, app, for: 10)
+        oldTap.resumeError = FakeTapError()
+
+        fix.running.ids.insert(mainProcess)
+        fix.publish([app])
+
+        #expect(await waitUntil { fix.taps.created.count == 2 })
+        let newTap = try #require(fix.taps.last)
+        #expect(newTap.isMutedAtActivate == true)
+    }
+
+    @Test("A suspended tap takes a new helper process and stays suspended until playback")
+    func suspendedTapTakesNewHelper() async throws {
+        let fix = makeFixture()
+        let app = makePlayer()
+        let tap = try startPlaying(fix, app)
+        stayIdle(fix, app, for: 10)
+        let withHelper = makePlayer(processes: [mainProcess, helperProcess])
+
+        fix.publish([withHelper])
+        await settle()
+
+        #expect(tap.app.processObjectIDs == [mainProcess, helperProcess])
+        #expect(tap.isSuspended)
+        #expect(tap.resumeCount == 0)
+        #expect(fix.taps.created.count == 1)
+
+        fix.running.ids.insert(helperProcess)
+        fix.publish([withHelper])
+        #expect(tap.resumeCount == 1)
+    }
+
+    @Test("A saved app volume and the TV volume both apply when playback starts")
+    func startupAppliesSavedVolumeAndTVGain() throws {
+        let fix = makeFixture()
+        let app = makePlayer()
+        fix.settings.setVolume(for: app.persistenceIdentifier, to: 0.8)
+
+        let tap = try startPlaying(fix, app)
+
+        #expect(approx(tap.volumeAtActivate, 0.2))
+        #expect(approx(tap.volume, 0.2))
     }
 
     @Test("Repeated changes while a recreate is pending recreate the tap only once")
