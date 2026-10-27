@@ -36,6 +36,9 @@ final class AudioEngine {
     /// Clock for tap suspension and recovery timing. Overridable for testing.
     private let currentDate: () -> Date
 
+    /// False for engines built with `startMonitorsAutomatically: false` (unit tests).
+    private let startsSystemMonitors: Bool
+
     /// Coalesces app-list changes before stale taps are looked for. Overridable for testing.
     private let staleCleanupDebounce: Duration
     /// How long a tap whose process vanished is kept in case it comes back. Overridable for testing.
@@ -244,6 +247,7 @@ final class AudioEngine {
         self.currentDate = currentDate ?? { Date() }
         self.staleCleanupDebounce = staleCleanupDebounce
         self.staleTapGracePeriod = staleTapGracePeriod
+        self.startsSystemMonitors = startMonitorsAutomatically
 
         // If a custom deviceProvider is given, use it directly.
         // Otherwise create a real AudioDeviceMonitor (needed by DeviceVolumeMonitor and default tap factory).
@@ -437,14 +441,18 @@ final class AudioEngine {
             }
         }
 
+        // IOBluetooth triggers the Bluetooth permission prompt, so engines that do not start
+        // the system monitors (unit tests) never touch the Bluetooth monitor.
         deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
-            self?.handleDeviceDisconnected(deviceUID, name: deviceName)
-            self?.bluetoothDeviceMonitor.refresh()
+            guard let self else { return }
+            self.handleDeviceDisconnected(deviceUID, name: deviceName)
+            if self.startsSystemMonitors { self.bluetoothDeviceMonitor.refresh() }
         }
 
         deviceMonitor.onDeviceConnected = { [weak self] deviceUID, deviceName in
-            self?.handleDeviceConnected(deviceUID, name: deviceName)
-            self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
+            guard let self else { return }
+            self.handleDeviceConnected(deviceUID, name: deviceName)
+            if self.startsSystemMonitors { self.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio() }
         }
 
         deviceMonitor.onInputDeviceDisconnected = { [weak self] deviceUID, deviceName in

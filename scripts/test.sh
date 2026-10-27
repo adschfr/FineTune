@@ -27,6 +27,7 @@ for arg in "$@"; do
     case "$arg" in -only-testing:*) SELECTION=() ;; esac
 done
 
+START="$(date '+%Y-%m-%d %H:%M:%S')"
 echo "==> Testing (log: $LOG)..."
 xcodebuild -project "$PROJECT_DIR/FineTune.xcodeproj" \
     -scheme FineTune \
@@ -51,6 +52,15 @@ if xcrun xcresulttool get test-results summary --path "$RESULT" > "$SUMMARY" 2>/
         echo "No tests matched the selection."
         STATUS=1
     fi
+fi
+
+# A unit test run must never make macOS ask the user for a permission.
+PROMPTS="$(/usr/bin/log show --start "$START" --style compact \
+    --predicate 'process == "tccd" AND eventMessage CONTAINS "AUTHREQ_PROMPTING" AND eventMessage CONTAINS "FineTuneFork.dev"' 2>/dev/null \
+    | grep -o 'service=kTCCService[A-Za-z]*' | sort -u | tr '\n' ' ')"
+if [ -n "$PROMPTS" ]; then
+    echo "Tests made macOS show permission prompts: $PROMPTS"
+    STATUS=1
 fi
 
 if [ $STATUS -ne 0 ]; then
