@@ -85,10 +85,12 @@ final class FakeTapController: ProcessTapControlling {
 
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool, autoEQProfile: AutoEQProfile?) async throws {
         currentDeviceUIDs = [newDeviceUID]
+        tapSourceDeviceUID = preferredTapSourceDeviceUID
     }
 
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool, autoEQProfile: AutoEQProfile?) async throws {
         currentDeviceUIDs = newDeviceUIDs
+        tapSourceDeviceUID = preferredTapSourceDeviceUID
     }
 
     /// What the health monitor sees: a healthy tap renders; checks start once it is eligible.
@@ -109,10 +111,12 @@ final class FakeTapFactory {
     /// When true, creating a tap fails like a Core Audio error would.
     var failCreations = false
 
-    func make(app: AudioApp, deviceUIDs: [String]) throws -> FakeTapController {
+    /// `source` is the device whose stream the tap captures, nil for the process-wide mixdown.
+    func make(app: AudioApp, deviceUIDs: [String], source: String? = nil) throws -> FakeTapController {
         if failCreations { throw FakeTapError() }
         let index = created.count
         let tap = FakeTapController(app: app, deviceUIDs: deviceUIDs)
+        tap.tapSourceDeviceUID = source
         log.append("create \(index)")
         tap.onEvent = { [weak self] event in self?.log.append("\(event) \(index)") }
         created.append(tap)

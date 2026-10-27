@@ -52,4 +52,9 @@ nonisolated extension AudioObjectID {
     func readProcessBundleID() -> String? {
         try? readString(kAudioProcessPropertyBundleID)
     }
+
+    /// Output devices the process currently does IO on.
+    func readProcessOutputDevices() -> [AudioDeviceID] {
+        (try? readArray(kAudioProcessPropertyDevices, scope: .output, defaultValue: AudioDeviceID(0))) ?? []
+    }
 }
