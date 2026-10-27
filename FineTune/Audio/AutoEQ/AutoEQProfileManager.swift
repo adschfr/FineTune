@@ -17,7 +17,7 @@ final class AutoEQProfileManager {
     private(set) var profiles: [String: AutoEQProfile] = [:]
 
     private let fetcher: AutoEQFetcher
-    private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "AutoEQProfileManager")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "AutoEQProfileManager")
     private let loader: AutoEQProfileLoader
 
     /// Pre-sorted catalog entries for fast search.

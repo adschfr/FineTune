@@ -9,7 +9,7 @@ final class HUDWindowController: MediaKeyHUDPresenting {
     private let settingsManager: SettingsManager
     private let mediaKeyStatus: MediaKeyStatus
     private let popupVisibility: PopupVisibilityService
-    private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "HUDWindowController")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "HUDWindowController")
 
     private var panel: NSPanel?
     private var hostingView: NSHostingView<AnyView>?

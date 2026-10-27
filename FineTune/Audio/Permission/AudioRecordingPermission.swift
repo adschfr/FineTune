@@ -3,7 +3,7 @@ import Foundation
 import AppKit
 import os
 
-private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Permission")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "Permission")
 
 // MARK: - Permission Status
 

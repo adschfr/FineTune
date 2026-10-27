@@ -31,7 +31,7 @@ final class MediaKeyMonitor {
     private let hudController: MediaKeyHUDPresenting
     private let popupVisibility: PopupVisibilityService
     private let mediaKeyStatus: MediaKeyStatus
-    private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MediaKeyMonitor")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "MediaKeyMonitor")
 
     // MARK: - Tap state
 

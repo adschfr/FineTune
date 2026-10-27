@@ -19,7 +19,7 @@ import os
 @MainActor
 enum MenuBarPanelPositionFixup {
     private static let logger = Logger(
-        subsystem: "com.finetuneapp.FineTune",
+        subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune",
         category: "MenuBarPanelPositionFixup"
     )
 

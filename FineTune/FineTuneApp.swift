@@ -5,7 +5,7 @@ import FluidMenuBarExtra
 import AppKit
 import os
 
-private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "App")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "App")
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {

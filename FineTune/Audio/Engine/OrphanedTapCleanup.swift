@@ -2,7 +2,7 @@
 import AudioToolbox
 import os
 
-private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "OrphanedTapCleanup")
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "OrphanedTapCleanup")
 
 /// Scans CoreAudio for orphaned FineTune aggregate devices and destroys them.
 /// Orphans occur when FineTune crashes or is force-killed (`kill -9`), leaving

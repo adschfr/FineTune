@@ -14,7 +14,7 @@ final class AutoEQFetcher {
     private(set) var catalogState: FetchState = .idle
     private(set) var catalog: [AutoEQCatalogEntry] = []
 
-    private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "AutoEQFetcher")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "AutoEQFetcher")
 
     // MARK: - URLs
 
