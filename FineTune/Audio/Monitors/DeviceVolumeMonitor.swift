@@ -65,7 +65,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     /// Called when the default input device changes (newDeviceUID)
     var onDefaultInputDeviceChanged: ((String) -> Void)?
 
-    private let deviceMonitor: AudioDeviceMonitor
+    private let deviceMonitor: any AudioDeviceProviding
     private let settingsManager: SettingsManager
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "DeviceVolumeMonitor")
 
@@ -144,13 +144,13 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     )
 
     #if !APP_STORE
-    init(deviceMonitor: AudioDeviceMonitor, settingsManager: SettingsManager, ddcController: DDCController? = nil) {
+    init(deviceMonitor: any AudioDeviceProviding, settingsManager: SettingsManager, ddcController: DDCController? = nil) {
         self.deviceMonitor = deviceMonitor
         self.settingsManager = settingsManager
         self.ddcController = ddcController
     }
     #else
-    init(deviceMonitor: AudioDeviceMonitor, settingsManager: SettingsManager) {
+    init(deviceMonitor: any AudioDeviceProviding, settingsManager: SettingsManager) {
         self.deviceMonitor = deviceMonitor
         self.settingsManager = settingsManager
     }
