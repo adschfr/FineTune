@@ -573,6 +573,27 @@ final class ProcessTapController: ProcessTapControlling {
     /// back instead of reaching the device unprocessed at full volume (#268, #273, #455).
     private static let tapMuteBehavior: CATapMuteBehavior = .muted
 
+    /// Description for a tap on one output stream of a device (keeps multichannel routing).
+    static func makeStreamTapDescription(processes: [AudioObjectID], deviceUID: String, stream: UInt) -> CATapDescription {
+        let description = CATapDescription(processes: processes, deviceUID: deviceUID, stream: stream)
+        configureTapDescription(description)
+        return description
+    }
+
+    /// Description for the stereo mixdown fallback tap.
+    static func makeMixdownTapDescription(processes: [AudioObjectID]) -> CATapDescription {
+        let description = CATapDescription(stereoMixdownOfProcesses: processes)
+        configureTapDescription(description)
+        return description
+    }
+
+    /// Every FineTune tap is muted for its whole lifetime and private to this process.
+    private static func configureTapDescription(_ description: CATapDescription) {
+        description.uuid = UUID()
+        description.muteBehavior = tapMuteBehavior
+        description.isPrivate = true
+    }
+
     /// Creates a process tap, preferring a device-stream tap to preserve multichannel routing.
     /// Falls back to stereo mixdown if stream-specific tap creation fails.
     private func createProcessTap(preferredDeviceUID: String?) throws -> (description: CATapDescription, tapID: AudioObjectID) {
@@ -580,10 +601,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         if let deviceUID = preferredDeviceUID {
             if let outputStream = outputStreamIndex(for: deviceUID) {
-                let streamTap = CATapDescription(processes: app.processObjectIDs, deviceUID: deviceUID, stream: outputStream)
-                streamTap.uuid = UUID()
-                streamTap.muteBehavior = Self.tapMuteBehavior
-                streamTap.isPrivate = true
+                let streamTap = Self.makeStreamTapDescription(processes: app.processObjectIDs, deviceUID: deviceUID, stream: outputStream)
 
                 var tapID: AudioObjectID = .unknown
                 let err = AudioHardwareCreateProcessTap(streamTap, &tapID)
@@ -600,10 +618,7 @@ final class ProcessTapController: ProcessTapControlling {
             }
         }
 
-        let mixdownTap = CATapDescription(stereoMixdownOfProcesses: app.processObjectIDs)
-        mixdownTap.uuid = UUID()
-        mixdownTap.muteBehavior = Self.tapMuteBehavior
-        mixdownTap.isPrivate = true
+        let mixdownTap = Self.makeMixdownTapDescription(processes: app.processObjectIDs)
 
         var mixdownTapID: AudioObjectID = .unknown
         let mixdownErr = AudioHardwareCreateProcessTap(mixdownTap, &mixdownTapID)
