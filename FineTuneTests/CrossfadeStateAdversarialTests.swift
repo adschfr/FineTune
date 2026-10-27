@@ -365,19 +365,18 @@ struct CrossfadeProgressTests {
 @Suite("CrossfadeState — Idle Phase Multipliers (Adversarial)")
 struct CrossfadeIdleTests {
 
-    @Test("Idle with progress >= 1.0: primary=0, secondary=1 (post-crossfade window)")
-    func idlePostCrossfadeWindow() {
-        // This state occurs between the audio thread detecting progress >= 1.0
-        // and the main thread calling complete(). The multipliers should reflect
-        // "crossfade done, secondary is promoted."
+    @Test("Idle ignores a stale progress of 1.0 (late write after complete(), #461)")
+    func idleIgnoresStaleProgress() {
+        // A secondary callback that passed the `phase == .crossfading` check just before
+        // complete() can store progress = 1.0 after the reset. While crossfading, the old
+        // primary is already at cos(π/2) = 0, so idle must not gate on progress, or the
+        // promoted tap stays silent.
         var state = CrossfadeState()
         state.progress = 1.0
-        // Phase is idle (default), but progress indicates crossfade was completed
 
-        #expect(state.primaryMultiplier == 0.0,
-                "Post-crossfade idle with progress=1: primary should be 0")
-        #expect(state.secondaryMultiplier == 1.0,
-                "Post-crossfade idle with progress=1: secondary should be 1")
+        #expect(state.primaryMultiplier == 1.0,
+                "Idle primary must play regardless of a stale progress value")
+        #expect(state.secondaryMultiplier == 1.0)
     }
 
     @Test("Idle with progress < 1.0: primary=1, secondary=1 (normal idle)")

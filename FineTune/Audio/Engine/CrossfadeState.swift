@@ -116,7 +116,12 @@ nonisolated struct CrossfadeState: @unchecked Sendable {
     var primaryMultiplier: Float {
         switch phase {
         case .idle:
-            return progress >= 1.0 ? 0.0 : 1.0
+            // Ignore `progress` here. The old primary is silenced by cos(π/2) while the phase is
+            // still .crossfading; once idle, the only primary-role callback is the live tap. A
+            // secondary callback that checked `phase == .crossfading` just before complete() can
+            // still store progress = 1.0 afterwards, and gating on it left the promoted tap
+            // silent until restart (#461).
+            return 1.0
         case .warmingUp:
             return 1.0
         case .crossfading:
