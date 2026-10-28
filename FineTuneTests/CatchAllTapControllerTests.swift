@@ -15,12 +15,15 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
 
     private let lock = NSLock()
     private var _log: [String] = []
+    private var _ioLog: [String] = []
     private var _processes: [AudioObjectID] = []
     private var _aggregate: [String: Any] = [:]
     var failAt: Step?
     var readBackOverride: [AudioObjectID]?
 
     var log: [String] { lock.withLock { _log } }
+    /// Starts and stops with their aggregate, e.g. "start 200".
+    var ioLog: [String] { lock.withLock { _ioLog } }
     var aggregateDescription: [String: Any] { lock.withLock { _aggregate } }
     private func record(_ entry: String) { lock.withLock { _log.append(entry) } }
 
@@ -73,8 +76,15 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
     }
 
     func disableHardwareInputs(on aggregate: AudioDeviceID, proc: AudioDeviceIOProcID) { record("disableInputs") }
-    func start(_ aggregate: AudioDeviceID, _ proc: AudioDeviceIOProcID) -> OSStatus { record("start"); return noErr }
-    func stop(_ aggregate: AudioDeviceID, _ proc: AudioDeviceIOProcID) -> OSStatus { record("stop"); return noErr }
+    func start(_ aggregate: AudioDeviceID, _ proc: AudioDeviceIOProcID) -> OSStatus { recordIO("start", aggregate); return noErr }
+    func stop(_ aggregate: AudioDeviceID, _ proc: AudioDeviceIOProcID) -> OSStatus { recordIO("stop", aggregate); return noErr }
+
+    private func recordIO(_ entry: String, _ aggregate: AudioDeviceID) {
+        lock.withLock {
+            _log.append(entry)
+            _ioLog.append("\(entry) \(aggregate)")
+        }
+    }
 
     func destroy(_ resources: CatchAllResources, completion: @escaping @Sendable () -> Void) {
         record("destroy tap=\(resources.tapID) aggregate=\(resources.aggregateID) proc=\(resources.procID != nil)")

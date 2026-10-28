@@ -190,21 +190,35 @@ final class CatchAllHarness {
         }
         var logic = CatchAllRunLogic()
         logic.suspendDelay = 1
+        // Nothing is listed here: a process holding IO open without output must not keep
+        // the catch-all running between the tones
+        logic.ioOnlyCap = 1
         let control = CatchAllRunControl(source: HALProcessOutputActivitySource(), backend: backend, logic: logic)
         control.attach(ca.ioHandle, deviceID: target.deviceID, excluded: [target.selfObject])
         control.start()
+        var notSuspended = 0
         let answer = await listen(label, headline: "Catch-all startet aus dem Stillstand",
                                   detail: "Fünf kurze Töne bei 10 %, jeweils nachdem die Catch-all angehalten hat. Es sollte NICHTS zu hören sein; ein Knacken am Tonanfang wäre ein Leck.",
                                   expectation: .silent) {
-            for _ in 1...5 {
-                _ = await poll(timeout: 5, { !control.sync { $0.anyRunning } })
-                if let player = HarnessPlayer.start(plainToneURL, volume: 0.1) { await player.wait() }
+            for tone in 1...5 {
+                // A tone into a running catch-all would pass without testing a resume
+                let suspended = await poll(timeout: 5, { !control.sync { $0.anyRunning } }) != nil
+                if !suspended {
+                    notSuspended += 1
+                    report("tone \(tone): catch-all did not suspend within 5 s")
+                }
+                guard let player = HarnessPlayer.start(plainToneURL, volume: 0.1) else { continue }
+                // afplay needs tens of ms to open its IO: a catch-all running now was started by another process
+                if suspended, control.sync({ $0.anyRunning }) {
+                    notSuspended += 1
+                    report("tone \(tone): catch-all was already running when the tone started")
+                }
+                await player.wait()
             }
         }
-        await control.detach(target.uid)
-        control.stop()
-        await ca.destroy()
-        verdict(answer == "Nichts gehört", "H7M stopped catch-all holds plain tones back, onset included (user heard nothing)")
+        await release(ca, from: control)
+        verdict(answer == "Nichts gehört" && notSuspended == 0,
+                "H7M stopped catch-all holds plain tones back, onset included (user heard nothing, every tone after a suspend)")
     }
 
     private func h0Build() async {
@@ -321,28 +335,42 @@ final class CatchAllHarness {
         }
         var logic = CatchAllRunLogic()
         logic.suspendDelay = 1
+        // Nothing is listed here: a process holding IO open without output must not keep
+        // the catch-all running between the tones
+        logic.ioOnlyCap = 1
         let control = CatchAllRunControl(source: HALProcessOutputActivitySource(), backend: backend, logic: logic)
         control.attach(ca.ioHandle, deviceID: target.deviceID, excluded: [target.selfObject])
         control.start()
         var missing: [Double] = []
         var failed = 0
+        var notSuspended = 0
         for _ in 1...10 {
-            // Let the catch-all suspend between runs
-            _ = await poll(timeout: 5, { !control.sync { $0.anyRunning } })
+            // Let the catch-all suspend between runs; a run on a running catch-all measures no resume
+            guard await poll(timeout: 5, { !control.sync { $0.anyRunning } }) != nil else {
+                notSuspended += 1
+                continue
+            }
             let baseline = ca.renderState.lastAudibleHostTime.load(ordering: .relaxed)
-            guard let player = HarnessPlayer.start(toneURL, volume: 0.05),
-                  let lost = await missingOnset(ca, after: baseline) else {
+            guard let player = HarnessPlayer.start(toneURL, volume: 0.05) else {
+                failed += 1
+                continue
+            }
+            // afplay needs tens of ms to open its IO: a catch-all running now was started by another process
+            if control.sync({ $0.anyRunning }) {
+                notSuspended += 1
+                await player.wait()
+                continue
+            }
+            guard let lost = await missingOnset(ca, after: baseline) else {
                 failed += 1
                 continue
             }
             missing.append(lost)
             await player.wait()
         }
-        await control.detach(target.uid)
-        control.stop()
-        await ca.destroy()
-        report("stopped catch-all: tone onset lost while resuming \(stats(missing)), not heard \(failed) (tones were held, nothing should have been audible)")
-        verdict(failed == 0 && percentile(missing, 0.95) <= 50, "H7 resume from a stopped catch-all (onset lost p95 ≤ 50 ms)")
+        await release(ca, from: control)
+        report("stopped catch-all: tone onset lost while resuming \(stats(missing)), not heard \(failed), not suspended \(notSuspended) (tones were held, nothing should have been audible)")
+        verdict(failed == 0 && notSuspended == 0 && percentile(missing, 0.95) <= 50, "H7 resume from a stopped catch-all (onset lost p95 ≤ 50 ms)")
     }
 
     private func h8MutedProcessReports() async {
@@ -485,6 +513,16 @@ final class CatchAllHarness {
 
     private func stopIO(_ ca: CatchAllTapController) async {
         _ = backend.stop(ca.ioHandle.aggregateID, ca.ioHandle.procID)
+    }
+
+    /// Detaches the catch-all and stops the run control, then destroys the catch-all once the
+    /// queue has let go of it. A stuck queue leaves it to die with the process.
+    private func release(_ ca: CatchAllTapController, from control: CatchAllRunControl) async {
+        let detached = await control.detach(ca.ioHandle)
+        guard control.stop() || detached else {
+            return report("run queue did not respond: catch-all not destroyed")
+        }
+        await ca.destroy()
     }
 
     /// UID of the device macOS plays alerts and notification sounds on, nil if unreadable.
