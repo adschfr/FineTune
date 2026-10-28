@@ -938,8 +938,13 @@ struct CatchAllRunControlTests {
 
     @Test("Follow-up reads follow notifications only, not the post-stop recheck")
     func followUpsOnlyAfterNotifications() async {
-        // FineTune itself (5, excluded) runs IO without output; reading it starts nothing
-        let rig = makeRig()
+        // FineTune itself (5, excluded) runs IO without output; reading it starts nothing.
+        // The timer's real 2 s tick must not run between the clock advance and the manual
+        // tick: it would stop and recheck first, and the manual tick would re-read again.
+        // With one handle and nothing capped, the interval only sets the timer's period.
+        var logic = CatchAllRunLogic()
+        logic.tickInterval = 3_600
+        let rig = makeRig(logic: logic)
         rig.source.set(processes: [5, 11], running: [11], runningIO: [5, 11])
         rig.startAttached()
         for _ in 0..<100 where rig.source.outputReads(of: 5) < 4 {
@@ -985,6 +990,44 @@ struct CatchAllRunControlTests {
         rig.flush()
         await waitForMain { batches.all.count == 2 }
         #expect(batches.all == ["5 [] silent; 11 [42] silent", "11 [42] output"])
+    }
+
+    @Test("Main gets a batch's reports before its process list change, as the queue posted them")
+    func reportsBeforeListChange() async {
+        let rig = makeRig(observeDevices: true)
+        rig.source.set(devices: [5: [], 11: [42]])
+        let calls = LineLog()
+        rig.control.onDevicesChanged = { reports in calls.add(describe(reports)) }
+        rig.control.onProcessListChanged = { calls.add("list changed") }
+        // Main runs nothing before the await, so the first refresh's reports and its list
+        // change go to main in one batch
+        rig.startAttached()
+        await waitForMain { calls.all.count == 2 }
+        #expect(calls.all == ["5 [] silent; 11 [42] silent", "list changed"])
+    }
+
+    @Test("Main hears once per batch that processes appeared or disappeared, never for an unchanged list")
+    func processListChangesOnMain() async {
+        let rig = makeRig()
+        let changes = LineLog()
+        rig.control.onProcessListChanged = { changes.add("changed") }
+        rig.startAttached()
+        await waitForMain { !changes.all.isEmpty }
+        #expect(changes.all == ["changed"])
+
+        // The same list again: nothing
+        rig.source.send(.processListChanged)
+        rig.flush()
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(changes.all.count == 1)
+
+        // A process quits and another appears: one call
+        rig.source.set(processes: [5, 12], running: [])
+        rig.source.send(.processListChanged)
+        rig.flush()
+        await waitForMain { changes.all.count == 2 }
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(changes.all.count == 2)
     }
 
     @Test("A refresh starts the catch-all before it reads Devices")

@@ -87,6 +87,10 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
     var onServiceRestarted: (@Sendable () -> Void)?
     /// Called on main with every process whose report changed since the last call.
     var onDevicesChanged: (@MainActor @Sendable ([AudioObjectID: ProcessDeviceReport]) -> Void)?
+    /// Called on main when processes appeared or disappeared since the last call, after the
+    /// reports that went to main with it, as the queue posted them: pruning against a fresh
+    /// list then also drops a report of a process that quit in the same batch.
+    var onProcessListChanged: (@MainActor @Sendable () -> Void)?
 
     init(
         source: ProcessOutputActivitySource,
@@ -292,8 +296,11 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
     private func refreshProcessList(all: Bool = false, edge: Bool = true) {
         guard isStarted else { return }
         let list = Set(source.processList())
-        for process in observed.subtracting(list) { source.forget(process) }
-        observeAndRead(list.subtracting(observed), observing: list, all: all, edge: edge)
+        let gone = observed.subtracting(list)
+        let appeared = list.subtracting(observed)
+        for process in gone { source.forget(process) }
+        observeAndRead(appeared, observing: list, all: all, edge: edge)
+        if !gone.isEmpty || !appeared.isEmpty { postProcessListChanged() }
     }
 
     /// Listed objects whose appearance the queue missed are observed at once.
@@ -421,26 +428,36 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
         updateTimer()
     }
 
-    /// Hands a report to main without waiting for it; reports that arrive before main runs
-    /// the task go with it.
     private func post(_ process: AudioObjectID, _ report: ProcessDeviceReport) {
         guard onDevicesChanged != nil else { return }
+        enqueueForMain { $0.reports[process] = report }
+    }
+
+    private func postProcessListChanged() {
+        guard onProcessListChanged != nil else { return }
+        enqueueForMain { $0.listChanged = true }
+    }
+
+    /// Hands a change to main without waiting for it; changes that arrive before main runs
+    /// the task go with it.
+    private func enqueueForMain(_ change: (inout PendingReports) -> Void) {
         let generation: Int? = pendingReports.withLock { pending in
-            let first = pending.reports.isEmpty
-            pending.reports[process] = report
+            let first = pending.isEmpty
+            change(&pending)
             return first ? pending.generation : nil
         }
         guard let generation else { return }
         Task { @MainActor in
-            let reports = self.pendingReports.withLock { pending in
+            let (reports, listChanged) = self.pendingReports.withLock { pending in
                 // A task from before a restart or stop() takes nothing; a later task carries them
-                guard pending.generation == generation else { return [AudioObjectID: ProcessDeviceReport]() }
-                let reports = pending.reports
+                guard pending.generation == generation else { return ([AudioObjectID: ProcessDeviceReport](), false) }
+                let taken = (pending.reports, pending.listChanged)
                 pending.reports.removeAll()
-                return reports
+                pending.listChanged = false
+                return taken
             }
-            guard !reports.isEmpty else { return }
-            self.onDevicesChanged?(reports)
+            if !reports.isEmpty { self.onDevicesChanged?(reports) }
+            if listChanged { self.onProcessListChanged?() }
         }
     }
 
@@ -450,6 +467,7 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
         pendingReports.withLock { pending in
             pending.generation += 1
             pending.reports.removeAll()
+            pending.listChanged = false
         }
     }
 
@@ -494,10 +512,13 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
     private func seconds(_ ticks: UInt64) -> Double { Double(ticks) / ticksPerSecond }
 }
 
-/// What `post` hands to main, with the generation that `dropPendingReports` advances.
+/// What goes to main, with the generation that `dropPendingReports` advances.
 nonisolated private struct PendingReports {
     var generation = 0
     var reports: [AudioObjectID: ProcessDeviceReport] = [:]
+    var listChanged = false
+
+    var isEmpty: Bool { reports.isEmpty && !listChanged }
 }
 
 /// Resumes a waiting `detach` exactly once: from the queue when the detach ran, or from

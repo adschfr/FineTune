@@ -9,15 +9,22 @@ import Synchronization
 import Testing
 @testable import FineTune
 
-/// Records every backend call; can fail any step.
+/// Records every backend call; can fail any step. Taps count up from 100 and aggregates
+/// from 200, each tap with its own exclusion list.
 nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendable {
     enum Step: Equatable { case createTap, readBack, createAggregate, ready, ioProc, setDescription }
 
     private let lock = NSLock()
     private var _log: [String] = []
     private var _ioLog: [String] = []
-    private var _processes: [AudioObjectID] = []
+    private var _tapProcesses: [AudioObjectID: [AudioObjectID]] = [:]
+    private var _nextTap: AudioObjectID = 100
+    private var _nextAggregate: AudioDeviceID = 200
     private var _aggregate: [String: Any] = [:]
+    private var _deviceIDs: [String: AudioDeviceID] = ["uid-tv": 42]
+    private var _setTaps: [AudioObjectID] = []
+    private var _failSets = 0
+    private var _onWaitUntilReady: (@Sendable () -> Void)?
     var failAt: Step?
     var readBackOverride: [AudioObjectID]?
 
@@ -27,22 +34,46 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
     var aggregateDescription: [String: Any] { lock.withLock { _aggregate } }
     private func record(_ entry: String) { lock.withLock { _log.append(entry) } }
 
-    func deviceID(forUID uid: String) -> AudioDeviceID? { uid == "uid-tv" ? 42 : nil }
+    /// The devices `deviceID(forUID:)` resolves.
+    var deviceIDs: [String: AudioDeviceID] {
+        get { lock.withLock { _deviceIDs } }
+        set { lock.withLock { _deviceIDs = newValue } }
+    }
+    /// The next this many description sets fail.
+    var failSets: Int {
+        get { lock.withLock { _failSets } }
+        set { lock.withLock { _failSets = newValue } }
+    }
+    /// Runs inside `waitUntilReady`, where the real wait spins the main run loop.
+    var onWaitUntilReady: (@Sendable () -> Void)? {
+        get { lock.withLock { _onWaitUntilReady } }
+        set { lock.withLock { _onWaitUntilReady = newValue } }
+    }
+    /// The most recently created tap.
+    var lastTap: AudioObjectID { lock.withLock { _nextTap - 1 } }
+    /// Description sets made on `tap`, failed ones included.
+    func sets(on tap: AudioObjectID) -> Int { lock.withLock { _setTaps.filter { $0 == tap }.count } }
+
+    func deviceID(forUID uid: String) -> AudioDeviceID? { lock.withLock { _deviceIDs[uid] } }
     func firstOutputStreamIndex(of device: AudioDeviceID) throws -> UInt { 0 }
     func tapDriftCompensation(for device: AudioDeviceID) -> Bool { true }
 
     func createTap(_ description: CATapDescription) throws -> AudioObjectID {
         record("createTap")
         if failAt == .createTap { throw CatchAllBackendError(status: -50) }
-        lock.withLock { _processes = description.processes }
-        return 100
+        return lock.withLock {
+            let tap = _nextTap
+            _nextTap += 1
+            _tapProcesses[tap] = description.processes
+            return tap
+        }
     }
 
     func readTapUID(_ tap: AudioObjectID) -> String? { "tap-uid-assigned" }
 
     func readTapDescription(_ tap: AudioObjectID) -> CATapDescription? {
         record("readBack")
-        let processes = readBackOverride ?? lock.withLock { _processes }
+        let processes = readBackOverride ?? lock.withLock { _tapProcesses[tap] ?? [] }
         if failAt == .readBack { return nil }
         let description = CATapDescription(excludingProcesses: processes, deviceUID: "uid-tv", stream: 0)
         description.isExclusive = true
@@ -51,19 +82,30 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
 
     func setTapDescription(_ description: CATapDescription, on tap: AudioObjectID) throws {
         record("set \(description.processes)")
-        if failAt == .setDescription { throw CatchAllBackendError(status: -10) }
-        lock.withLock { _processes = description.processes }
+        let failOnce = lock.withLock {
+            _setTaps.append(tap)
+            guard _failSets > 0 else { return false }
+            _failSets -= 1
+            return true
+        }
+        if failAt == .setDescription || failOnce { throw CatchAllBackendError(status: -10) }
+        lock.withLock { _tapProcesses[tap] = description.processes }
     }
 
     func createAggregate(_ description: [String: Any]) throws -> AudioDeviceID {
         record("createAggregate")
         if failAt == .createAggregate { throw CatchAllBackendError(status: -20) }
-        lock.withLock { _aggregate = description }
-        return 200
+        return lock.withLock {
+            _aggregate = description
+            let aggregate = _nextAggregate
+            _nextAggregate += 1
+            return aggregate
+        }
     }
 
     func waitUntilReady(_ aggregate: AudioDeviceID, timeout: TimeInterval) -> Bool {
         record("ready")
+        onWaitUntilReady?()
         return failAt != .ready
     }
 
