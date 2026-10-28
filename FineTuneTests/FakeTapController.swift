@@ -38,6 +38,19 @@ final class FakeTapController: ProcessTapControlling {
     /// When set, `resume()` throws instead of restarting IO.
     var resumeError: Error?
 
+    /// Overrides what `liveCapture` reports (e.g. a crossfade with two resources).
+    var liveCaptureOverride: [TapCapture]?
+    private(set) var isActivated = false
+
+    /// An activated, not invalidated tap holds its processes on its source device's stream,
+    /// or on every device for the mixdown tap (no source).
+    var liveCapture: [TapCapture] {
+        if let liveCaptureOverride { return liveCaptureOverride }
+        guard isActivated, !isInvalidated else { return [] }
+        let coverage: TapCoverage = tapSourceDeviceUID.map { .device($0) } ?? .allDevices
+        return [TapCapture(processes: Set(app.processObjectIDs), coverage: coverage)]
+    }
+
     /// What `updateProcesses(for:)` reports back; false means Core Audio rejected it.
     var updateProcessesResult = true
     private(set) var updateProcessesCalls: [AudioApp] = []
@@ -50,6 +63,7 @@ final class FakeTapController: ProcessTapControlling {
     func activate(initial: TapInitialState) throws {
         volumeAtActivate = volume
         isMutedAtActivate = isMuted
+        isActivated = true
         onEvent?("activate")
     }
 
