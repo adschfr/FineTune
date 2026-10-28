@@ -78,6 +78,11 @@ final class CatchAllHarness {
             save()
             return
         }
+        guard await isQuiet() else {
+            report("ABORT: other audio is playing. Stop all playback and request the harness again.")
+            save()
+            return
+        }
         for step in steps {
             report("--- \(step.rawValue)")
             switch step {
@@ -223,7 +228,7 @@ final class CatchAllHarness {
             // Let the catch-all suspend between runs
             _ = await poll(timeout: 4, { !control.sync { $0.anyRunning } })
             let baseline = ca.renderState.lastAudibleHostTime.load(ordering: .relaxed)
-            guard let player = HarnessPlayer.start(toneURL, volume: 0.3),
+            guard let player = HarnessPlayer.start(toneURL, volume: 0.05),
                   let object = await processObject(of: player),
                   let rise = await poll(timeout: 2, { ProcessIdentity.isRunningOutput(object) }),
                   let heard = await poll(timeout: 1, { ca.renderState.lastAudibleHostTime.load(ordering: .relaxed) > baseline }) else {
@@ -244,10 +249,10 @@ final class CatchAllHarness {
         guard let ca = try? build(observe: false, held: true, exclusions: [target.selfObject]), await startIO(ca) else {
             return verdict(false, "H8 (catch-all could not start)")
         }
-        report("H8 plays a held tone at 30 % for 2 s: it must not be audible")
+        report("H8 plays a held tone at 5 % for 2 s: it must not be audible")
         var running = false
         var reportsDevice = false
-        if let player = HarnessPlayer.start(longToneURL, volume: 0.3), let object = await processObject(of: player) {
+        if let player = HarnessPlayer.start(longToneURL, volume: 0.05), let object = await processObject(of: player) {
             running = await poll(timeout: 2, { ProcessIdentity.isRunningOutput(object) }) != nil
             let devices = (try? object.readArray(kAudioProcessPropertyDevices, scope: .output, defaultValue: AudioDeviceID(0))) ?? []
             reportsDevice = devices.contains(target.deviceID)
@@ -261,6 +266,20 @@ final class CatchAllHarness {
     }
 
     // MARK: - Helpers
+
+    /// Listens for 1.5 s through an observing catch-all: any other sound on the output would
+    /// distort the measurements.
+    private func isQuiet() async -> Bool {
+        guard let ca = try? build(observe: true, exclusions: [target.selfObject]), await startIO(ca) else {
+            report("quiet check: catch-all could not start")
+            return false
+        }
+        let heard = await poll(timeout: 1.5, { ca.renderState.lastAudibleHostTime.load(ordering: .relaxed) > 0 }) != nil
+        await stopIO(ca)
+        await ca.destroy()
+        report("quiet check: \(heard ? "audio playing" : "quiet")")
+        return !heard
+    }
 
     private func build(observe: Bool, held: Bool = true, exclusions: [AudioObjectID]) throws -> CatchAllTapController {
         try CatchAllTapController.build(deviceUID: target.uid, exclusions: exclusions, gain: 0,
