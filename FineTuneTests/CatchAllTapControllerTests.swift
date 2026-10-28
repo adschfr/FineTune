@@ -25,6 +25,7 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
     private var _setTaps: [AudioObjectID] = []
     private var _failSets = 0
     private var _onWaitUntilReady: (@Sendable () -> Void)?
+    private var _onRecord: (@Sendable (String) -> Void)?
     var failAt: Step?
     var readBackOverride: [AudioObjectID]?
 
@@ -32,7 +33,19 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
     /// Starts and stops with their aggregate, e.g. "start 200".
     var ioLog: [String] { lock.withLock { _ioLog } }
     var aggregateDescription: [String: Any] { lock.withLock { _aggregate } }
-    private func record(_ entry: String) { lock.withLock { _log.append(entry) } }
+    /// Also gets every entry `log` gets, for one ordered log across the fakes.
+    var onRecord: (@Sendable (String) -> Void)? {
+        get { lock.withLock { _onRecord } }
+        set { lock.withLock { _onRecord = newValue } }
+    }
+
+    private func record(_ entry: String) {
+        let observer = lock.withLock {
+            _log.append(entry)
+            return _onRecord
+        }
+        observer?(entry)
+    }
 
     /// The devices `deviceID(forUID:)` resolves.
     var deviceIDs: [String: AudioDeviceID] {

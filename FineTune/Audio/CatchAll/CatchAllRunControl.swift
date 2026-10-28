@@ -167,6 +167,12 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
         }
     }
 
+    /// Runs `action` on the queue after the work queued so far. After a `detach` that timed
+    /// out, this runs once that detach has: only then may the caller destroy the catch-all.
+    func afterQueuedWork(_ action: @escaping @Sendable () -> Void) {
+        queue.async(execute: action)
+    }
+
     func setExcluded(_ handle: CatchAllIOHandle, _ excluded: Set<AudioObjectID>) {
         queue.async { self.apply(self.logic.setExcluded(handle.aggregateID, excluded, now: self.now())) }
     }
