@@ -1343,6 +1343,7 @@ Commits 1-7 and the harness are done (`d818f55` … `bef2b82`). Each commit buil
 - **Quiet point, H5 source refresh, device filter, strategy B.** Trigger: dips or power cost the user notices.
 - **Prewarm taps for customized apps** (Q4), **hand-back to the CA** (Q6). Trigger: the user's answer.
 - **C9 sticky set** (keep a `.playsElsewhere` result per process object across empty reads). Trigger: hand-back to the CA (Q6).
+- **Mute during dictation (MacWhisper).** The user's premise: the muting comes from MacWhisper's own setting, which apparently has no effect on the TV. First check how MacWhisper mutes (device mute, system volume or per app) and why that does nothing on an output without hardware volume; then make that mute take effect through FineTune's software path (with the catch-all one gain covers the TV). Only if MacWhisper's signal cannot be seen, consider MacWhisper's microphone use as the trigger. Trigger: after the catch-all is live (user request, 2026-10-28).
 
 ### 16.11 Open questions for the user
 
