@@ -365,6 +365,20 @@ final class AudioEngine {
                 // Start device volume monitor AFTER deviceMonitor.start() populates devices
                 self.deviceVolumeMonitor.start()
 
+                // Catch-all measurements, once, only when requested in the fork's defaults
+                if CatchAllSettings().harnessSteps != nil {
+                    Task { @MainActor [self] in
+                        try? await Task.sleep(for: .seconds(3))
+                        await CatchAllHarness.runIfRequested(
+                            settings: CatchAllSettings(),
+                            defaultOutputUID: self.deviceVolumeMonitor.defaultDeviceUID,
+                            deviceID: { self.deviceMonitor.device(for: $0)?.id },
+                            tier: { self.deviceVolumeMonitor.outputVolumeBackend(for: $0) },
+                            permissionAuthorized: self.permission.status == .authorized
+                        )
+                    }
+                }
+
                 self.applyPersistedSettings()
                 self.registerNewDevicesInPriority()
                 // Seed the confirmed default from whatever macOS has at startup
