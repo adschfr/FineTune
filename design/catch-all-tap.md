@@ -826,3 +826,27 @@ Upstream friction (R11): new folder; one protocol requirement with a default; ab
 | Tap drift compensation on a same-device tap (rule from `ProcessTapController.swift:402-408`) | Low | Kept for consistency with per-app TV taps; revisit if the live test shows crackle (#363). |
 | Tap or aggregate limits with about 10 per-app taps | Low | H6. Build failures fail open. |
 | Process object ID reuse | Low | Prune against a fresh process list on every push and every process-list change. |
+---
+
+## 15. Harness results (2026-10-28, macOS 27.2, LG TV over USB-C/HDMI, build 750)
+
+Measured with the harness of commit `f34a737` and its revision in `382f43e`. The TV's UID is replaced by `<TV>`.
+
+| Step | Result | Verdict |
+|---|---|---|
+| H0 build | 18.8 / 22.5 / 20.0 ms; Core Audio keeps the requested tap UUID; exclusive read-back matches | pass |
+| H1 capture of a new process | tone onset missing p50 9.6 ms, p95 20.1 ms (n=10, all heard). Resolution is about ±1 IO buffer (10.7 ms), so capture starts within about one buffer of the first sample | below the 15 ms target, within measurement error |
+| H2 live exclusion updates | 40/40 accepted and read back; exclude effective p95 33 ms, include p95 62.8 ms (one outlier, p50 28.7 ms) | above the 50 ms target for include |
+| H3 FineTune's own output | in-process sound and per-app tap output not captured | pass |
+| H7 resume of a stopped catch-all | run control starts IO in 12–18 ms; onset lost p50 24 ms, p95 37 ms (silence, never loud) | pass |
+| H8 muted process | IsRunningOutput true, output devices contain the TV | pass: the device filter may be enabled |
+
+Facts established on the device (they update §2):
+
+- **F4** holds within about one IO buffer: a process that starts after the catch-all exists is captured almost from its first sample. Processes that already exist when the catch-all is built (e.g. MacWhisper before its start sound) are covered from the first sample by construction.
+- **F5** holds: exclusion updates on a live exclusive tap are accepted and take effect in about 30 ms, rarely about 60 ms. Margins: grow `max(2 × 63 ms, 2 buffers)` ≈ 130 ms, shrink 400 ms.
+- **F6** holds: FineTune's process object excludes its own output, including per-app aggregates.
+- **F8** holds for values, but **Core Audio posts no change notification for `kAudioProcessPropertyIsRunningOutput`**; `kAudioProcessPropertyIsRunning` is notified (probe, first harness run). The run control listens to IsRunning and re-reads IsRunningOutput 10/30/100 ms later.
+- **F10/F11**: `AudioDeviceStart` on the catch-all takes 12–18 ms.
+
+Consequence for handover A (a per-app tap takes over a process the catch-all already plays): with a 130 ms grow margin plus the 40 ms gate, a playing sound dips for about 170 ms once. The quiet-point handover (§5 A5) avoids the dip for short sounds and should default to on.
