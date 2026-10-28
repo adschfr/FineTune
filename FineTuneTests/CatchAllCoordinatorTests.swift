@@ -53,9 +53,15 @@ final class ManualCatchAllClock: CatchAllClock {
 }
 
 /// Records what the coordinator asks of the run control, e.g. "attach uid-tv [5] held=true".
+/// While `blocked`, the queue is stuck in a HAL call: `detach` and `stop()` time out, and work
+/// queued after a timed-out detach waits for `unblock()`.
 nonisolated final class FakeRunControl: CatchAllRunControlling, @unchecked Sendable {
     private let lock = NSLock()
     private var _log: [String] = []
+    private var _onRecord: (@Sendable (String) -> Void)?
+    private var _blocked = false
+    private var _stuckDetaches: [String] = []
+    private var _queuedWork: [@Sendable () -> Void] = []
 
     var onRebuild: (@Sendable (String, AudioDeviceID, CatchAllRunLogic.RebuildReason) -> Void)?
     var onServiceRestarted: (@Sendable () -> Void)?
@@ -63,13 +69,29 @@ nonisolated final class FakeRunControl: CatchAllRunControlling, @unchecked Senda
     var onProcessListChanged: (@MainActor @Sendable () -> Void)?
 
     var log: [String] { lock.withLock { _log } }
-    private func record(_ line: String) { lock.withLock { _log.append(line) } }
+    /// Also gets every recorded line, for one ordered log across the fakes.
+    var onRecord: (@Sendable (String) -> Void)? {
+        get { lock.withLock { _onRecord } }
+        set { lock.withLock { _onRecord = newValue } }
+    }
+    var blocked: Bool {
+        get { lock.withLock { _blocked } }
+        set { lock.withLock { _blocked = newValue } }
+    }
+
+    private func record(_ line: String) {
+        let observer = lock.withLock {
+            _log.append(line)
+            return _onRecord
+        }
+        observer?(line)
+    }
 
     func start() { record("start") }
 
     func stop() -> Bool {
         record("stop")
-        return true
+        return !blocked
     }
 
     func attach(_ handle: CatchAllIOHandle, deviceID: AudioDeviceID, excluded: Set<AudioObjectID>) {
@@ -77,8 +99,36 @@ nonisolated final class FakeRunControl: CatchAllRunControlling, @unchecked Senda
     }
 
     func detach(_ handle: CatchAllIOHandle) async -> Bool {
-        record("detach \(handle.deviceUID)")
-        return true
+        let line = "detach \(handle.deviceUID) \(handle.aggregateID)"
+        let stuck = lock.withLock {
+            if _blocked { _stuckDetaches.append(line) }
+            return _blocked
+        }
+        record(stuck ? line + " timed out" : line)
+        return !stuck
+    }
+
+    func afterQueuedWork(_ action: @escaping @Sendable () -> Void) {
+        let runNow = lock.withLock {
+            if _blocked { _queuedWork.append(action) }
+            return !_blocked
+        }
+        if runNow { action() }
+    }
+
+    /// The queue leaves its HAL call: the detaches that timed out run, then the work queued
+    /// after them.
+    func unblock() {
+        let (detaches, work) = lock.withLock {
+            _blocked = false
+            defer {
+                _stuckDetaches.removeAll()
+                _queuedWork.removeAll()
+            }
+            return (_stuckDetaches, _queuedWork)
+        }
+        for line in detaches { record("queue ran \(line)") }
+        for action in work { action() }
     }
 
     func setExcluded(_ handle: CatchAllIOHandle, _ excluded: Set<AudioObjectID>) {
@@ -107,11 +157,22 @@ final class CatchAllTestSystem {
     var processes: [AudioObjectID] = [5, 11, 12, 13]
     /// False: reading the process list fails.
     var processListReadable = true
+    /// The next this many reads of the process list fail, then it reads again (a transient
+    /// failure).
+    var failingReads = 0
     var selfObject: AudioObjectID = 5
     var foreign: Set<AudioObjectID> = []
     var runningOutput: Set<AudioObjectID> = []
     var permission = true
     var excluded: Set<String> = []
+
+    func readProcessList() -> [AudioObjectID]? {
+        if failingReads > 0 {
+            failingReads -= 1
+            return nil
+        }
+        return processListReadable ? processes : nil
+    }
 }
 
 final class CatchAllEventLog {
@@ -155,7 +216,7 @@ func makeCatchAllRig(mode: CatchAllMode = .on, configure: (CatchAllTestSystem) -
         backend: backend,
         runControl: runControl,
         clock: clock,
-        processList: { system.processListReadable ? system.processes : nil },
+        processList: { system.readProcessList() },
         selfObject: { system.selfObject },
         foreign: { $0.intersection(system.foreign) },
         isRunningOutput: { system.runningOutput.contains($0) },
@@ -592,7 +653,7 @@ struct CatchAllCoordinatorTests {
 
     // MARK: I1
 
-    @Test("I1: an exclusion left without a claim after a push failed twice is repaired in the same flush, without completing newer tickets")
+    @Test("I1: an exclusion left without a claim after a push failed twice is repaired in the same flush; the wait ends when the rebuild with the desired list takes over")
     func invariantRepair() async throws {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
@@ -605,11 +666,12 @@ struct CatchAllCoordinatorTests {
 
         // 11 leaves and 12 joins in one turn; the push of [5, 12] and its retry fail
         rig.backend.failSets = 2
+        let old = try #require(rig.tv)
         _ = coordinator.removeClaim(ObjectIdentifier(owners[0]))
         let ticket = try #require(coordinator.setClaim(owners[1], Claim(processes: [12], coverage: .allDevices)))
         rig.clock.runDue()
 
-        #expect(rig.tv?.appliedExclusions == [5])
+        #expect(old.appliedExclusions == [5])
         #expect(Array(rig.events.events.suffix(4)) == [
             .pushFailed(uid: "uid-tv", excluded: [5, 12]),
             .pushFailed(uid: "uid-tv", excluded: [5, 12]),
@@ -619,18 +681,18 @@ struct CatchAllCoordinatorTests {
         // The run control hears only about lists that applied
         #expect(rig.runControl.log.filter { $0.hasPrefix("excluded") } == excludedBefore + ["excluded uid-tv [5]"])
 
-        // The repair does not apply 12's generation: its grow wait needs the push of [5, 12]
+        // The push failed after its retry, so the next turn rebuilt with [5, 12] (E), and the wait
+        // ends when the new catch-all takes over. Which generation the repair recorded is moot
+        // here: the rebuild resets the pushes before any wait could resolve against it.
+        let rebuilt = try #require(rig.tv)
+        #expect(rebuilt !== old)
+        #expect(rebuilt.appliedExclusions == [5, 12])
         let done = CoordinatorTestBox(false)
         Task { await coordinator.waitApplied(ticket, .grow); done.value = true }
         #expect(await waitUntil { coordinator.pendingWaitCount == 1 })
-        rig.clock.advance(1)
         await settle()
         #expect(!done.value)
-
-        rig.runControl.onProcessListChanged?()
-        rig.clock.runDue()
-        #expect(rig.tv?.appliedExclusions == [5, 12])
-        rig.clock.advance(0.13)
+        rig.clock.advance(0.2)
         #expect(await waitUntil { done.value })
         withExtendedLifetime(owners) {}
     }
@@ -806,7 +868,7 @@ struct CatchAllCoordinatorTests {
         #expect(tv.appliedExclusions == [5])
     }
 
-    @Test("The flush skips a retiring catch-all")
+    @Test("The flush skips a retiring catch-all; a claim on it gets only a retirement ticket")
     func retiringSkipped() {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
@@ -815,7 +877,8 @@ struct CatchAllCoordinatorTests {
         coordinator.setPhaseForTesting(.retiring(caHeld: false), for: "uid-tv")
         let owner = FakeClaimOwner()
 
-        #expect(coordinator.setClaim(owner, Claim(processes: [11], coverage: .allDevices)) == nil)
+        let ticket = coordinator.setClaim(owner, Claim(processes: [11], coverage: .allDevices))
+        #expect(ticket?.generations == ["uid-tv": 0])
         rig.clock.runDue()
 
         #expect(rig.pushes.isEmpty)
@@ -1234,7 +1297,7 @@ struct CatchAllCoordinatorTests {
         #expect(!calledBack.value)
     }
 
-    @Test("The run control's callbacks are set once, before it starts, and it starts once")
+    @Test("The run control's callbacks are set once, before it starts; it starts once per start() after a stop()")
     func runControlWiring() {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
@@ -1242,10 +1305,11 @@ struct CatchAllCoordinatorTests {
         #expect(rig.runControl.onProcessListChanged != nil)
 
         coordinator.start()
+        coordinator.start()
         coordinator.stop()
         coordinator.start()
 
-        #expect(rig.runControl.log.filter { $0 == "start" }.count == 1)
+        #expect(rig.runControl.log.filter { $0 == "start" || $0 == "stop" } == ["start", "stop", "start"])
     }
 
     // MARK: Noop and fake

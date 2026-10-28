@@ -166,6 +166,8 @@ nonisolated protocol CatchAllRunControlling: AnyObject, Sendable {
     @discardableResult func stop() -> Bool
     func attach(_ handle: CatchAllIOHandle, deviceID: AudioDeviceID, excluded: Set<AudioObjectID>)
     func detach(_ handle: CatchAllIOHandle) async -> Bool
+    /// Runs `action` on the run queue after the work queued so far, e.g. a detach that timed out.
+    func afterQueuedWork(_ action: @escaping @Sendable () -> Void)
     func setExcluded(_ handle: CatchAllIOHandle, _ excluded: Set<AudioObjectID>)
     func prepareInclusion(_ processes: Set<AudioObjectID>, on uids: Set<String>)
     func setListed(_ processes: Set<AudioObjectID>)

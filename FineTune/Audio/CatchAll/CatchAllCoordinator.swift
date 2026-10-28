@@ -2,13 +2,14 @@
 import AudioToolbox
 import Foundation
 import os
+import Synchronization
 
 /// What the coordinator did, for the listening session's event lines (design §16.8).
 nonisolated enum CatchAllEvent: Sendable, Equatable {
     /// The device's catch-all entered a phase (`building` when its build starts).
     case phase(uid: String, CatchAllPhase)
     case buildFailed(uid: String, reason: String)
-    /// A new catch-all's list covers every claim and has applied: its output is open.
+    /// A new catch-all's list covers every claim and has applied: its initial hold ended.
     case released(uid: String)
     case pushed(uid: String, excluded: [AudioObjectID])
     case pushFailed(uid: String, excluded: [AudioObjectID])
@@ -17,6 +18,73 @@ nonisolated enum CatchAllEvent: Sendable, Equatable {
     case decision(pid: pid_t, uid: String, TapDecision)
     /// C9: the app's processes play to a device other than the catch-all's.
     case playsElsewhere(pid: pid_t, uid: String)
+    /// The coordinator zeroed (`held`) or opened the output of the catch-all on this aggregate.
+    case output(uid: String, aggregate: AudioDeviceID, held: Bool)
+    /// R1 (§16.3 E13): coverage of the device ends with promotion to per-app taps.
+    case retiring(uid: String, CatchAllRetireReason)
+    /// The device's entry is gone: R4 ended at the detach, or coverage ended without
+    /// promotion (G).
+    case ended(uid: String, reason: String)
+    /// A make-before-break rebuild (§5 E) took over.
+    case rebuilt(uid: String)
+    /// A watchdog fired (also logged at `.fault`).
+    case watchdog(uid: String, CatchAllWatchdog)
+    /// A failure that counts toward backoff and the breaker (§16.6). Not reported for G, for a
+    /// device that is not alive, or for an unreadable process list.
+    case failure(uid: String, CatchAllFailure)
+}
+
+/// Why coverage of a device ends with promotion (R, design §16.3 E13).
+nonisolated enum CatchAllRetireReason: String, Sendable, Equatable {
+    /// A push failed after its retry, and the rebuild with the desired list failed too (§4.6).
+    case pushFailed
+    /// Three counted IO failures for one device ID within 2 min.
+    case givenUp
+    /// The circuit breaker opened.
+    case breaker
+    /// The run queue did not answer within its 1 s bound.
+    case runQueueTimeout
+    /// A reconcile found that the device no longer has software volume.
+    case tierChanged
+    /// A rebuild for another reason (E12, E15, an IO failure) failed.
+    case rebuildFailed
+    /// The listening session's injected retirement.
+    case injected
+}
+
+/// Why a catch-all is rebuilt make before break (E, design §5 E). The second half of failure
+/// handling adds the callers of the last three: a format change (E15), dead IO, and a new ID
+/// or the device alive again (E12).
+nonisolated enum CatchAllRebuildReason: String, Sendable, Equatable {
+    /// A push failed after its retry, or a list was still missing at its watchdog (§4.6).
+    case pushFailed
+    case formatChanged
+    case ioFailed
+    case deviceChanged
+}
+
+/// A failure that counts toward backoff and the breaker (design §16.6).
+nonisolated enum CatchAllFailure: String, Sendable, Equatable {
+    /// A rebuild could not build its new catch-all on an alive device.
+    case buildFailed
+    /// The run queue did not answer a detach within its bound; once until it has run the
+    /// detaches that timed out.
+    case runQueueTimeout
+}
+
+/// The coordinator's watchdogs (design §16.3 constants, §16.6 "Hold stuck").
+nonisolated enum CatchAllWatchdog: String, Sendable, Equatable {
+    /// A grow wait, after `max(1 s, G + 0.6 s)`.
+    case grow
+    /// A shrink wait, after 2 s.
+    case shrink
+    /// R3 not reached 2 s after R1.
+    case retirement
+    /// A new catch-all still held for its initial list after the grow watchdog's time.
+    case initialList
+    /// A rebuilt catch-all that has not taken over 2 s after its attach, or a rebuild that could
+    /// not read the process list for 2 s.
+    case rebuild
 }
 
 // MARK: - Coordinator
@@ -31,6 +99,13 @@ nonisolated enum CatchAllEvent: Sendable, Equatable {
 /// `onCoverageMayHaveChanged`. A build's wait spins the main run loop (V4), and so can the
 /// callback (`activate`): a turn requested during either runs once it ends, never nested,
 /// and a building catch-all is never pushed to.
+///
+/// Coverage ends in one of two ways. With promotion (R, `retire`, always in the coordinator's
+/// own turn): the engine taps every app the catch-all played, then the catch-all is held,
+/// detached and destroyed. Without (G): for an absent device and at `stop()`. A push that
+/// fails after its retry rebuilds make before break (E, `rebuild`), and a failed rebuild
+/// retires. Watchdogs bound every wait, hold and rebuild; a catch-all is destroyed only after
+/// the run queue has detached it.
 @MainActor
 final class CatchAllCoordinator: CatchAllCoordinating {
     /// C9: seconds after the last Devices or IsRunningOutput change before processes that
@@ -47,6 +122,19 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     static let callbackPoll: Double = 0.01
     /// A flush that could not read the process list tries again after this.
     static let processListRetryDelay: Double = 0.1
+    /// E: a rebuilt catch-all takes over after its first IO callback or after this.
+    static let firstCallbackWait: Double = 0.2
+    /// R4: a held catch-all kept aside for an absent app is destroyed after this, and again
+    /// after this while an absent app is still routed to its device (§16.12 item 5).
+    static let keepAsideDelay: Double = 30
+    /// Watchdogs (§16.3); the grow watchdog is `max(1 s, G + 0.6 s)`.
+    static let shrinkWatchdog: Double = 2
+    static let retirementWatchdog: Double = 2
+    static let rebuildWatchdog: Double = 2
+    /// A wait's watchdog does not judge a device while the process list is unreadable, for at
+    /// most this long past its time; then it judges with the claims' processes, dead ones
+    /// included.
+    static let unreadableListGrace: Double = 2
     /// Slack when comparing clock readings with deadlines.
     private static let tolerance: Double = 1e-6
 
@@ -60,12 +148,13 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune", category: "CatchAll")
 
     private var isStarted = false
-    /// The run control runs from the first `start()`; stopping it comes with G (failure handling).
+    /// The run control runs from `start()` until `stop()`.
     private var runControlStarted = false
     private var selfObject = AudioObjectID.unknown
-    /// Opened by repeated failures (design §16.6, failure handling); closed until then.
+    /// Opened by repeated failures (design §16.6); closed until the second half of failure
+    /// handling counts them.
     private(set) var breakerOpen = false
-    /// Devices given up after repeated IO failures (failure handling).
+    /// Devices given up after repeated IO failures (second half of failure handling).
     private(set) var givenUp: Set<AudioDeviceID> = []
 
     private var devices: [String: CatchAllDevice] = [:]
@@ -74,6 +163,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     private var generations: [String: UInt64] = [:]
     private var claims: [ObjectIdentifier: ClaimEntry] = [:]
     private var waiters: [Waiter] = []
+    private var nextWaiterID = 0
+    /// Catch-alls whose coverage ended, until they are destroyed.
+    private var ending: [EndingCatchAll] = []
     /// The listed apps' process objects by pid (`appsChanged`); C9 is evaluated per app, on
     /// the same sets the gate asks about.
     private var apps: [pid_t: [AudioObjectID]] = [:]
@@ -85,14 +177,24 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     private var decisions: [pid_t: NotedDecision] = [:]
     /// The process list could not be read at the last flush (logged once per streak).
     private var processListUnreadable = false
+    /// Detaches that timed out and have not run on the run queue yet; a blocked queue counts
+    /// once until it has run them (§16.6).
+    private var stuckDetaches = 0
+    private var queueTimeoutCounted = false
 
     // The next-turn task, the flush and the timers
     private var pendingReconcile = false
     private var pendingReevaluation = false
+    /// Retirements and rebuilds wait for the next turn: R2 and a build spin the main run loop.
+    private var pendingRetirements: [String: CatchAllRetireReason] = [:]
+    private var pendingRebuilds: [String: CatchAllRebuildReason] = [:]
+    /// Catch-alls kept aside whose time ran out; their check calls the engine, which spins.
+    private var pendingKeptChecks: [EndingCatchAll] = []
     private var turn: CatchAllScheduledAction?
     private var flushAction: CatchAllScheduledAction?
     private var checkAction: CatchAllScheduledAction?
     private var settleAction: CatchAllScheduledAction?
+    private var watchdogAction: CatchAllScheduledAction?
     /// Builds in progress. Their wait spins the main run loop (V4), which can run scheduled
     /// work inside them.
     private var buildDepth = 0
@@ -186,20 +288,44 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         runReconcile()
     }
 
-    /// Stops building, the next-turn task and the C9 timers; the gate is not called back
-    /// after this, and a build whose wait is running is destroyed when it ends. Ending each
-    /// catch-all's coverage (G, bounded by the detach timeout), the bounded run-control stop
-    /// and completing the waits come with failure handling. Until then a catch-all lasts until
-    /// FineTune exits, which tears it down (H9), and claims, flushes and waits keep working on
-    /// it.
+    /// E19: ends every catch-all's coverage without promotion (G), building ones included (a
+    /// build whose wait is running is destroyed when it ends), destroys catch-alls kept aside
+    /// once their queued detach has run, completes every wait, cancels the timers and stops
+    /// the run control within its 1 s bound. The gate is not called back after this. Never
+    /// called from a run-control callback, which runs on its queue. A later `start()` starts
+    /// the run control again.
     func stop() {
         isStarted = false
         pendingReconcile = false
         pendingReevaluation = false
-        turn?.cancel()
+        pendingRetirements = [:]
+        pendingRebuilds = [:]
+        pendingKeptChecks = []
+        for device in devices.values.sorted(by: { $0.uid < $1.uid }) {
+            endCoverage(device, reason: "stopped")
+        }
+        for entry in ending where entry.keptAside {
+            entry.keptAside = false
+            entry.keepTimer?.cancel()
+            entry.keepTimer = nil
+            destroyIfDone(entry)
+        }
+        // G completed the waits on every device; none is left to wait for
+        let open = waiters
+        waiters.removeAll()
+        for action in [turn, flushAction, checkAction, settleAction, watchdogAction] { action?.cancel() }
         turn = nil
-        settleAction?.cancel()
+        flushAction = nil
+        checkAction = nil
         settleAction = nil
+        watchdogAction = nil
+        for waiter in open { waiter.continuation.resume() }
+        guard runControlStarted else { return }
+        runControlStarted = false
+        if !env.runControl.stop() {
+            // Each catch-all is destroyed once its queued detach has run, or dies with FineTune (H9)
+            logger.fault("Catch-all run control did not stop within its bound")
+        }
     }
 
     func reconcile() {
@@ -212,14 +338,15 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         scheduleTurn()
     }
 
-    /// E12 checks (a new ID or a device that is not alive) come with failure handling; a
-    /// refresh never builds inside the device monitor's handler.
+    /// E12 checks (a new ID or a device that is not alive) come with the second half of
+    /// failure handling; a refresh never builds inside the device monitor's handler.
     func deviceListRefreshed() {
         _ = listedOutputs()
         reconcile()
     }
 
-    // Format changes (E15) come with failure handling; until then they leave the catch-all as is.
+    // Format changes (E15) come with the second half of failure handling; until then they
+    // leave the catch-all as is.
     func formatChanging(uid: String) {}
     func formatUnchanged(uid: String) {}
     func formatChanged(uid: String) async {}
@@ -230,6 +357,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         turn = env.clock.schedule(after: 0) { [weak self] in self?.runTurn() }
     }
 
+    /// Retirements first (a rebuild never replaces a retiring catch-all, and a reconcile leaves
+    /// one alone), then the catch-alls kept aside, rebuilds, the reconcile and the gate.
     private func runTurn() {
         turn = nil
         // Scheduled before a build began whose wait now runs it: scheduled again when it ends
@@ -238,6 +367,19 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         defer {
             turnDepth -= 1
             resumeDeferredTurn()
+        }
+        let retirements = pendingRetirements
+        pendingRetirements = [:]
+        for (uid, reason) in retirements.sorted(by: { $0.key < $1.key }) {
+            performRetirement(uid, reason)
+        }
+        let checks = pendingKeptChecks
+        pendingKeptChecks = []
+        for entry in checks { recheckKeptAside(entry) }
+        let rebuilds = pendingRebuilds
+        pendingRebuilds = [:]
+        for (uid, reason) in rebuilds.sorted(by: { $0.key < $1.key }) {
+            performRebuild(uid, reason)
         }
         if pendingReconcile {
             pendingReconcile = false
@@ -249,25 +391,51 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         }
     }
 
-    /// A reconcile or re-evaluation requested during a build's wait or a turn runs now that
-    /// it ended.
+    /// Work requested during a build's wait or a turn runs now that it ended.
     private func resumeDeferredTurn() {
-        guard pendingReconcile || pendingReevaluation else { return }
+        guard pendingReconcile || pendingReevaluation || !pendingRetirements.isEmpty
+                || !pendingRebuilds.isEmpty || !pendingKeptChecks.isEmpty else { return }
         scheduleTurn()
     }
 
-    /// Builds a catch-all for every eligible listed device that has none. Ending coverage of
-    /// an existing one (G, R, dormant, a new ID) comes with failure handling.
+    /// Runs a callback into the engine that may spin the main run loop (`activate`): turns
+    /// requested meanwhile, retirements included, run after it.
+    private func spinning<T>(_ body: () -> T) -> T {
+        turnDepth += 1
+        defer {
+            turnDepth -= 1
+            resumeDeferredTurn()
+        }
+        return body()
+    }
+
+    /// Ends coverage of devices that are no longer listed (G), retires a live catch-all whose
+    /// device no longer has software volume (R, in the next turn: `start()` runs this in the
+    /// engine's call), and builds a catch-all for every eligible listed device that has none.
+    /// A retiring device is left alone until its R4 ends. Dormant devices and a new ID come
+    /// with the second half of failure handling.
     private func runReconcile() {
         guard isStarted else { return }
         if !selfObject.isValid { selfObject = env.selfObject() }
+        let outputs = listedOutputs().sorted(by: { $0.uid < $1.uid })
+        let listedUIDs = Set(outputs.map(\.uid))
+        for device in devices.values.sorted(by: { $0.uid < $1.uid }) where !listedUIDs.contains(device.uid) {
+            guard device.phase == .live || device.phase == .dormant else { continue }
+            endCoverage(device, reason: "absent")
+        }
         var built = false
-        for output in listedOutputs().sorted(by: { $0.uid < $1.uid }) {
-            // A stop() during an earlier build's wait ends the pass
+        for output in outputs {
+            // A stop() during an earlier build's wait or retirement ends the pass
             guard isStarted else { break }
             let reason = ineligibility(of: output)
             noteEligibility(output.uid, reason)
-            guard reason == nil, devices[output.uid] == nil else { continue }
+            if let device = devices[output.uid] {
+                if device.phase == .live, env.tier(output.id) != .software {
+                    queueRetirement(output.uid, .tierChanged)
+                }
+                continue
+            }
+            guard reason == nil else { continue }
             if build(output) { built = true }
         }
         if built { requestReevaluation() }
@@ -278,6 +446,12 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         let outputs = env.listedOutputs()
         for output in outputs { knownOutputIDs[output.uid] = output.id }
         return outputs
+    }
+
+    /// The device is gone: no longer listed, or Core Audio no longer resolves its UID (the
+    /// device list has not caught up yet). Its coverage ends with G, never R (E11, E13).
+    private func isAbsent(_ uid: String) -> Bool {
+        !listedOutputs().contains { $0.uid == uid } || env.backend.deviceID(forUID: uid) == nil
     }
 
     private func ineligibility(of output: CatchAllOutput) -> CatchAllPlan.Ineligibility? {
@@ -331,7 +505,13 @@ final class CatchAllCoordinator: CatchAllCoordinating {
                 held: true, observe: env.mode == .observe, backend: env.backend)
         } catch {
             buildDepth -= 1
-            // Backoff and failure counting come with failure handling (design §16.6)
+            // stop() during the wait: nobody wants this catch-all any more, and nothing counts
+            guard isStarted, devices[uid] === device else {
+                logger.notice("Catch-all on \(uid, privacy: .public) could not be built after it stopped being wanted: \(String(describing: error), privacy: .public)")
+                forget(device)
+                return false
+            }
+            // Backoff and failure counting come with the second half of failure handling (§16.6)
             logger.error("Catch-all on \(uid, privacy: .public) could not be built: \(String(describing: error), privacy: .public)")
             emit(.buildFailed(uid: uid, reason: String(describing: error)))
             forget(device)
@@ -362,10 +542,13 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         let ms = (env.clock.now - started) * 1000
         logger.notice("Catch-all on \(uid, privacy: .public) built in \(ms, format: .fixed(precision: 1)) ms, held, excluding \(exclusions, privacy: .public)")
         emit(.phase(uid: uid, .live))
+        device.attached = true
+        device.attachedAt = env.clock.now
         env.runControl.attach(controller.ioHandle, deviceID: controller.deviceID, excluded: Set(exclusions))
         // Claims that changed during the wait are pushed now; the release follows when applied
         scheduleFlush()
         releaseIfApplied()
+        scheduleWatchdog()
         evaluateSettle()
         resumeDeferredTurn()
         return true
@@ -391,8 +574,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
 
     private func applyGain(_ device: CatchAllDevice) {
         // A retiring catch-all keeps the level at which per-app taps take over
-        guard let controller = device.controller, !device.phase.isRetiring else { return }
-        controller.setGain(env.gain(device.deviceID))
+        guard !device.phase.isRetiring, !device.controllers.isEmpty else { return }
+        let gain = env.gain(device.deviceID)
+        for controller in device.controllers { controller.setGain(gain) }
     }
 
     // MARK: Processes
@@ -445,8 +629,21 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         let before = activeClaims()
         let previous = claims[id]?.claim
         claims[id] = ClaimEntry(owner: owner, claim: claim)
-        guard previous != claim else { return nil }
-        return claimsChanged(from: before)
+        let ticket = previous == claim ? nil : claimsChanged(from: before)
+        return withRetirementTickets(ticket, targets: owner.targets)
+    }
+
+    /// Retirement tickets (§16.4): a target in `.retiring(caHeld: false)` joins the ticket with
+    /// its current generation, also when no list changed, so the tap's grow wait (its
+    /// retirement hold) ends at R3 and not at once.
+    private func withRetirementTickets(_ ticket: ApplyTicket?, targets: Set<String>) -> ApplyTicket? {
+        let retiring = targets.filter { devices[$0]?.phase == .retiring(caHeld: false) }
+        guard !retiring.isEmpty else { return ticket }
+        var generations = ticket?.generations ?? [:]
+        for uid in retiring where generations[uid] == nil {
+            generations[uid] = self.generations[uid, default: 0]
+        }
+        return ApplyTicket(generations: generations)
     }
 
     func removeClaim(_ owner: ObjectIdentifier) -> ApplyTicket? {
@@ -573,12 +770,20 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         flushAction = env.clock.schedule(after: Self.processListRetryDelay) { [weak self] in self?.flush() }
     }
 
-    /// A push failed after its retry. Failure handling rebuilds the catch-all with the desired
-    /// list (E), then retires it (R), and its waits complete there (§4.6). Until then the I1
-    /// check that ends the flush removes any exclusion left without a claim, and the next
-    /// flush tries the list again.
+    /// A push failed after its retry (§4.6, §16.6 push row): the catch-all is rebuilt with the
+    /// desired list (E) and retired (R) if that fails; its waits complete through either. The
+    /// I1 check that ends the flush still removes any exclusion left without a claim. While a
+    /// rebuilt catch-all waits to take over, pushes go to it, so a failure fails the rebuild: R.
     private func pushStillFails(_ device: CatchAllDevice) {
-        logger.error("Catch-all on \(device.uid, privacy: .public): exclusion push failed after its retry")
+        if let rebuild = device.rebuild, case .waiting = rebuild.stage {
+            guard !rebuild.failed else { return }
+            logger.error("Catch-all on \(device.uid, privacy: .public): exclusion push to the rebuilt catch-all failed after its retry; retiring")
+            device.rebuild?.failed = true
+            queueRetirement(device.uid, Self.retireReason(after: rebuild.reason))
+            return
+        }
+        logger.error("Catch-all on \(device.uid, privacy: .public): exclusion push failed after its retry; rebuilding")
+        rebuild(device.uid, reason: .pushFailed)
     }
 
     /// The applied list already is the current generation's list: it applied with the last push.
@@ -595,6 +800,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// generation; any other list (an I1 repair) applies none newer than the last push.
     private func push(_ device: CatchAllDevice, _ list: [AudioObjectID], desired: [AudioObjectID]) -> Bool {
         guard let controller = device.controller else { return false }
+        let includes = controller.appliedExclusions.contains { !list.contains($0) }
         guard controller.push(list) else {
             // The controller logged it
             emit(.pushFailed(uid: device.uid, excluded: list))
@@ -604,7 +810,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         let generation = list == desired
             ? generations[device.uid, default: 0]
             : max(device.pushes.last?.generation ?? 0, device.settledGeneration)
-        device.pushes.append(PushRecord(generation: generation, time: env.clock.now, callbacks: controller.callbackCount))
+        device.pushes.append(PushRecord(generation: generation, time: env.clock.now, callbacks: controller.callbackCount,
+                                        includes: includes))
         logger.info("Catch-all on \(device.uid, privacy: .public) excludes \(list, privacy: .public)")
         emit(.pushed(uid: device.uid, excluded: list))
         return true
@@ -637,24 +844,48 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     // MARK: Waits
 
     func waitApplied(_ ticket: ApplyTicket, _ direction: ApplyDirection) async {
-        guard !isApplied(ticket, direction, now: env.clock.now) else { return }
+        let now = env.clock.now
+        guard !isApplied(ticket, direction, now: now) else { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            waiters.append(Waiter(ticket: ticket, direction: direction, continuation: continuation))
-            scheduleCheck(now: env.clock.now)
+            nextWaiterID += 1
+            waiters.append(Waiter(id: nextWaiterID, ticket: ticket, direction: direction, registered: now,
+                                  deadline: now + watchdogLimit(direction), continuation: continuation))
+            scheduleCheck(now: now)
+            scheduleWatchdog()
         }
     }
 
     private func isApplied(_ ticket: ApplyTicket, _ direction: ApplyDirection, now: Double) -> Bool {
-        ticket.generations.allSatisfy { uid, generation in
-            // Without a catch-all there is nothing to wait for
-            guard let device = devices[uid] else { return true }
-            guard let controller = device.controller else { return false }
-            if generation <= device.settledGeneration { return true }
-            guard let record = device.pushes.first(where: { $0.generation >= generation }) else { return false }
-            switch direction {
-            case .grow: return growState(record, controller, now: now).isApplied
-            case .shrink: return now - record.time + Self.tolerance >= env.shrinkMargin
-            }
+        ticket.generations.allSatisfy { isApplied(uid: $0.key, generation: $0.value, direction, now: now) }
+    }
+
+    /// The waiter's ticket applied, apart from the devices its watchdog found in force.
+    private func isApplied(_ waiter: Waiter, now: Double) -> Bool {
+        waiter.ticket.generations.allSatisfy {
+            waiter.inForce.contains($0.key) || isApplied(uid: $0.key, generation: $0.value, waiter.direction, now: now)
+        }
+    }
+
+    private func isApplied(uid: String, generation: UInt64, _ direction: ApplyDirection, now: Double) -> Bool {
+        // Without a catch-all there is nothing to wait for
+        guard let device = devices[uid] else { return true }
+        switch device.phase {
+        case .dormant:
+            // It plays nothing, and its rebuild starts from the current claims (§16.4)
+            return true
+        case .retiring(let caHeld):
+            // Every wait on it is a retirement hold: it ends at R3, when the output is zeroed
+            return caHeld
+        case .building, .live:
+            break
+        }
+        // During a rebuild the wait ends once the new catch-all has taken over (E)
+        guard device.rebuild?.isWaiting != true, let controller = device.controller else { return false }
+        if generation <= device.settledGeneration { return true }
+        guard let record = device.pushes.first(where: { $0.generation >= generation }) else { return false }
+        switch direction {
+        case .grow: return growState(record, controller, now: now).isApplied
+        case .shrink: return now - record.time + Self.tolerance >= env.shrinkMargin
         }
     }
 
@@ -670,22 +901,32 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         return .waitingForCallbacks
     }
 
-    /// Settles pushes, resumes the waits that applied, releases new catch-alls whose list
-    /// applied and schedules the next check.
+    /// Settles pushes, lets rebuilt catch-alls take over, resumes the waits that applied,
+    /// releases new catch-alls whose list applied and schedules the next check. A takeover or
+    /// release that could not read the process list is checked again shortly, since no later
+    /// push deadline or callback may come to check it before its watchdog.
     private func checkWaiters() {
         checkAction?.cancel()
         checkAction = nil
         let now = env.clock.now
         for device in devices.values { settle(device, now: now) }
+        var unreadable = false
+        let rebuilding = devices.values.filter { $0.rebuild?.isWaiting == true }.sorted { $0.uid < $1.uid }
+        if !rebuilding.isEmpty {
+            let live = env.processList().map(Set.init)
+            if live == nil, rebuilding.contains(where: { $0.rebuild?.failed == false }) { unreadable = true }
+            for device in rebuilding { completeRebuildIfReady(device, now: now, live: live) }
+        }
         var done: [Waiter] = []
         waiters.removeAll { waiter in
-            guard isApplied(waiter.ticket, waiter.direction, now: now) else { return false }
+            guard isApplied(waiter, now: now) else { return false }
             done.append(waiter)
             return true
         }
-        releaseIfApplied()
+        if !releaseIfApplied() { unreadable = true }
         for waiter in done { waiter.continuation.resume() }
-        scheduleCheck(now: now)
+        scheduleCheck(now: now, retryRead: unreadable)
+        scheduleWatchdog()
     }
 
     /// Drops the oldest pushes that applied in both directions.
@@ -702,11 +943,14 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         }
     }
 
-    private func scheduleCheck(now: Double) {
+    /// `retryRead`: a takeover or release found the process list unreadable and tries again.
+    private func scheduleCheck(now: Double, retryRead: Bool = false) {
         checkAction?.cancel()
         checkAction = nil
-        guard !waiters.isEmpty || devices.values.contains(where: { $0.holds.contains(.initialList) }) else { return }
-        var next: Double?
+        guard !waiters.isEmpty || devices.values.contains(where: {
+            $0.holds.contains(.initialList) || $0.rebuild?.isWaiting == true
+        }) else { return }
+        var next: Double? = retryRead ? now + Self.processListRetryDelay : nil
         for device in devices.values {
             guard let controller = device.controller else { continue }
             for record in device.pushes {
@@ -718,6 +962,11 @@ final class CatchAllCoordinator: CatchAllCoordinating {
                     next = min(next ?? now + Self.callbackPoll, now + Self.callbackPoll)
                 }
             }
+            // A rebuilt catch-all takes over after its first callback or 200 ms
+            if let rebuild = device.rebuild, !rebuild.failed, case .waiting(let since, let callbacks) = rebuild.stage,
+               controller.callbackCount == callbacks, since + Self.firstCallbackWait > now + Self.tolerance {
+                next = min(next ?? now + Self.callbackPoll, now + Self.callbackPoll, since + Self.firstCallbackWait)
+            }
         }
         // Waits for a list not pushed yet are checked by the flush that pushes it
         guard let next else { return }
@@ -727,29 +976,662 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// Opens a new catch-all's output once it excludes FineTune and every live process a
     /// claim holds on its device, and every push since the build has applied (E1). Other
     /// exclusions double nothing (dead or foreign processes, or ones the I1 check removes),
-    /// so they never keep it held.
-    private func releaseIfApplied() {
+    /// so they never keep it held. False when one waits for its release and the process list
+    /// could not be read.
+    @discardableResult
+    private func releaseIfApplied() -> Bool {
         let pending = devices.values.filter { $0.holds.contains(.initialList) && $0.phase == .live && $0.controller != nil }
-        guard !pending.isEmpty, let list = env.processList() else { return }
+        guard !pending.isEmpty else { return true }
+        guard let list = env.processList() else { return false }
         let live = Set(list)
         let claims = activeClaims()
         let now = env.clock.now
         for device in pending.sorted(by: { $0.uid < $1.uid }) {
-            guard let controller = device.controller else { continue }
-            let required = claimed(device.uid, by: claims, live: live).union([selfObject])
-            guard required.isSubset(of: controller.appliedExclusions),
-                  device.pushes.allSatisfy({ growState($0, controller, now: now).isApplied }) else { continue }
+            guard let controller = device.controller,
+                  listApplied(device, controller, live: live, claims: claims, now: now) else { continue }
             release(device, from: .initialList)
             logger.notice("Catch-all on \(device.uid, privacy: .public) released: its exclusion list applied")
             emit(.released(uid: device.uid))
         }
+        return true
+    }
+
+    /// The catch-all excludes FineTune and every live process a claim holds on its device, and
+    /// every push to it has applied (E1, E).
+    private func listApplied(_ device: CatchAllDevice, _ controller: CatchAllTapController,
+                             live: Set<AudioObjectID>, claims: [Claim], now: Double) -> Bool {
+        let required = claimed(device.uid, by: claims, live: live).union([selfObject])
+        return required.isSubset(of: controller.appliedExclusions)
+            && device.pushes.allSatisfy { growState($0, controller, now: now).isApplied }
     }
 
     /// Ends one reason to hold; the output opens when none is left.
     private func release(_ device: CatchAllDevice, from reason: CatchAllHoldReason) {
         device.holds.remove(reason)
-        guard device.holds.isEmpty else { return }
-        device.controller?.release()
+        guard device.holds.isEmpty, let controller = device.controller else { return }
+        setHeld(controller, false, uid: device.uid)
+    }
+
+    /// Zeroes or opens a catch-all's output (one atomic store) and reports it.
+    private func setHeld(_ controller: CatchAllTapController, _ held: Bool, uid: String) {
+        if held { controller.hold() } else { controller.release() }
+        emit(.output(uid: uid, aggregate: controller.ioHandle.aggregateID, held: held))
+    }
+
+    // MARK: Retirement (R, §16.3 E13)
+
+    /// Ends coverage of `uid` with promotion to per-app taps (R). R1 stops covering; R2 lets the
+    /// engine tap every app the catch-all played, silent ones included; R3 zeroes the
+    /// catch-all and completes the retirement tickets in one turn; R4 detaches it within the
+    /// bound and destroys it once its queued detach has run, 30 s later when an absent app
+    /// was routed to the device. In observe every app is tapped already, so this is G, and so
+    /// it is for a device that went away meanwhile. It runs in the coordinator's next turn
+    /// (§16.7): R2 spins the main run loop (`activate`), never inside the caller's handler, a
+    /// build's wait or another turn.
+    func retire(_ uid: String, reason: CatchAllRetireReason) {
+        queueRetirement(uid, reason)
+    }
+
+    private func queueRetirement(_ uid: String, _ reason: CatchAllRetireReason) {
+        guard pendingRetirements[uid] == nil else { return }
+        pendingRetirements[uid] = reason
+        logger.notice("Catch-all on \(uid, privacy: .public): retirement (\(reason.rawValue, privacy: .public)) runs in the next turn")
+        scheduleTurn()
+    }
+
+    private func performRetirement(_ uid: String, _ reason: CatchAllRetireReason) {
+        // Gone, or retiring already. Never building here: a build's wait queues the request.
+        guard let device = devices[uid], device.phase == .live || device.phase == .dormant else { return }
+        // The device went away since the request: nothing to promote to (E11)
+        if isAbsent(uid) {
+            endCoverage(device, reason: "absent")
+            return
+        }
+        guard env.mode == .on else {
+            endCoverage(device, reason: "retired in observe (\(reason.rawValue))")
+            return
+        }
+        // R1: covers(D) false, gain frozen, flush and I1 skip it, its waits become retirement
+        // holds, and a reconcile leaves it alone until R4 ends. A rebuild waiting to take
+        // over never does; R4 ends both catch-alls.
+        device.phase = .retiring(caHeld: false)
+        device.retiringSince = env.clock.now
+        device.rebuild?.failed = true
+        device.rebuildAgain = nil
+        cancelRebuildDeferral(device)
+        pendingRebuilds[uid] = nil
+        logger.notice("Catch-all on \(uid, privacy: .public) retiring: \(reason.rawValue, privacy: .public)")
+        emit(.retiring(uid: uid, reason))
+        emit(.phase(uid: uid, .retiring(caHeld: false)))
+        evaluateSettle()
+        scheduleWatchdog()
+        // R2: the engine taps every app the catch-all played; a tap it creates on the device
+        // takes a retirement hold and gets a retirement ticket
+        let absentRouted = spinning { onCoverageWillEnd?(uid) ?? false }
+        // stop() ended it during the callback (G)
+        guard devices[uid] === device else { return }
+        // R3, unless the retirement watchdog forced it during the callback
+        holdForRetirement(device)
+        // R4
+        if absentRouted {
+            logger.notice("Catch-all on \(uid, privacy: .public): an absent app was routed here; its held catch-all stays \(Self.keepAsideDelay, format: .fixed(precision: 0)) s")
+        }
+        let entries = takeControllers(device, keepAside: absentRouted, timeoutCounts: true)
+        Task {
+            await self.detachAndDestroy(entries)
+            self.finishRetirement(device, reason)
+        }
+    }
+
+    /// R3 in one turn: the catch-all's output is zeroed (a hold reason of its own, so no other
+    /// reason reopens it), the phase says so, and the retirement tickets complete, so per-app
+    /// taps open only after the catch-all closed: at most one buffer of overlap or gap.
+    private func holdForRetirement(_ device: CatchAllDevice) {
+        guard device.phase == .retiring(caHeld: false) else { return }
+        device.holds.insert(.retirement)
+        for controller in device.controllers { setHeld(controller, true, uid: device.uid) }
+        device.phase = .retiring(caHeld: true)
+        logger.notice("Catch-all on \(device.uid, privacy: .public) held for retirement")
+        emit(.phase(uid: device.uid, .retiring(caHeld: true)))
+        checkWaiters()
+    }
+
+    /// R4 ended at the detach: the entry goes, and a later reconcile may build the device again.
+    private func finishRetirement(_ device: CatchAllDevice, _ reason: CatchAllRetireReason) {
+        // stop() ended it meanwhile (G)
+        guard devices[device.uid] === device else { return }
+        removeEntry(device)
+        logger.notice("Catch-all on \(device.uid, privacy: .public) retired (\(reason.rawValue, privacy: .public))")
+        emit(.ended(uid: device.uid, reason: reason.rawValue))
+        coverageEnded(device.uid, retired: reason)
+        checkWaiters()
+    }
+
+    /// Seam for the second half of failure handling: backoff (5/30/120 s), give-up and the
+    /// breaker start here. Until then the device has no entry after R4, and the next reconcile
+    /// builds it again if it is eligible.
+    private func coverageEnded(_ uid: String, retired reason: CatchAllRetireReason) {}
+
+    /// Seam for the second half of failure handling, which counts the failure here toward
+    /// backoff and the breaker (§16.6). For now it is only reported. Called only for failures
+    /// that count: never for G, a device that is not alive or an unreadable process list.
+    private func noteFailure(_ uid: String, _ failure: CatchAllFailure) {
+        emit(.failure(uid: uid, failure))
+    }
+
+    // MARK: End without promotion (G)
+
+    /// G (design §5 G, §16.4): for an absent device, at `stop()`, and for every retirement in
+    /// observe. No callback and nothing counted: each catch-all is held first (one atomic
+    /// store; §5 G detaches before the handovers, and a detach can wait behind a blocked run
+    /// queue), then the entry goes, so its waits complete (grow waiters release, shrink waiters
+    /// invalidate), and each catch-all is detached within the bound and destroyed once its
+    /// queued detach has run.
+    private func endCoverage(_ device: CatchAllDevice, reason: String) {
+        guard devices[device.uid] === device else { return }
+        for controller in device.controllers where !controller.renderState.held.load(ordering: .relaxed) {
+            setHeld(controller, true, uid: device.uid)
+        }
+        let entries = takeControllers(device, keepAside: false, timeoutCounts: false)
+        removeEntry(device)
+        logger.notice("Catch-all on \(device.uid, privacy: .public) ended without promotion (\(reason, privacy: .public))")
+        emit(.ended(uid: device.uid, reason: reason))
+        checkWaiters()
+        evaluateSettle()
+        guard !entries.isEmpty else { return }
+        Task { await self.detachAndDestroy(entries) }
+    }
+
+    /// Drops the device's entry and the work queued for it.
+    private func removeEntry(_ device: CatchAllDevice) {
+        guard devices[device.uid] === device else { return }
+        devices[device.uid] = nil
+        pendingRetirements[device.uid] = nil
+        pendingRebuilds[device.uid] = nil
+        cancelRebuildDeferral(device)
+    }
+
+    // MARK: Ending catch-alls
+
+    /// Takes the device's catch-alls out of service: the current one and, while a rebuild
+    /// waits to take over, the one it replaces. From here they are only detached and destroyed.
+    /// A detach timeout counts for R, not for G.
+    private func takeControllers(_ device: CatchAllDevice, keepAside: Bool, timeoutCounts: Bool) -> [EndingCatchAll] {
+        var entries: [EndingCatchAll] = []
+        if let controller = device.controller {
+            let entry = EndingCatchAll(uid: device.uid, controller: controller, attached: device.attached)
+            if keepAside { keep(entry) }
+            entries.append(entry)
+        }
+        // One held tap keeps an absent app silent; the replaced one goes at once
+        if let rebuild = device.rebuild, let old = rebuild.outgoing {
+            entries.append(EndingCatchAll(uid: device.uid, controller: old, attached: rebuild.outgoingAttached))
+        }
+        for entry in entries { entry.timeoutCounts = timeoutCounts }
+        device.controller = nil
+        device.attached = false
+        device.rebuild = nil
+        device.rebuildAgain = nil
+        device.pushes = []
+        ending.append(contentsOf: entries)
+        return entries
+    }
+
+    /// Detaches each catch-all within the run control's bound, then destroys it once its
+    /// queued detach has run and no keep-aside holds it. A detach that timed out stays queued:
+    /// the destroy waits until the run queue confirms it ran, so no start or stop there ever
+    /// hits destroyed IDs (§16.7).
+    private func detachAndDestroy(_ entries: [EndingCatchAll]) async {
+        for entry in entries {
+            if entry.attached {
+                guard await env.runControl.detach(entry.controller.ioHandle) else {
+                    detachTimedOut(entry)
+                    continue
+                }
+            }
+            entry.detached = true
+            destroyIfDone(entry)
+        }
+    }
+
+    /// A blocked run queue counts once (and never for G or after `stop()`) until it has run the
+    /// detaches that timed out: the old and the new catch-all of a rebuild wait on the same one.
+    private func detachTimedOut(_ entry: EndingCatchAll) {
+        let aggregate = entry.controller.ioHandle.aggregateID
+        logger.fault("Catch-all on \(entry.uid, privacy: .public) (aggregate \(aggregate)): the run queue did not detach it within its bound; destroying it once the queued detach has run")
+        stuckDetaches += 1
+        if entry.timeoutCounts, isStarted, !queueTimeoutCounted {
+            queueTimeoutCounted = true
+            noteFailure(entry.uid, .runQueueTimeout)
+        }
+        env.runControl.afterQueuedWork {
+            Task { @MainActor in self.queuedDetachRan(entry) }
+        }
+        // The replaced catch-all of a rebuild: the new one depends on the same blocked queue (§16.6)
+        if let device = entry.device, devices[entry.uid] === device, device.phase == .live {
+            queueRetirement(entry.uid, .runQueueTimeout)
+        }
+    }
+
+    private func queuedDetachRan(_ entry: EndingCatchAll) {
+        logger.notice("Catch-all on \(entry.uid, privacy: .public): its queued detach has run")
+        stuckDetaches -= 1
+        if stuckDetaches == 0 { queueTimeoutCounted = false }
+        entry.detached = true
+        destroyIfDone(entry)
+    }
+
+    private func destroyIfDone(_ entry: EndingCatchAll) {
+        guard entry.detached, !entry.keptAside, !entry.destroying else { return }
+        entry.destroying = true
+        let controller = entry.controller
+        Task {
+            await controller.destroy()
+            self.ending.removeAll { $0 === entry }
+        }
+    }
+
+    /// R4 with an absent app routed to the device (§16.6, §16.12 item 5): the held, detached
+    /// catch-all stays, so its muted tap keeps a returning app silent until the app's tap
+    /// exists. Unlisted sounds on the device are silent meanwhile.
+    private func keep(_ entry: EndingCatchAll) {
+        entry.keptAside = true
+        entry.keepTimer = env.clock.schedule(after: Self.keepAsideDelay) { [weak self] in
+            self?.keptAsideExpired(entry)
+        }
+    }
+
+    private func keptAsideExpired(_ entry: EndingCatchAll) {
+        entry.keepTimer = nil
+        guard entry.keptAside else { return }
+        // The check calls the engine, which spins: it runs in the next turn
+        pendingKeptChecks.append(entry)
+        scheduleTurn()
+    }
+
+    /// The keep-aside time ran out. The engine taps the apps that returned meanwhile, silent
+    /// ones included, without a hold (the kept catch-all is held); while an absent app is still
+    /// routed to the device, the catch-all stays another 30 s. A new catch-all covering the
+    /// device plays a returning app itself, and nothing plays to a device that went away, so
+    /// then nothing is tapped.
+    private func recheckKeptAside(_ entry: EndingCatchAll) {
+        guard entry.keptAside else { return }
+        if !isLive(entry.uid), !isAbsent(entry.uid), spinning({ onCoverageWillEnd?(entry.uid) ?? false }), entry.keptAside {
+            logger.notice("Catch-all on \(entry.uid, privacy: .public): an absent app is still routed here; its held catch-all stays another \(Self.keepAsideDelay, format: .fixed(precision: 0)) s")
+            keep(entry)
+            return
+        }
+        entry.keptAside = false
+        destroyIfDone(entry)
+    }
+
+    // MARK: Rebuild (E, §5 E)
+
+    /// Rebuilds the device's catch-all make before break (E) in the coordinator's next turn,
+    /// since the build spins. One rebuild per device at a time: a push failure during one is
+    /// served by it (the new catch-all gets the desired list); any other reason runs once more
+    /// after it took over, because its catch-all may have been built from stale facts.
+    /// `aggregate` names the catch-all a report is about; reports repeat for one aggregate
+    /// (§16.12 item 10), so one about an aggregate that is replaced or being replaced is served
+    /// already and dropped.
+    func rebuild(_ uid: String, reason: CatchAllRebuildReason, aggregate: AudioDeviceID? = nil) {
+        guard let device = devices[uid], device.phase == .live else { return }
+        if let aggregate {
+            // While the new catch-all builds, the one in service is the one being replaced
+            let replacing = device.rebuild.map { !$0.isWaiting } ?? false
+            guard aggregate == device.controller?.ioHandle.aggregateID, !replacing else { return }
+        }
+        if device.rebuild != nil {
+            if reason != .pushFailed, device.rebuildAgain == nil { device.rebuildAgain = reason }
+            return
+        }
+        // A deferred rebuild tries again on its own
+        guard pendingRebuilds[uid] == nil, device.rebuildDeferral == nil else { return }
+        pendingRebuilds[uid] = reason
+        scheduleTurn()
+    }
+
+    /// E steps 1-2: builds the new catch-all held with the list desired from the current
+    /// claims and attaches it. The device's generation counter stays, so every older ticket
+    /// resolves against the new catch-all; its waits end once it has taken over. If the build
+    /// fails: R on the old one; if the device went away: G.
+    private func performRebuild(_ uid: String, _ reason: CatchAllRebuildReason) {
+        guard isStarted, let device = devices[uid], device.phase == .live, device.rebuild == nil else { return }
+        guard !isAbsent(uid), let output = listedOutputs().first(where: { $0.uid == uid }) else {
+            // Absent: G, as the next reconcile would do
+            endCoverage(device, reason: "absent")
+            return
+        }
+        guard let processes = readProcesses() else {
+            deferRebuild(device, reason)
+            return
+        }
+        cancelRebuildDeferral(device)
+        logger.notice("Catch-all on \(uid, privacy: .public): rebuilding (\(reason.rawValue, privacy: .public))")
+        device.rebuild = RebuildState(reason: reason)
+        let exclusions = desiredList(for: uid, processes)
+        let generation = generations[uid, default: 0]
+
+        buildDepth += 1
+        let controller: CatchAllTapController
+        do {
+            controller = try CatchAllTapController.build(
+                deviceUID: uid, exclusions: exclusions, gain: env.gain(output.id),
+                held: true, observe: env.mode == .observe, backend: env.backend)
+        } catch {
+            buildDepth -= 1
+            // stop() during the wait ended the device with G: nothing is retired or counted
+            guard isStarted, devices[uid] === device else {
+                logger.notice("Catch-all on \(uid, privacy: .public) could not be rebuilt after it stopped being wanted: \(String(describing: error), privacy: .public)")
+                return
+            }
+            rebuildFailed(device, String(describing: error))
+            return
+        }
+        buildDepth -= 1
+
+        // stop(), G or a retirement during the wait: nobody wants the new catch-all
+        guard isStarted, devices[uid] === device, device.phase == .live, device.rebuild != nil,
+              pendingRetirements[uid] == nil else {
+            logger.notice("Catch-all on \(uid, privacy: .public) rebuilt after it stopped being wanted; destroying it")
+            if devices[uid] === device { device.rebuild = nil }
+            Task { await controller.destroy() }
+            return
+        }
+        let now = env.clock.now
+        device.rebuild?.outgoing = device.controller
+        device.rebuild?.outgoingAttached = device.attached
+        device.rebuild?.stage = .waiting(since: now, callbacks: controller.callbackCount)
+        device.controller = controller
+        device.attached = true
+        device.attachedAt = now
+        device.initialEscalated = false
+        device.deviceID = output.id
+        // The tap was created with this generation's list, so it applies without latency; the
+        // pushes recorded so far went to the old catch-all
+        device.settledGeneration = max(device.settledGeneration, generation)
+        device.pushes = []
+        device.holds.insert(.rebuild)
+        controller.setGain(env.gain(output.id))
+        logger.notice("Catch-all on \(uid, privacy: .public) rebuilt, held, excluding \(exclusions, privacy: .public)")
+        env.runControl.attach(controller.ioHandle, deviceID: controller.deviceID, excluded: Set(exclusions))
+        // Claims that changed during the wait are pushed to the new catch-all
+        scheduleFlush()
+        checkWaiters()
+    }
+
+    /// The new catch-all could not be built: R on the old one (fail open), and the failure
+    /// counts while the device is alive (E14). A device that went away meanwhile (the build
+    /// found no device for the UID) ends with G and counts nothing (E11).
+    private func rebuildFailed(_ device: CatchAllDevice, _ message: String) {
+        let reason = device.rebuild?.reason ?? .pushFailed
+        device.rebuild = nil
+        logger.error("Catch-all on \(device.uid, privacy: .public) could not be rebuilt: \(message, privacy: .public)")
+        emit(.buildFailed(uid: device.uid, reason: message))
+        guard !isAbsent(device.uid) else {
+            endCoverage(device, reason: "absent")
+            return
+        }
+        if env.isAlive(device.deviceID) { noteFailure(device.uid, .buildFailed) }
+        performRetirement(device.uid, Self.retireReason(after: reason))
+    }
+
+    /// Without a process list the new catch-all's exclusions are unknown. That is no build
+    /// failure and counts nothing: the old catch-all keeps serving and the rebuild tries again
+    /// shortly. Once the list stayed unreadable for the rebuild watchdog's time: R.
+    private func deferRebuild(_ device: CatchAllDevice, _ reason: CatchAllRebuildReason) {
+        let now = env.clock.now
+        let since = device.rebuildDeferral?.since ?? now
+        device.rebuildDeferral?.retry.cancel()
+        guard now + Self.tolerance < since + Self.rebuildWatchdog else {
+            device.rebuildDeferral = nil
+            fire(.rebuild, device.uid, "the process list stayed unreadable; retiring")
+            performRetirement(device.uid, Self.retireReason(after: reason))
+            return
+        }
+        if device.rebuildDeferral == nil {
+            logger.error("Catch-all on \(device.uid, privacy: .public): rebuild (\(reason.rawValue, privacy: .public)) postponed: the process list could not be read")
+        }
+        let retry = env.clock.schedule(after: Self.processListRetryDelay) { [weak self, weak device] in
+            guard let self, let device, self.devices[device.uid] === device, device.phase == .live,
+                  device.rebuildDeferral != nil else { return }
+            self.pendingRebuilds[device.uid] = reason
+            self.scheduleTurn()
+        }
+        device.rebuildDeferral = RebuildDeferral(since: since, retry: retry)
+    }
+
+    private func cancelRebuildDeferral(_ device: CatchAllDevice) {
+        device.rebuildDeferral?.retry.cancel()
+        device.rebuildDeferral = nil
+    }
+
+    private static func retireReason(after reason: CatchAllRebuildReason) -> CatchAllRetireReason {
+        reason == .pushFailed ? .pushFailed : .rebuildFailed
+    }
+
+    /// E steps 3-5: once the new catch-all has had its first callback (or 200 ms) and its list
+    /// covers every claim and has applied, the old one is held and then the new one opens:
+    /// two atomic stores, at most one buffer of silence and never an overlap. The old one is
+    /// then detached and destroyed. Waits on the device resolve against the new one from here.
+    /// The old one may be the only tap still holding a process whose claim ended while the new
+    /// one was built, so the new one must also exclude no live process without a claim, and
+    /// each push that removed exclusions must be past margin S.
+    private func completeRebuildIfReady(_ device: CatchAllDevice, now: Double, live: Set<AudioObjectID>?) {
+        guard device.phase == .live, let rebuild = device.rebuild, !rebuild.failed,
+              case .waiting(let since, let callbacks) = rebuild.stage,
+              let controller = device.controller, let live else { return }
+        let calledBack = controller.callbackCount != callbacks
+        let claims = activeClaims()
+        guard calledBack || now + Self.tolerance >= since + Self.firstCallbackWait,
+              listApplied(device, controller, live: live, claims: claims, now: now),
+              device.pushes.allSatisfy({ !$0.includes || now - $0.time + Self.tolerance >= env.shrinkMargin }),
+              excludesOnlyClaimed(device.uid, controller.appliedExclusions, live: live,
+                                  foreign: env.foreign(live), claims: claims) else { return }
+        if let old = rebuild.outgoing { setHeld(old, true, uid: device.uid) }
+        device.rebuild = nil
+        if device.holds.remove(.initialList) != nil {
+            logger.notice("Catch-all on \(device.uid, privacy: .public) released: its exclusion list applied")
+            emit(.released(uid: device.uid))
+        }
+        release(device, from: .rebuild)
+        logger.notice("Catch-all on \(device.uid, privacy: .public): the rebuilt catch-all took over (\(rebuild.reason.rawValue, privacy: .public))")
+        emit(.rebuilt(uid: device.uid))
+        if let old = rebuild.outgoing {
+            let entry = EndingCatchAll(uid: device.uid, controller: old, attached: rebuild.outgoingAttached)
+            entry.device = device
+            entry.timeoutCounts = true
+            ending.append(entry)
+            Task { await self.detachAndDestroy([entry]) }
+        }
+        if let again = device.rebuildAgain {
+            device.rebuildAgain = nil
+            self.rebuild(device.uid, reason: again)
+        }
+    }
+
+    // MARK: Watchdogs
+
+    /// The grow watchdog, `max(1 s, G + 0.6 s)` (§16.3).
+    private var growWatchdog: Double { max(1, env.growMargin + 0.6) }
+
+    private func watchdogLimit(_ direction: ApplyDirection) -> Double {
+        direction == .grow ? growWatchdog : Self.shrinkWatchdog
+    }
+
+    /// Schedules the coordinator tick at the next watchdog deadline; it runs only while a
+    /// wait, a retirement before R3, an initial hold or a rebuild is pending.
+    private func scheduleWatchdog() {
+        watchdogAction?.cancel()
+        watchdogAction = nil
+        var deadlines = waiters.map(\.deadline)
+        for device in devices.values {
+            if device.phase == .retiring(caHeld: false), let since = device.retiringSince {
+                deadlines.append(since + Self.retirementWatchdog)
+            }
+            if let since = rebuildWaitingSince(device) {
+                deadlines.append(since + Self.rebuildWatchdog)
+            }
+            if device.phase == .live, device.rebuild == nil, device.holds.contains(.initialList), !device.initialEscalated {
+                deadlines.append(device.attachedAt + growWatchdog)
+            }
+        }
+        guard let next = deadlines.min() else { return }
+        watchdogAction = env.clock.schedule(after: max(0, next - env.clock.now)) { [weak self] in
+            self?.runWatchdogs()
+        }
+    }
+
+    /// When a rebuilt catch-all was attached, while it waits to take over on a live device. A
+    /// retirement ends it, and the retirement watchdog bounds that.
+    private func rebuildWaitingSince(_ device: CatchAllDevice) -> Double? {
+        guard device.phase == .live, let rebuild = device.rebuild, !rebuild.failed,
+              case .waiting(let since, _) = rebuild.stage else { return nil }
+        return since
+    }
+
+    /// Ends what is stuck (§16.6 "Hold stuck"): R3 for a retirement, R for a rebuild that did
+    /// not take over, the push-failure path for a new catch-all still held, and each wait. A
+    /// flush already queued runs first, so no wait is judged on a list about to be pushed, and
+    /// then the regular check, so a takeover, release or wait that is ready now wins.
+    private func runWatchdogs() {
+        watchdogAction = nil
+        if let pending = flushAction {
+            pending.cancel()
+            flush()
+        }
+        checkWaiters()
+        let now = env.clock.now
+        func due(_ deadline: Double) -> Bool { now + Self.tolerance >= deadline }
+        for device in devices.values.sorted(by: { $0.uid < $1.uid }) {
+            if device.phase == .retiring(caHeld: false), let since = device.retiringSince,
+               due(since + Self.retirementWatchdog) {
+                fire(.retirement, device.uid, "R3 not reached; holding the catch-all and completing its retirement tickets")
+                holdForRetirement(device)
+            }
+            if let since = rebuildWaitingSince(device), let rebuild = device.rebuild, due(since + Self.rebuildWatchdog) {
+                fire(.rebuild, device.uid, "the rebuilt catch-all did not take over; retiring")
+                device.rebuild?.failed = true
+                queueRetirement(device.uid, Self.retireReason(after: rebuild.reason))
+            }
+            if device.phase == .live, device.rebuild == nil, device.holds.contains(.initialList),
+               !device.initialEscalated, due(device.attachedAt + growWatchdog) {
+                fire(.initialList, device.uid, "a new catch-all is still held for its list; rebuilding")
+                device.initialEscalated = true
+                pushStillFails(device)
+            }
+        }
+        checkStuckWaits(now: now)
+        scheduleWatchdog()
+    }
+
+    /// A wait past its watchdog stops waiting for each late device whose applied list already
+    /// holds the change (grow: the claims' live processes are excluded; shrink: no live
+    /// process is excluded without a claim). A missing change goes through the push-failure
+    /// path and is never released into doubling. A device that is building, rebuilding or
+    /// retiring is left to that, which its own watchdog bounds, without a fault. A device is
+    /// not judged yet while the process list is unreadable (up to `unreadableListGrace` past
+    /// the watchdog) or while a push the wait depends on is younger than G (for shrink, one
+    /// that removed exclusions). A wait that still waits is judged again later, so every wait
+    /// ends in bounded time.
+    private func checkStuckWaits(now: Double) {
+        guard waiters.contains(where: { now + Self.tolerance >= $0.deadline }) else { return }
+        let live = env.processList().map(Set.init)
+        let foreign = live.map { env.foreign($0) } ?? []
+        let claims = activeClaims()
+        var done: [Waiter] = []
+        var stuck: Set<String> = []
+        for index in waiters.indices where now + Self.tolerance >= waiters[index].deadline {
+            var waiter = waiters[index]
+            let limit = watchdogLimit(waiter.direction)
+            let lastChance = waiter.registered + limit + Self.unreadableListGrace
+            let kind: CatchAllWatchdog = waiter.direction == .grow ? .grow : .shrink
+            var next = now + limit
+            var waiting = false
+            for (uid, generation) in waiter.ticket.generations.sorted(by: { $0.key < $1.key })
+            where !waiter.inForce.contains(uid) && !isApplied(uid: uid, generation: generation, waiter.direction, now: now) {
+                guard let device = devices[uid], device.phase == .live, !isRebuilding(device),
+                      pendingRetirements[uid] == nil, let controller = device.controller else {
+                    waiting = true
+                    continue
+                }
+                if live == nil, now + Self.tolerance < lastChance {
+                    waiting = true
+                    next = min(next, lastChance)
+                    continue
+                }
+                // A read-back shows a push at once, but Core Audio applies it up to G later (G is
+                // twice the measured p99 latency, for an exclusion and an inclusion alike). Each
+                // guard waits at most G past the push, so it also holds past the last chance.
+                if let pushed = youngestRelevantPush(device, waiter.direction),
+                   now + Self.tolerance < pushed + env.growMargin {
+                    waiting = true
+                    next = min(next, pushed + env.growMargin)
+                    continue
+                }
+                if listInForce(device, controller, waiter.direction, live: live, foreign: foreign, claims: claims) {
+                    fire(kind, uid, "the list is in force; the wait no longer waits for it")
+                    waiter.inForce.insert(uid)
+                } else {
+                    fire(kind, uid, "the list lacks the change; rebuilding")
+                    stuck.insert(uid)
+                    waiting = true
+                }
+            }
+            if waiting {
+                waiter.deadline = next
+                waiters[index] = waiter
+            } else {
+                done.append(waiter)
+            }
+        }
+        waiters.removeAll { waiter in done.contains { $0.id == waiter.id } }
+        for uid in stuck.sorted() {
+            if let device = devices[uid] { pushStillFails(device) }
+        }
+        for waiter in done { waiter.continuation.resume() }
+    }
+
+    /// When the newest push that a wait in `direction` depends on returned: any push for grow,
+    /// one that removed exclusions for shrink (an inclusion not applied yet leaves the process
+    /// in neither tap once its per-app tap goes).
+    private func youngestRelevantPush(_ device: CatchAllDevice, _ direction: ApplyDirection) -> Double? {
+        switch direction {
+        case .grow: device.pushes.last?.time
+        case .shrink: device.pushes.last(where: \.includes)?.time
+        }
+    }
+
+    /// A rebuild of the device is in progress, queued or deferred.
+    private func isRebuilding(_ device: CatchAllDevice) -> Bool {
+        device.rebuild != nil || device.rebuildDeferral != nil || pendingRebuilds[device.uid] != nil
+    }
+
+    /// Whether the device's applied list already holds what a wait in `direction` needs.
+    private func listInForce(_ device: CatchAllDevice, _ controller: CatchAllTapController, _ direction: ApplyDirection,
+                             live: Set<AudioObjectID>?, foreign: Set<AudioObjectID>, claims: [Claim]) -> Bool {
+        switch direction {
+        case .grow:
+            let applied = Set(controller.appliedExclusions)
+            return claimed(device.uid, by: claims, live: live).union([selfObject]).isSubset(of: applied)
+        case .shrink:
+            return excludesOnlyClaimed(device.uid, controller.appliedExclusions, live: live, foreign: foreign, claims: claims)
+        }
+    }
+
+    /// Every exclusion of a live process (each one while the list is unreadable) is FineTune,
+    /// another user's process or held by a claim that covers the device: none is left
+    /// unprocessed.
+    private func excludesOnlyClaimed(_ uid: String, _ applied: [AudioObjectID], live: Set<AudioObjectID>?,
+                                     foreign: Set<AudioObjectID>, claims: [Claim]) -> Bool {
+        var allowed = foreign.union([selfObject])
+        for claim in claims where claim.covers(uid) { allowed.formUnion(claim.processes) }
+        return applied.allSatisfy { allowed.contains($0) || live?.contains($0) == false }
+    }
+
+    private func fire(_ watchdog: CatchAllWatchdog, _ uid: String, _ action: String) {
+        logger.fault("Catch-all \(watchdog.rawValue, privacy: .public) watchdog on \(uid, privacy: .public): \(action, privacy: .public)")
+        emit(.watchdog(uid: uid, watchdog))
     }
 
     // MARK: C9 settle state
@@ -886,30 +1768,112 @@ final class CatchAllCoordinator: CatchAllCoordinating {
 // MARK: - Coordinator state
 
 /// One device's catch-all.
+@MainActor
 private final class CatchAllDevice {
     let uid: String
     /// The listed ID (the device monitor's): gain is read and followed by it.
-    let deviceID: AudioDeviceID
+    var deviceID: AudioDeviceID
     var phase: CatchAllPhase = .building
+    /// The catch-all in service; during a rebuild the new one from its attach on.
     var controller: CatchAllTapController?
+    /// `controller` is attached to the run control (a dormant one is not).
+    var attached = false
+    /// When `controller` was attached; the initial-list watchdog counts from here.
+    var attachedAt: Double = 0
     /// Why its output is held; it opens when this is empty.
     var holds: Set<CatchAllHoldReason> = []
     /// Every generation up to this one applied in both directions.
     var settledGeneration: UInt64 = 0
-    /// Pushes that have not applied in both directions, oldest first.
+    /// Pushes to `controller` that have not applied in both directions, oldest first.
     var pushes: [PushRecord] = []
+    /// A make-before-break rebuild in progress (E).
+    var rebuild: RebuildState?
+    /// A rebuild asked for during `rebuild`; it runs once that one took over.
+    var rebuildAgain: CatchAllRebuildReason?
+    /// A rebuild that could not read the process list and tries again shortly.
+    var rebuildDeferral: RebuildDeferral?
+    /// The initial-list watchdog fired; a rebuild's attach resets it.
+    var initialEscalated = false
+    /// When R1 began.
+    var retiringSince: Double?
 
     init(uid: String, deviceID: AudioDeviceID) {
         self.uid = uid
         self.deviceID = deviceID
     }
+
+    /// The catch-all in service and, while a rebuild waits to take over, the one it replaces.
+    var controllers: [CatchAllTapController] {
+        [controller, rebuild?.outgoing].compactMap { $0 }
+    }
 }
 
-/// Why a catch-all's output is held. Failure handling adds the format and retirement holds,
-/// so ending one never opens an output another still holds.
+/// Why a catch-all's output is held, so ending one reason never opens an output another still
+/// holds. The second half of failure handling adds the format hold (E15).
 nonisolated private enum CatchAllHoldReason: Hashable {
     /// A new catch-all until its list covers every claim and has applied (E1).
     case initialList
+    /// A rebuilt catch-all until it takes over from the one it replaces (E).
+    case rebuild
+    /// From R3 on; nothing ends it.
+    case retirement
+}
+
+/// A make-before-break rebuild (E). From its attach on, the new catch-all is the device's
+/// `controller`; the one it replaces stays here until it is held and detached.
+private struct RebuildState {
+    enum Stage {
+        /// The new catch-all's build is waiting (it spins); the old one still serves.
+        case building
+        /// Attached held: takes over after its first callback (or 200 ms) and its list applied.
+        case waiting(since: Double, callbacks: UInt64)
+    }
+
+    let reason: CatchAllRebuildReason
+    var stage: Stage = .building
+    var outgoing: CatchAllTapController?
+    var outgoingAttached = false
+    /// The new catch-all cannot take over (a push to it failed, or its watchdog fired): R follows.
+    var failed = false
+
+    var isWaiting: Bool {
+        if case .waiting = stage { return true }
+        return false
+    }
+}
+
+/// A rebuild postponed because the process list could not be read.
+private struct RebuildDeferral {
+    /// When the first attempt found the list unreadable; R follows the rebuild watchdog's time later.
+    let since: Double
+    /// The next attempt.
+    let retry: CatchAllScheduledAction
+}
+
+/// A catch-all whose coverage ended (R4, G, or the replaced one of a rebuild), until it is
+/// destroyed: once its queued detach has run and no keep-aside holds it.
+@MainActor
+private final class EndingCatchAll {
+    let uid: String
+    let controller: CatchAllTapController
+    /// Attached when its coverage ended, so the run control must detach it first.
+    let attached: Bool
+    /// For the replaced catch-all of a rebuild: the device that still serves the UID.
+    weak var device: CatchAllDevice?
+    /// A detach timeout counts toward backoff and the breaker (R and E; not G).
+    var timeoutCounts = false
+    /// The run queue has detached it (or it was never attached).
+    var detached = false
+    /// Held for an absent app (R4); destroyed when this ends.
+    var keptAside = false
+    var keepTimer: CatchAllScheduledAction?
+    var destroying = false
+
+    init(uid: String, controller: CatchAllTapController, attached: Bool) {
+        self.uid = uid
+        self.controller = controller
+        self.attached = attached
+    }
 }
 
 nonisolated private struct ProcessSnapshot {
@@ -923,6 +1887,8 @@ nonisolated private struct PushRecord {
     var time: Double
     /// The catch-all's callback count when the push returned.
     var callbacks: UInt64
+    /// The push removed exclusions: their processes are captured only after margin S.
+    var includes: Bool
 }
 
 nonisolated private enum GrowState: Equatable {
@@ -941,8 +1907,16 @@ private struct ClaimEntry {
 }
 
 private struct Waiter {
+    let id: Int
     let ticket: ApplyTicket
     let direction: ApplyDirection
+    /// When the wait began.
+    let registered: Double
+    /// When its watchdog judges it next: first after the watchdog's time, then again while
+    /// it waits for a rebuild, a retirement or a build, or for a judgeable list.
+    var deadline: Double
+    /// Devices its watchdog found with the change in force: the wait no longer waits for them.
+    var inForce: Set<String> = []
     let continuation: CheckedContinuation<Void, Never>
 }
 
