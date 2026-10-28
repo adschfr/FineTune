@@ -272,6 +272,9 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                 let resolvedApp = isRealApp ? directApp : findResponsibleApp(for: pid, in: runningAppsByPID)
                 let parentPID = resolvedApp?.processIdentifier ?? pid
                 let isHelper = parentPID != pid
+                // Processes FineTune starts itself (e.g. the catch-all harness's test tones)
+                // belong to FineTune, which never lists or taps itself
+                guard parentPID != myPID else { continue }
 
                 // Use resolved app's info, fall back to Core Audio bundle ID
                 let name = resolvedApp?.localizedName

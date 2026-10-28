@@ -36,6 +36,8 @@ nonisolated struct CatchAllSettings {
 /// Measurements on the user's Mac that decide whether the catch-all can be turned on
 /// (design §12.3). Each step names what it verifies.
 nonisolated enum CatchAllHarnessStep: String, CaseIterable, Sendable {
+    /// Listening control: three plain tones that must be audible (checks the audio path).
+    case l0 = "L0"
     /// Build an observing catch-all: build time, assigned tap UID, exclusive read-back.
     case h0 = "H0"
     /// A process that starts after the catch-all exists is captured from its first buffer.
@@ -44,8 +46,13 @@ nonisolated enum CatchAllHarnessStep: String, CaseIterable, Sendable {
     case h2 = "H2"
     /// FineTune's own output (in-process sound, per-app tap output) is not captured.
     case h3 = "H3"
+    /// Listening: plain tones held back by a running muted catch-all must be inaudible.
+    case h1m = "H1M"
     /// Resume latency of a stopped catch-all when a covered process starts playing.
     case h7 = "H7"
+    /// Listening: plain tones held back by a stopped muted catch-all must be inaudible,
+    /// including their onset while it resumes.
+    case h7m = "H7M"
     /// Core Audio reports IsRunningOutput and the output device of a muted process.
     case h8 = "H8"
 

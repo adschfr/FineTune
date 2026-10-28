@@ -49,6 +49,8 @@ struct CatchAllSettingsTests {
         #expect(CatchAllHarnessStep.parse("all") == CatchAllHarnessStep.allCases)
         #expect(CatchAllHarnessStep.parse("ALL") == CatchAllHarnessStep.allCases)
         #expect(CatchAllHarnessStep.parse("H0,H2") == [.h0, .h2])
+        #expect(CatchAllHarnessStep.parse("l0,h1m,H7M") == [.l0, .h1m, .h7m])
+        #expect(CatchAllHarnessStep.allCases.first == .l0)
         #expect(CatchAllHarnessStep.parse(" h1 , H8 ") == [.h1, .h8])
         #expect(CatchAllHarnessStep.parse("H0,H99") == [.h0])
         #expect(CatchAllHarnessStep.parse("nothing") == nil)

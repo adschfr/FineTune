@@ -27,6 +27,9 @@ final class CatchAllHarness {
     private let reportURL: URL
     private let toneURL: URL
     private let longToneURL: URL
+    private let plainToneURL: URL
+    private let panel = HarnessPanel()
+    private var verdicts: [String] = []
 
     init(target: Target, backend: any CatchAllBackend = CoreAudioCatchAllBackend()) {
         self.target = target
@@ -37,6 +40,7 @@ final class CatchAllHarness {
         let temp = FileManager.default.temporaryDirectory
         toneURL = temp.appendingPathComponent("finetune-harness-tone.wav")
         longToneURL = temp.appendingPathComponent("finetune-harness-tone-long.wav")
+        plainToneURL = temp.appendingPathComponent("finetune-harness-tone-plain.wav")
     }
 
     /// Checks the preconditions and runs `steps`. Clears the request first, so a crash
@@ -69,37 +73,120 @@ final class CatchAllHarness {
     }
 
     func run(_ steps: [CatchAllHarnessStep]) async {
+        panel.show()
         report("Catch-all harness: \(steps.map(\.rawValue).joined(separator: ",")) on \(target.uid), self object \(target.selfObject)")
         do {
             try HarnessTone.write(to: toneURL, seconds: 0.6, rampSeconds: HarnessTone.onsetRampSeconds)
             try HarnessTone.write(to: longToneURL, seconds: 12)
+            try HarnessTone.write(to: plainToneURL, seconds: 0.4)
         } catch {
             report("ABORT: could not write test tones: \(error.localizedDescription)")
+            panel.finish(summary: "Abgebrochen: Testtöne konnten nicht geschrieben werden.")
             save()
             return
         }
+        await panel.announce(step: "Vorbereitung", headline: "Prüfe, ob gerade etwas spielt",
+                             detail: "Bitte nichts abspielen, bis die Messung fertig ist.", expectation: .info, seconds: 2)
         guard await isQuiet() else {
             report("ABORT: other audio is playing. Stop all playback and request the harness again.")
+            panel.finish(summary: "Abgebrochen: Es lief gerade anderer Ton. Wiedergabe stoppen und neu anfordern.")
             save()
             return
         }
-        for step in steps {
+        for (index, step) in steps.enumerated() {
+            let label = "Schritt \(index + 1) von \(steps.count): \(step.rawValue)"
             report("--- \(step.rawValue)")
             switch step {
-            case .h0: await h0Build()
-            case .h1: await h1NewProcessCaptured()
-            case .h2: await h2ExclusionUpdates()
-            case .h3: await h3SelfNotCaptured()
-            case .h7: await h7ResumeLatency()
-            case .h8: await h8MutedProcessReports()
+            case .l0: await l0Control(label)
+            case .h0: await automated(label, "Aufbau der Catch-all", "Kein Ton.", .info) { await h0Build() }
+            case .h1: await automated(label, "Neue Prozesse erfassen", "Zehn leise Töne, hörbar ist normal.", .info) { await h1NewProcessCaptured() }
+            case .h2: await automated(label, "Ausschlussliste live ändern", "Ein leiser Dauerton, hörbar ist normal.", .info) { await h2ExclusionUpdates() }
+            case .h3: await automated(label, "Eigener Ton wird nicht erfasst", "Leise Töne, hörbar ist normal.", .info) { await h3SelfNotCaptured() }
+            case .h1m: await h1mHeldRunning(label)
+            case .h7: await automated(label, "Wiederanlauf messen", "Zehn zurückgehaltene Töne.", .silent) { await h7ResumeLatency() }
+            case .h7m: await h7mHeldStopped(label)
+            case .h8: await automated(label, "Gehaltener Prozess meldet Gerät", "Ein zurückgehaltener Ton.", .silent) { await h8MutedProcessReports() }
             }
             save()
         }
         report("Done")
+        panel.finish(summary: verdicts.joined(separator: "\n"))
         save()
     }
 
+    /// Runs a measuring step and shows it in the panel while it runs.
+    private func automated(_ label: String, _ headline: String, _ detail: String,
+                           _ expectation: HarnessPanelModel.Expectation, _ body: () async -> Void) async {
+        await panel.announce(step: label, headline: headline, detail: detail, expectation: expectation, seconds: 1)
+        panel.playing(true)
+        await body()
+        panel.playing(false)
+    }
+
+    /// Counts down, plays, then asks the user what they heard and records the answer.
+    private func listen(_ label: String, headline: String, detail: String,
+                        expectation: HarnessPanelModel.Expectation, play: () async -> Void) async -> String {
+        await panel.announce(step: label, headline: headline, detail: detail, expectation: expectation)
+        panel.playing(true)
+        await play()
+        let answer = await panel.ask("Was hast du gehört?", options: ["Nichts gehört", "Kurzes Knacken", "Ton gehört"])
+        report("\(label): user heard: \(answer)")
+        return answer
+    }
+
     // MARK: - Steps
+
+    private func l0Control(_ label: String) async {
+        let answer = await listen(label, headline: "Kontrollton",
+                                  detail: "Drei kurze Töne bei 10 %, ohne Catch-all. Sie sollten hörbar sein.",
+                                  expectation: .audible) {
+            for _ in 1...3 {
+                if let player = HarnessPlayer.start(plainToneURL, volume: 0.1) { await player.wait() }
+                try? await Task.sleep(for: .milliseconds(600))
+            }
+        }
+        verdict(answer == "Ton gehört", "L0 control tones audible (audio path works)")
+    }
+
+    private func h1mHeldRunning(_ label: String) async {
+        guard let ca = try? build(observe: false, held: true, exclusions: [target.selfObject]), await startIO(ca) else {
+            return verdict(false, "H1M (catch-all could not start)")
+        }
+        let answer = await listen(label, headline: "Laufende Catch-all hält zurück",
+                                  detail: "Fünf kurze Töne bei 10 %. Die Catch-all hält sie zurück: Es sollte NICHTS zu hören sein, auch kein Knacken.",
+                                  expectation: .silent) {
+            for _ in 1...5 {
+                if let player = HarnessPlayer.start(plainToneURL, volume: 0.1) { await player.wait() }
+                try? await Task.sleep(for: .milliseconds(800))
+            }
+        }
+        await stopIO(ca)
+        await ca.destroy()
+        verdict(answer == "Nichts gehört", "H1M running catch-all holds plain tones back (user heard nothing)")
+    }
+
+    private func h7mHeldStopped(_ label: String) async {
+        guard let ca = try? build(observe: false, held: true, exclusions: [target.selfObject]) else {
+            return verdict(false, "H7M (catch-all could not be built)")
+        }
+        var logic = CatchAllRunLogic()
+        logic.suspendDelay = 1
+        let control = CatchAllRunControl(source: HALProcessOutputActivitySource(), backend: backend, logic: logic)
+        control.attach(ca.ioHandle, deviceID: target.deviceID, excluded: [target.selfObject])
+        control.start()
+        let answer = await listen(label, headline: "Catch-all startet aus dem Stillstand",
+                                  detail: "Fünf kurze Töne bei 10 %, jeweils nachdem die Catch-all angehalten hat. Es sollte NICHTS zu hören sein; ein Knacken am Tonanfang wäre ein Leck.",
+                                  expectation: .silent) {
+            for _ in 1...5 {
+                _ = await poll(timeout: 5, { !control.sync { $0.anyRunning } })
+                if let player = HarnessPlayer.start(plainToneURL, volume: 0.1) { await player.wait() }
+            }
+        }
+        await control.detach(target.uid)
+        control.stop()
+        await ca.destroy()
+        verdict(answer == "Nichts gehört", "H7M stopped catch-all holds plain tones back, onset included (user heard nothing)")
+    }
 
     private func h0Build() async {
         var failures = 0
@@ -360,11 +447,14 @@ final class CatchAllHarness {
     private func format(_ value: Double) -> String { String(format: "%.1f", value) }
 
     private func verdict(_ passed: Bool, _ what: String) {
-        report("\(passed ? "PASS" : "FAIL"): \(what)")
+        let line = "\(passed ? "PASS" : "FAIL"): \(what)"
+        verdicts.append(line)
+        report(line)
     }
 
     private func report(_ line: String) {
         lines.append(line)
+        panel.log(line)
         logger.notice("\(line, privacy: .public)")
     }
 
