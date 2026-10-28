@@ -366,7 +366,7 @@ final class AudioEngine {
                 self.deviceVolumeMonitor.start()
 
                 // Catch-all measurements, once, only when requested in the fork's defaults
-                if CatchAllSettings().harnessSteps != nil {
+                if CatchAllSettings().harnessRequested {
                     Task { @MainActor [self] in
                         try? await Task.sleep(for: .seconds(3))
                         await CatchAllHarness.runIfRequested(

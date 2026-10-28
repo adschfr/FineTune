@@ -9,6 +9,7 @@ nonisolated struct CatchAllSettings {
     static let modeKey = "CatchAllMode"
     static let excludedDevicesKey = "CatchAllExcludedDeviceUIDs"
     static let harnessKey = "CatchAllHarness"
+    static let pendingH9Key = "CatchAllHarnessPendingH9"
 
     private let defaults: UserDefaults
 
@@ -30,6 +31,43 @@ nonisolated struct CatchAllSettings {
     var harnessSteps: [CatchAllHarnessStep]? {
         guard let value = defaults.string(forKey: Self.harnessKey) else { return nil }
         return CatchAllHarnessStep.parse(value)
+    }
+
+    /// Whether the harness runs at this launch: steps are requested or an H9 answer is pending.
+    var harnessRequested: Bool {
+        harnessSteps != nil || pendingH9 != nil
+    }
+
+    /// The kill check H9 waiting for its answer in the launch after the kill, nil when none
+    /// is pending or the stored data is unreadable.
+    var pendingH9: CatchAllPendingH9? {
+        guard let data = defaults.data(forKey: Self.pendingH9Key) else { return nil }
+        return try? PropertyListDecoder().decode(CatchAllPendingH9.self, from: data)
+    }
+
+    static func storePendingH9(_ record: CatchAllPendingH9, in defaults: UserDefaults) throws {
+        defaults.set(try PropertyListEncoder().encode(record), forKey: pendingH9Key)
+    }
+
+    static func clearPendingH9(in defaults: UserDefaults) {
+        defaults.removeObject(forKey: pendingH9Key)
+    }
+}
+
+/// Written right before H9 kills FineTune: when it was killed and on which output, so the
+/// relaunched app can ask at once when the held tone became audible.
+nonisolated struct CatchAllPendingH9: Codable, Equatable, Sendable {
+    /// The relaunch takes seconds. A record found later (FineTune started by hand, or an older
+    /// copy came up and ignored it) no longer tells how fast the tone came back.
+    static let maxAge: TimeInterval = 120
+
+    let killTime: Date
+    let deviceUID: String
+
+    /// Whether an answer asked at `now` still counts for gate G1.
+    func isFresh(at now: Date) -> Bool {
+        let age = now.timeIntervalSince(killTime)
+        return age >= 0 && age <= Self.maxAge
     }
 }
 
@@ -55,15 +93,24 @@ nonisolated enum CatchAllHarnessStep: String, CaseIterable, Sendable {
     case h7m = "H7M"
     /// Core Audio reports IsRunningOutput and the output device of a muted process.
     case h8 = "H8"
+    /// Kill check, the gate for mode on: FineTune is killed with SIGKILL while a muted
+    /// catch-all holds a tone, which must become audible at once. The kill ends the run, so
+    /// H9 always runs last and is not part of "all".
+    case h9 = "H9"
 
-    /// "all", or a comma-separated list of step names; unknown names are ignored. nil if
-    /// nothing valid remains.
+    /// "all" (every step except H9), or a comma-separated list of step names; unknown names
+    /// are ignored and H9 moves to the end. nil if nothing valid remains.
     static func parse(_ value: String) -> [CatchAllHarnessStep]? {
         let trimmed = value.trimmingCharacters(in: .whitespaces)
-        if trimmed.lowercased() == "all" { return allCases }
+        if trimmed.lowercased() == "all" { return allCases.filter { $0 != .h9 } }
         let steps = trimmed.split(separator: ",").compactMap {
             CatchAllHarnessStep(rawValue: $0.trimmingCharacters(in: .whitespaces).uppercased())
         }
-        return steps.isEmpty ? nil : steps
+        return steps.isEmpty ? nil : killCheckLast(steps)
+    }
+
+    /// `steps` with H9 moved to the end (once), the order of the others kept.
+    static func killCheckLast(_ steps: [CatchAllHarnessStep]) -> [CatchAllHarnessStep] {
+        steps.filter { $0 != .h9 } + (steps.contains(.h9) ? [.h9] : [])
     }
 }
