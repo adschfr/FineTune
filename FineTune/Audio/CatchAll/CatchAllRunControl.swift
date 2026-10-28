@@ -17,6 +17,7 @@ nonisolated enum ProcessActivityEvent: Sendable, Equatable {
 /// drive it without Core Audio.
 nonisolated protocol ProcessOutputActivitySource: AnyObject, Sendable {
     func processList() -> [AudioObjectID]
+    func isRunning(_ process: AudioObjectID) -> Bool
     func isRunningOutput(_ process: AudioObjectID) -> Bool
     func outputDevices(_ process: AudioObjectID) -> ProcessOutputDevices
     /// Starts delivering events on `queue`.
@@ -152,12 +153,23 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
         for process in appeared { refresh(process) }
     }
 
-    private func refresh(_ process: AudioObjectID) {
+    /// Delays of the follow-up reads for a process that runs IO but reports no output yet.
+    static let followUpDelays: [Double] = [0.01, 0.03, 0.1]
+
+    private func refresh(_ process: AudioObjectID, followUp: Bool = true) {
         guard observed.contains(process) else { return }
         if logic.deviceFilterEnabled {
             apply(logic.setOutputDevices(process, source.outputDevices(process), now: now()))
         }
-        apply(logic.setRunningOutput(process, source.isRunningOutput(process), now: now()))
+        let runningOutput = source.isRunningOutput(process)
+        apply(logic.setRunningOutput(process, runningOutput, now: now()))
+        // Core Audio notifies IsRunning but not IsRunningOutput, and the two can flip a few
+        // milliseconds apart: read again shortly when the process runs but shows no output yet
+        if followUp, !runningOutput, source.isRunning(process) {
+            for delay in Self.followUpDelays {
+                queue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.refresh(process, followUp: false) }
+            }
+        }
     }
 
     private func detachOnQueue(_ uid: String) {
@@ -253,6 +265,10 @@ nonisolated final class HALProcessOutputActivitySource: ProcessOutputActivitySou
         (try? AudioObjectID.readProcessList()) ?? []
     }
 
+    func isRunning(_ process: AudioObjectID) -> Bool {
+        process.readProcessIsRunning()
+    }
+
     func isRunningOutput(_ process: AudioObjectID) -> Bool {
         ProcessIdentity.isRunningOutput(process)
     }
@@ -277,7 +293,11 @@ nonisolated final class HALProcessOutputActivitySource: ProcessOutputActivitySou
     func observe(_ process: AudioObjectID, devices: Bool) {
         guard let queue, let handler, processListeners[process] == nil else { return }
         var listeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
-        var selectors = [(kAudioProcessPropertyIsRunningOutput, kAudioObjectPropertyScopeGlobal)]
+        // IsRunningOutput itself posts no change notifications (measured on macOS 27.2);
+        // IsRunning does, so it triggers the re-read. IsRunningOutput stays registered in case
+        // a later macOS posts it.
+        var selectors = [(kAudioProcessPropertyIsRunning, kAudioObjectPropertyScopeGlobal),
+                         (kAudioProcessPropertyIsRunningOutput, kAudioObjectPropertyScopeGlobal)]
         if devices { selectors.append((kAudioProcessPropertyDevices, kAudioObjectPropertyScopeOutput)) }
         for (selector, scope) in selectors {
             var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)

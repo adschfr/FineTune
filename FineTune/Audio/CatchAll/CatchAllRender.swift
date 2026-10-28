@@ -29,6 +29,8 @@ nonisolated final class CatchAllRenderState: @unchecked Sendable {
     // Written by the IO thread, read elsewhere
     let lastCallbackHostTime = Atomic<UInt64>(0)
     let lastAudibleHostTime = Atomic<UInt64>(0)
+    /// Input peak of the latest buffer (Float bits), for on-device measurements.
+    let lastPeakBits = Atomic<UInt32>(0)
     let callbackCount = Atomic<UInt64>(0)
 
     let rt: UnsafeMutablePointer<RTScalars>
@@ -113,6 +115,7 @@ nonisolated enum CatchAllRender {
         }
         let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         let (peak, frames) = ProcessTapController.inputPeak(inputBuffers)
+        state.lastPeakBits.store(peak.bitPattern, ordering: .relaxed)
         if peak > audibleThreshold {
             state.lastAudibleHostTime.store(hostTime, ordering: .relaxed)
         }

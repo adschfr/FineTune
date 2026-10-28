@@ -66,4 +66,19 @@ struct CatchAllSettingsTests {
         let bits = UInt16(data[34]) | UInt16(data[35]) << 8
         #expect(channels == 1 && rate == 48_000 && bits == 16)
     }
+
+    @Test("The onset tone fades in linearly over 200 ms")
+    func toneRamp() {
+        let data = HarnessTone.data(seconds: 0.5, rampSeconds: HarnessTone.onsetRampSeconds)
+        func peak(fromMs: Int, toMs: Int) -> Int {
+            (fromMs * 48..<toMs * 48).map { i -> Int in
+                let offset = 44 + i * 2
+                return abs(Int(Int16(bitPattern: UInt16(data[offset]) | UInt16(data[offset + 1]) << 8)))
+            }.max() ?? 0
+        }
+        let full = Double(Int16.max) * 0.8
+        #expect(Double(peak(fromMs: 0, toMs: 10)) < full * 0.06)
+        #expect(abs(Double(peak(fromMs: 95, toMs: 105)) / full - 0.5) < 0.05)
+        #expect(Double(peak(fromMs: 250, toMs: 300)) > full * 0.99)
+    }
 }
