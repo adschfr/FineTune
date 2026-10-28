@@ -925,6 +925,7 @@ final class ProcessTapController: ProcessTapControlling {
         for (tapID, description) in [(primaryResources.tapID, primaryResources.tapDescription),
                                      (secondaryResources.tapID, secondaryResources.tapDescription)] {
             guard tapID.isValid, let description else { continue }
+            let previousProcesses = description.processes
             description.processes = newApp.processObjectIDs
             var address = AudioObjectPropertyAddress(
                 mSelector: kAudioTapPropertyDescription,
@@ -937,6 +938,8 @@ final class ProcessTapController: ProcessTapControlling {
             }
             if err != noErr {
                 logger.warning("Updating tap processes failed for \(self.app.name): OSStatus \(err)")
+                // Keep the stored description equal to what the tap holds (liveCapture)
+                description.processes = previousProcesses
                 succeeded = false
             }
         }
@@ -944,6 +947,23 @@ final class ProcessTapController: ProcessTapControlling {
             logger.info("Tap for \(self.app.name) now covers \(newApp.processObjectIDs.count) process object(s)")
         }
         return succeeded
+    }
+
+    // MARK: - Live Capture
+
+    var liveCapture: [TapCapture] {
+        [primaryResources, secondaryResources].compactMap { resources in
+            guard resources.tapID.isValid else { return nil }
+            return Self.capture(of: resources.tapDescription)
+        }
+    }
+
+    /// What a per-app tap description captures: its processes, on one device's stream or,
+    /// for the mixdown tap, on every device. Exclusive descriptions are not per-app taps.
+    nonisolated static func capture(of description: CATapDescription?) -> TapCapture? {
+        guard let description, !description.isExclusive else { return nil }
+        let coverage: TapCoverage = description.deviceUID.map { .device($0) } ?? .allDevices
+        return TapCapture(processes: Set(description.processes), coverage: coverage)
     }
 
     /// Tears down the tap and releases all CoreAudio resources.

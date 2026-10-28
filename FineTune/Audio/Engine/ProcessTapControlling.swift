@@ -42,6 +42,10 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func suspend()
     func resume() throws
     func updateProcesses(for newApp: AudioApp) -> Bool
+
+    /// What the tap's live Core Audio taps hold muted right now (primary and, during a
+    /// device switch, secondary). The catch-all only excludes processes a live tap holds.
+    var liveCapture: [TapCapture] { get }
 }
 
 extension ProcessTapControlling {
@@ -79,6 +83,9 @@ extension ProcessTapControlling {
     func suspend() {}
     func resume() throws {}
     func updateProcesses(for newApp: AudioApp) -> Bool { true }
+
+    /// Claims nothing, so the catch-all excludes nothing for this tap.
+    var liveCapture: [TapCapture] { [] }
 
     func hasOutputSampleRateMismatch() -> Bool { false }
 
