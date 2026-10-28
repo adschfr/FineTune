@@ -1370,6 +1370,13 @@ A third read-only review of §16 against the code found the following. Each item
 7. **Phase guards (minor, commit 12).** Every E12 entry point (run-queue failure posts, start failures, `deviceListRefreshed`, the dormant timer, the IsAlive listener) returns early for a retiring device and re-checks after R4. Entering retiring from dormant removes the alive listener and stops the 2 s check. Flush and the I1 checker skip dormant and retiring CAs; a push failure on a dormant CA is not acted on.
 8. **C9 when output starts with an empty Devices list (minor, commits 9 and 11).** The run queue posts IsRunningOutput together with the Devices classification, deduplicated on the pair, and the 500 ms settle timer starts when either value changes.
 9. **Commit boundaries and test seams (minor).** Retirement tickets, the dormant waiter rule and their test-4 assertions move to commit 12 and test 5. The coordinator's injected environment gains `isAlive(AudioDeviceID)`, `observeAlive(AudioDeviceID, handler) -> token` and `tapExists(UUID) -> Bool`. Engine wiring tests use an unstarted `AudioDeviceMonitor()` to reach rows 9, 10, 27 and 28. `enum CatchAllEvent: Sendable` is declared in `CatchAllCoordinator.swift` (commit 11).
+10. **Run-control limits accepted after commit 9** (two review rounds; none audible on the user's single TV):
+    - A missed IsRunning falling edge while a CA runs keeps it running until the next notification or until the process quits. Power only; a periodic re-read while running (e.g. 30 s) is the fix if the start logs show it.
+    - With two software outputs, a missed rising edge for a stopped CA is not re-read while the other CA runs (the 3 s re-read runs only while all are stopped). The 100 ms poll for capped processes does run while any CA is stopped.
+    - The 120 s cap restarts with each IO session, so a daemon that cycles its IO can keep the CA running. The start log now names the process that needed the CA ("for process N (listed IO)"), which shows whether this happens.
+    - C9 relies on notifications: output that starts under an unchanged empty Devices list without an IsRunning edge is not reported, and a missed Devices notification is not re-read.
+    - Removing a listener block from inside its own block is unmeasured; the ServiceRestarted re-registration is deferred to the next queue turn.
+    - Coordinator contracts (commit 11/12): `onRebuild` can repeat for one aggregate (deduplicate); `stop()` is never called from a run-control callback; after `onServiceRestarted` the coordinator re-sends the listed set, detaches every handle built before the restart and tolerates a start or rebuild failure that arrives before the call.
 
 ### 16.13 Gate G1: H9 result (2026-10-28, build 757)
 
