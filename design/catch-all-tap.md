@@ -850,3 +850,15 @@ Facts established on the device (they update §2):
 - **F10/F11**: `AudioDeviceStart` on the catch-all takes 12–18 ms.
 
 Consequence for handover A (a per-app tap takes over a process the catch-all already plays): with a 130 ms grow margin plus the 40 ms gate, a playing sound dips for about 170 ms once. The quiet-point handover (§5 A5) avoids the dip for short sounds and should default to on.
+
+### 15.1 Listening check (2026-10-28, build 752)
+
+Run with the visible harness panel: each step announced with a countdown, the user answered right after it.
+
+| Step | Setup | Expected | User heard | Verdict |
+|---|---|---|---|---|
+| L0 | three plain tones at 10 %, no catch-all | audible | tone | pass (audio path works) |
+| H1M | running muted catch-all, five plain tones at 10 % | nothing | nothing | pass |
+| H7M | stopped muted catch-all, five plain tones at 10 %, each after the catch-all suspended (log: five resumes) | nothing, no onset click | nothing | pass |
+
+Plain tones have no fade-in, so a leak at the onset would have been an audible click. The catch-all holds audio back from the first sample, also while it resumes from a stop. Earlier runs could not show this by ear: FineTune merged its own afplay test processes into a "FineTune Fork" app entry and tapped them, fixed in `e22a935`.
