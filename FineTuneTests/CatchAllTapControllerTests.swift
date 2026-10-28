@@ -1,0 +1,222 @@
+// FineTuneTests/CatchAllTapControllerTests.swift
+//
+// Build, exclusion push and teardown of the catch-all tap against a recording fake
+// backend. No Core Audio objects are created.
+
+import AudioToolbox
+import Foundation
+import Synchronization
+import Testing
+@testable import FineTune
+
+/// Records every backend call; can fail any step.
+nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendable {
+    enum Step: Equatable { case createTap, readBack, createAggregate, ready, ioProc, setDescription }
+
+    private let lock = NSLock()
+    private var _log: [String] = []
+    private var _processes: [AudioObjectID] = []
+    private var _aggregate: [String: Any] = [:]
+    var failAt: Step?
+    var readBackOverride: [AudioObjectID]?
+
+    var log: [String] { lock.withLock { _log } }
+    var aggregateDescription: [String: Any] { lock.withLock { _aggregate } }
+    private func record(_ entry: String) { lock.withLock { _log.append(entry) } }
+
+    func deviceID(forUID uid: String) -> AudioDeviceID? { uid == "uid-tv" ? 42 : nil }
+    func firstOutputStreamIndex(of device: AudioDeviceID) throws -> UInt { 0 }
+    func tapDriftCompensation(for device: AudioDeviceID) -> Bool { true }
+
+    func createTap(_ description: CATapDescription) throws -> AudioObjectID {
+        record("createTap")
+        if failAt == .createTap { throw CatchAllBackendError(status: -50) }
+        lock.withLock { _processes = description.processes }
+        return 100
+    }
+
+    func readTapUID(_ tap: AudioObjectID) -> String? { "tap-uid-assigned" }
+
+    func readTapDescription(_ tap: AudioObjectID) -> CATapDescription? {
+        record("readBack")
+        let processes = readBackOverride ?? lock.withLock { _processes }
+        if failAt == .readBack { return nil }
+        let description = CATapDescription(excludingProcesses: processes, deviceUID: "uid-tv", stream: 0)
+        description.isExclusive = true
+        return description
+    }
+
+    func setTapDescription(_ description: CATapDescription, on tap: AudioObjectID) throws {
+        record("set \(description.processes)")
+        if failAt == .setDescription { throw CatchAllBackendError(status: -10) }
+        lock.withLock { _processes = description.processes }
+    }
+
+    func createAggregate(_ description: [String: Any]) throws -> AudioDeviceID {
+        record("createAggregate")
+        if failAt == .createAggregate { throw CatchAllBackendError(status: -20) }
+        lock.withLock { _aggregate = description }
+        return 200
+    }
+
+    func waitUntilReady(_ aggregate: AudioDeviceID, timeout: TimeInterval) -> Bool {
+        record("ready")
+        return failAt != .ready
+    }
+
+    func nominalSampleRate(_ device: AudioDeviceID) -> Double? { 48_000 }
+
+    func createIOProc(on aggregate: AudioDeviceID, clientData: UnsafeMutableRawPointer) throws -> AudioDeviceIOProcID {
+        record("ioProc")
+        if failAt == .ioProc { throw CatchAllBackendError(status: -30) }
+        return catchAllIOProc
+    }
+
+    func disableHardwareInputs(on aggregate: AudioDeviceID, proc: AudioDeviceIOProcID) { record("disableInputs") }
+    func start(_ aggregate: AudioDeviceID, _ proc: AudioDeviceIOProcID) -> OSStatus { record("start"); return noErr }
+    func stop(_ aggregate: AudioDeviceID, _ proc: AudioDeviceIOProcID) -> OSStatus { record("stop"); return noErr }
+
+    func destroy(_ resources: CatchAllResources, completion: @escaping @Sendable () -> Void) {
+        record("destroy tap=\(resources.tapID) aggregate=\(resources.aggregateID) proc=\(resources.procID != nil)")
+        completion()
+    }
+}
+
+@Suite("Catch-all tap controller")
+@MainActor
+struct CatchAllTapControllerTests {
+
+    private func build(_ backend: FakeCatchAllBackend, exclusions: [AudioObjectID] = [5, 11]) throws -> CatchAllTapController {
+        try CatchAllTapController.build(deviceUID: "uid-tv", exclusions: exclusions, gain: 0.25,
+                                        held: false, observe: false, backend: backend)
+    }
+
+    @Test("Build order: tap, read-back, aggregate, ready, IO proc, inputs; IO is not started")
+    func buildOrder() throws {
+        let backend = FakeCatchAllBackend()
+
+        let controller = try build(backend)
+
+        #expect(backend.log == ["createTap", "readBack", "createAggregate", "ready", "ioProc", "disableInputs"])
+        #expect(controller.appliedExclusions == [5, 11])
+        #expect(controller.deviceID == 42)
+        #expect(controller.renderState.targetGain == 0.25)
+    }
+
+    @Test("The aggregate plays the tap UID that Core Audio assigned")
+    func aggregateUsesAssignedTapUID() throws {
+        let backend = FakeCatchAllBackend()
+
+        _ = try build(backend)
+
+        let taps = try #require(backend.aggregateDescription[kAudioAggregateDeviceTapListKey] as? [[String: Any]])
+        #expect(taps.first?[kAudioSubTapUIDKey] as? String == "tap-uid-assigned")
+    }
+
+    @Test("A failure at any step tears down what exists and creates nothing more", arguments: [
+        FakeCatchAllBackend.Step.readBack, .createAggregate, .ready, .ioProc,
+    ])
+    func failureTearsDown(step: FakeCatchAllBackend.Step) {
+        let backend = FakeCatchAllBackend()
+        backend.failAt = step
+
+        #expect(throws: CatchAllTapController.BuildError.self) { try build(backend) }
+
+        let destroys = backend.log.filter { $0.hasPrefix("destroy") }
+        #expect(destroys.count == 1)
+        #expect(destroys.first?.contains("tap=100") == true)
+        #expect(backend.log.last?.hasPrefix("destroy") == true)
+        #expect(!backend.log.contains("start"))
+    }
+
+    @Test("A tap that cannot be created leaves nothing to tear down")
+    func tapFailure() {
+        let backend = FakeCatchAllBackend()
+        backend.failAt = .createTap
+
+        #expect(throws: CatchAllTapController.BuildError.tapFailed(-50)) { try build(backend) }
+        #expect(backend.log == ["createTap"])
+    }
+
+    @Test("A read-back that differs from the requested exclusions fails the build")
+    func readBackMismatch() {
+        let backend = FakeCatchAllBackend()
+        backend.readBackOverride = [5]
+
+        #expect(throws: CatchAllTapController.BuildError.descriptionMismatch) { try build(backend) }
+    }
+
+    @Test("A push sets the new list and verifies it")
+    func pushVerifies() throws {
+        let backend = FakeCatchAllBackend()
+        let controller = try build(backend)
+
+        #expect(controller.push([5, 11, 12]))
+
+        #expect(controller.appliedExclusions == [5, 11, 12])
+        #expect(backend.log.suffix(2) == ["set [5, 11, 12]", "readBack"])
+    }
+
+    @Test("An unchanged list is not pushed")
+    func unchangedNotPushed() throws {
+        let backend = FakeCatchAllBackend()
+        let controller = try build(backend)
+        let before = backend.log.count
+
+        #expect(controller.push([5, 11]))
+        #expect(backend.log.count == before)
+    }
+
+    @Test("A failed or mismatched push keeps the applied list")
+    func failedPushKeepsList() throws {
+        let backend = FakeCatchAllBackend()
+        let controller = try build(backend)
+
+        backend.failAt = .setDescription
+        #expect(!controller.push([5, 11, 12]))
+        #expect(controller.appliedExclusions == [5, 11])
+
+        backend.failAt = nil
+        backend.readBackOverride = [5]
+        #expect(!controller.push([5, 11, 12]))
+        #expect(controller.appliedExclusions == [5, 11])
+    }
+
+    @Test("Gain and hold reach the render state")
+    func gainAndHold() throws {
+        let controller = try build(FakeCatchAllBackend())
+
+        controller.setGain(0.5)
+        controller.hold()
+        let heldAfterHold = controller.renderState.held.load(ordering: .relaxed)
+        #expect(controller.renderState.targetGain == 0.5)
+        #expect(heldAfterHold)
+
+        controller.release()
+        let heldAfterRelease = controller.renderState.held.load(ordering: .relaxed)
+        #expect(!heldAfterRelease)
+    }
+
+    @Test("Destroy tears down every resource once")
+    func destroyOnce() async throws {
+        let backend = FakeCatchAllBackend()
+        let controller = try build(backend)
+
+        await controller.destroy()
+        await controller.destroy()
+
+        #expect(backend.log.filter { $0.hasPrefix("destroy") } == ["destroy tap=100 aggregate=200 proc=true"])
+        #expect(!controller.push([5]))
+    }
+
+    @Test("Forget drops the controller without destroy calls")
+    func forget() async throws {
+        let backend = FakeCatchAllBackend()
+        let controller = try build(backend)
+
+        controller.forget()
+        await controller.destroy()
+
+        #expect(!backend.log.contains { $0.hasPrefix("destroy") })
+    }
+}
