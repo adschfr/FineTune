@@ -1,10 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-# Builds the fork with an ad-hoc signature and installs it as
-# "/Applications/FineTune Fork.app", replacing a previous fork install.
+# Builds the fork and installs it as "/Applications/FineTune Fork.app", replacing a
+# previous fork install.
 #
-# Hardened runtime is off: an ad-hoc signature has no Team ID, so library
+# Signing: with a valid "Apple Development" identity in the keychain (a free Personal
+# Team in Xcode is enough) the app is signed with it. Its designated requirement then
+# names the certificate instead of the build's hash, so macOS keeps the audio-capture
+# and Accessibility permissions across builds. Without one it falls back to an ad-hoc
+# signature, and those permissions have to be granted again after every build.
+#
+# Hardened runtime stays off: an ad-hoc signature has no Team ID, so library
 # validation would reject the embedded Sparkle.framework at launch.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,13 +27,29 @@ fi
 BUILD_NUMBER="$(git -C "$PROJECT_DIR" rev-list --count HEAD)"
 COMMIT="$(git -C "$PROJECT_DIR" rev-parse --short HEAD)"
 
+# The Team ID is read from the certificate, so it never has to be stored in the repository
+SIGNING=(CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=)
+IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' | head -1)"
+if [ -n "$IDENTITY" ]; then
+    TEAM_ID="$(security find-certificate -c "$IDENTITY" -p 2>/dev/null \
+        | openssl x509 -noout -subject -nameopt multiline 2>/dev/null \
+        | sed -n 's/^ *organizationalUnitName *= *//p' | head -1)"
+    if [ -n "$TEAM_ID" ]; then
+        SIGNING=(CODE_SIGN_IDENTITY="$IDENTITY" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$TEAM_ID")
+        echo "==> Signing with the Apple Development certificate (team $TEAM_ID)"
+    fi
+fi
+if [ "${SIGNING[0]}" = "CODE_SIGN_IDENTITY=-" ]; then
+    echo "==> No valid Apple Development certificate, signing ad hoc (permissions must be granted again)"
+fi
+
 echo "==> Building $APP_NAME (build $BUILD_NUMBER, $COMMIT)..."
 xcodebuild -project "$PROJECT_DIR/FineTune.xcodeproj" \
     -scheme FineTune \
     -configuration Release \
     -derivedDataPath "$BUILD_DIR" \
     -destination 'platform=macOS' \
-    CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
+    "${SIGNING[@]}" \
     ENABLE_HARDENED_RUNTIME=NO \
     MARKETING_VERSION="1.9.0-fork" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
