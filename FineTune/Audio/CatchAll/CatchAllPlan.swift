@@ -41,13 +41,11 @@ nonisolated enum CatchAllPlan {
         }
     }
 
-    /// Whether a per-app tap must hold its output during a handover: only if its app may play
-    /// to a changed catch-all device. An empty or unknown output list, or a device that is
-    /// not a plain hardware output, counts as possibly playing there.
-    static func needsHold(changed: Set<String>, appOutputUIDs: Set<String>?, isPlain: (String) -> Bool) -> Bool {
-        guard !changed.isEmpty else { return false }
-        guard let appOutputUIDs, !appOutputUIDs.isEmpty else { return true }
-        return appOutputUIDs.contains { changed.contains($0) || !isPlain($0) }
+    /// Whether a per-app tap must hold its output during a handover: only if a changed
+    /// catch-all device is one of its targets (its output UIDs, old and new during a switch).
+    /// Doubling on a device the tap does not play to is inaudible (I2, design §16.4).
+    static func holds(changed: Set<String>, targets: Set<String>) -> Bool {
+        !changed.isDisjoint(with: targets)
     }
 
     /// A stream tap captures only its device. While catch-alls exist, a per-app tap may use a
