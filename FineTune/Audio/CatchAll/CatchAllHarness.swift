@@ -71,7 +71,7 @@ final class CatchAllHarness {
     func run(_ steps: [CatchAllHarnessStep]) async {
         report("Catch-all harness: \(steps.map(\.rawValue).joined(separator: ",")) on \(target.uid), self object \(target.selfObject)")
         do {
-            try HarnessTone.write(to: toneURL, seconds: 0.6)
+            try HarnessTone.write(to: toneURL, seconds: 0.6, rampSeconds: HarnessTone.onsetRampSeconds)
             try HarnessTone.write(to: longToneURL, seconds: 12)
         } catch {
             report("ABORT: could not write test tones: \(error.localizedDescription)")
@@ -122,27 +122,23 @@ final class CatchAllHarness {
         guard let ca = try? build(observe: true, exclusions: [target.selfObject]), await startIO(ca) else {
             return verdict(false, "H1 (catch-all could not start)")
         }
-        var deltas: [Double] = []
-        var missed = 0
+        var missing: [Double] = []
+        var failed = 0
         for _ in 1...10 {
             let baseline = ca.renderState.lastAudibleHostTime.load(ordering: .relaxed)
             guard let player = HarnessPlayer.start(toneURL, volume: 0.02),
-                  let object = await processObject(of: player),
-                  let rise = await poll(timeout: 2, { ProcessIdentity.isRunningOutput(object) }) else {
-                missed += 1
+                  let lost = await missingOnset(ca, after: baseline) else {
+                failed += 1
                 continue
             }
-            if let heard = await poll(timeout: 1, { ca.renderState.lastAudibleHostTime.load(ordering: .relaxed) > baseline }) {
-                deltas.append(max(0, (heard - rise).milliseconds))
-            } else {
-                missed += 1
-            }
+            missing.append(lost)
             await player.wait()
         }
-        report("output start → first audible catch-all buffer: \(stats(deltas)), missed \(missed)")
+        report("running catch-all: tone onset missing \(stats(missing)), not heard \(failed)")
         await stopIO(ca)
         await ca.destroy()
-        verdict(missed == 0 && percentile(deltas, 0.95) <= 25, "H1 new processes captured from the first buffers (p95 ≤ 25 ms)")
+        verdict(failed == 0 && percentile(missing, 0.95) <= 15,
+                "H1 new processes captured from their first samples (onset missing p95 ≤ 15 ms)")
     }
 
     private func h2ExclusionUpdates() async {
@@ -222,27 +218,25 @@ final class CatchAllHarness {
         let control = CatchAllRunControl(source: HALProcessOutputActivitySource(), backend: backend, logic: logic)
         control.attach(ca.ioHandle, deviceID: target.deviceID, excluded: [target.selfObject])
         control.start()
-        var deltas: [Double] = []
-        var missed = 0
+        var missing: [Double] = []
+        var failed = 0
         for _ in 1...10 {
             // Let the catch-all suspend between runs
-            _ = await poll(timeout: 4, { !control.sync { $0.anyRunning } })
+            _ = await poll(timeout: 5, { !control.sync { $0.anyRunning } })
             let baseline = ca.renderState.lastAudibleHostTime.load(ordering: .relaxed)
             guard let player = HarnessPlayer.start(toneURL, volume: 0.05),
-                  let object = await processObject(of: player),
-                  let rise = await poll(timeout: 2, { ProcessIdentity.isRunningOutput(object) }),
-                  let heard = await poll(timeout: 1, { ca.renderState.lastAudibleHostTime.load(ordering: .relaxed) > baseline }) else {
-                missed += 1
+                  let lost = await missingOnset(ca, after: baseline) else {
+                failed += 1
                 continue
             }
-            deltas.append(max(0, (heard - rise).milliseconds))
+            missing.append(lost)
             await player.wait()
         }
         await control.detach(target.uid)
         control.stop()
         await ca.destroy()
-        report("stopped catch-all: output start → first audible buffer: \(stats(deltas)), missed \(missed) (tones were held, nothing should have been audible)")
-        verdict(missed == 0 && percentile(deltas, 0.95) < 50, "H7 resume latency (p95 < 50 ms)")
+        report("stopped catch-all: tone onset lost while resuming \(stats(missing)), not heard \(failed) (tones were held, nothing should have been audible)")
+        verdict(failed == 0 && percentile(missing, 0.95) <= 50, "H7 resume from a stopped catch-all (onset lost p95 ≤ 50 ms)")
     }
 
     private func h8MutedProcessReports() async {
@@ -302,6 +296,26 @@ final class CatchAllHarness {
             return object != AudioObjectID(kAudioObjectUnknown)
         })
         return object == AudioObjectID(kAudioObjectUnknown) ? nil : object
+    }
+
+    /// How many milliseconds of a ramped test tone's fade-in the catch-all missed: the ramp
+    /// reaches 90 % after 180 ms, so the time from the first audible buffer to the 90 % point
+    /// tells how late capture started (about ±1 buffer). nil if the tone was not heard.
+    private func missingOnset(_ ca: CatchAllTapController, after baseline: UInt64) async -> Double? {
+        let state = ca.renderState
+        guard let first = await poll(timeout: 2, { state.lastAudibleHostTime.load(ordering: .relaxed) > baseline }) else {
+            return nil
+        }
+        var samples: [(ContinuousClock.Instant, Float)] = []
+        let end = first + .milliseconds(450)
+        while ContinuousClock.now < end {
+            samples.append((.now, Float(bitPattern: state.lastPeakBits.load(ordering: .relaxed))))
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        guard let peak = samples.map(\.1).max(), peak > 0,
+              let reached = samples.first(where: { $0.1 >= 0.9 * peak })?.0 else { return nil }
+        let rampToNinety = HarnessTone.onsetRampSeconds * 0.9 * 1000
+        return max(0, rampToNinety - (reached - first).milliseconds)
     }
 
     /// Polls every millisecond; returns the instant `condition` first held, or nil on timeout.
@@ -368,7 +382,10 @@ private extension Duration {
 
 /// A 440 Hz sine test tone as 16-bit mono WAV.
 nonisolated enum HarnessTone {
-    static func data(seconds: Double, sampleRate: Int = 48_000, frequency: Double = 440) -> Data {
+    /// Fade-in of the short test tone, used to measure how much of a sound's start is lost.
+    static let onsetRampSeconds = 0.2
+
+    static func data(seconds: Double, rampSeconds: Double = 0, sampleRate: Int = 48_000, frequency: Double = 440) -> Data {
         let frames = Int(seconds * Double(sampleRate))
         var data = Data(capacity: 44 + frames * 2)
         func append<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
@@ -377,15 +394,17 @@ nonisolated enum HarnessTone {
         append(UInt32(16)); append(UInt16(1)); append(UInt16(1)); append(UInt32(sampleRate))
         append(UInt32(sampleRate * 2)); append(UInt16(2)); append(UInt16(16))
         data.append(contentsOf: Array("data".utf8)); append(UInt32(frames * 2))
+        let rampFrames = rampSeconds * Double(sampleRate)
         for i in 0..<frames {
-            let sample = sin(2 * .pi * frequency * Double(i) / Double(sampleRate)) * 0.8
+            let ramp = rampFrames > 0 ? min(1, Double(i) / rampFrames) : 1
+            let sample = sin(2 * .pi * frequency * Double(i) / Double(sampleRate)) * 0.8 * ramp
             append(Int16(sample * Double(Int16.max)))
         }
         return data
     }
 
-    static func write(to url: URL, seconds: Double) throws {
-        try data(seconds: seconds).write(to: url, options: .atomic)
+    static func write(to url: URL, seconds: Double, rampSeconds: Double = 0) throws {
+        try data(seconds: seconds, rampSeconds: rampSeconds).write(to: url, options: .atomic)
     }
 }
 

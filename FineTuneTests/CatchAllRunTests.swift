@@ -157,13 +157,16 @@ nonisolated final class FakeActivitySource: ProcessOutputActivitySource, @unchec
     private let lock = NSLock()
     private var _processes: [AudioObjectID] = []
     private var _running: Set<AudioObjectID> = []
+    private var _runningIO: Set<AudioObjectID> = []
     private var _observed: Set<AudioObjectID> = []
     private var handler: (@Sendable (ProcessActivityEvent) -> Void)?
 
     var observed: Set<AudioObjectID> { lock.withLock { _observed } }
 
-    func set(processes: [AudioObjectID], running: Set<AudioObjectID>) {
-        lock.withLock { _processes = processes; _running = running }
+    /// `running`: processes with active output; `runningIO`: processes that report IsRunning
+    /// (defaults to the ones with output).
+    func set(processes: [AudioObjectID], running: Set<AudioObjectID>, runningIO: Set<AudioObjectID>? = nil) {
+        lock.withLock { _processes = processes; _running = running; _runningIO = runningIO ?? running }
     }
 
     func send(_ event: ProcessActivityEvent) {
@@ -172,6 +175,7 @@ nonisolated final class FakeActivitySource: ProcessOutputActivitySource, @unchec
     }
 
     func processList() -> [AudioObjectID] { lock.withLock { _processes } }
+    func isRunning(_ process: AudioObjectID) -> Bool { lock.withLock { _runningIO.contains(process) } }
     func isRunningOutput(_ process: AudioObjectID) -> Bool { lock.withLock { _running.contains(process) } }
     func outputDevices(_ process: AudioObjectID) -> ProcessOutputDevices { .unknown }
     func start(on queue: DispatchQueue, handler: @escaping @Sendable (ProcessActivityEvent) -> Void) {
@@ -317,6 +321,25 @@ struct CatchAllRunControlTests {
         rig.source.send(.processListChanged)
         rig.flush()
         #expect(rig.backend.log == ["start", "stop"])
+    }
+
+    @Test("A process that runs IO before it reports output is picked up without a notification")
+    func followUpReadCatchesLateOutput() async {
+        // Core Audio notifies IsRunning but not IsRunningOutput
+        let rig = makeRig()
+        rig.control.attach(rig.handle, deviceID: 42, excluded: [5])
+        rig.control.start()
+        rig.flush()
+
+        rig.source.set(processes: [5, 11], running: [], runningIO: [11])
+        rig.source.send(.processChanged(11))
+        rig.flush()
+        #expect(rig.backend.log.isEmpty)
+
+        rig.source.set(processes: [5, 11], running: [11], runningIO: [11])
+        try? await Task.sleep(for: .milliseconds(200))
+        rig.flush()
+        #expect(rig.backend.log == ["start"])
     }
 
     @Test("An abnormal IO stop asks for a rebuild")
