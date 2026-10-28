@@ -144,6 +144,16 @@ final class HarnessPanel {
         model.detail = detail
         model.expectation = expectation
         model.isPlaying = false
+        await count(down: seconds)
+    }
+
+    /// Counts down while a tone keeps playing, e.g. to the H9 kill.
+    func countdown(_ headline: String, seconds: Int) async {
+        model.headline = headline
+        await count(down: seconds)
+    }
+
+    private func count(down seconds: Int) async {
         for remaining in stride(from: seconds, to: 0, by: -1) {
             model.countdown = remaining
             try? await Task.sleep(for: .seconds(1))
