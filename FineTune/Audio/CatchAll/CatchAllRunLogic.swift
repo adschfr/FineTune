@@ -82,10 +82,13 @@ nonisolated struct CatchAllRunLogic: Sendable {
     var suspendDelay: Double = 10
     /// A running IO with no callback for this long while needed counts as a missed check.
     var livenessTimeout: Double = 1
+    /// Default of `ioOnlyCap`, overridable through `CatchAllSettings.ioOnlyCap`.
+    static let defaultIOOnlyCap: Double = 120
+
     /// Seconds an unlisted process's IO counts without output (E3); after that its
     /// IsRunningOutput is polled while a catch-all is stopped, and at each tick while one
     /// runs and the process shows output.
-    var ioOnlyCap: Double = 120
+    var ioOnlyCap: Double = CatchAllRunLogic.defaultIOOnlyCap
     /// Timer intervals: the check while a catch-all runs, the poll of capped processes
     /// while one is stopped, and the safety re-read while all are stopped (§16.3).
     var tickInterval: Double = 2

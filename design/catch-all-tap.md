@@ -936,7 +936,7 @@ nonisolated enum TapDecision: Sendable, Equatable { case coveredByCatchAll, tap(
 
 | # | Condition | Source |
 |---|---|---|
-| C1 | `catchAll.covers(D)` (mode on, breaker closed, CA(D) live or dormant) | coordinator, §16.4 |
+| C1 | `catchAll.isLive(D)` (CA(D) live or dormant, in observe as in on); the caller adds `affectsAudio`, so observe logs "would cover" | coordinator, §16.4 |
 | C2 | `volumeState.getDeviceSelectionMode(p) == .single` | `VolumeState.swift:126` |
 | C3 | `settingsManager.isFollowingDefault(i)`; persisted explicit routing gets a tap, also when it names D or while the app is moved to the default, because only tapped apps move back on reconnect (`AudioEngine.swift:1702-1720`) | `SettingsManager.swift:281-283` |
 | C4 | `abs(getVolume(p) * getBoost(p).rawValue - 1) <= 0.001`. The state is seeded with `defaultNewAppVolume` when a pid is first seen, so changing that default affects only pids seen afterwards | `VolumeState.swift:33-34, 63, 204-207` |

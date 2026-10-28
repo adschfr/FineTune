@@ -10,6 +10,16 @@ nonisolated struct CatchAllSettings {
     static let excludedDevicesKey = "CatchAllExcludedDeviceUIDs"
     static let harnessKey = "CatchAllHarness"
     static let pendingH9Key = "CatchAllHarnessPendingH9"
+    static let growMarginKey = "CatchAllGrowMarginMs"
+    static let shrinkMarginKey = "CatchAllShrinkMarginMs"
+    static let ioOnlyCapKey = "CatchAllIOOnlyCapSeconds"
+
+    /// G: the wait after a push that excludes processes before it counts as applied (design
+    /// §4.6, §16.3); twice the slowest live update measured in §15.
+    static let defaultGrowMargin: TimeInterval = 0.130
+    /// S: the same after a push that un-excludes processes. The per-app tap still holds them,
+    /// so a longer wait costs nothing audible.
+    static let defaultShrinkMargin: TimeInterval = 0.400
 
     private let defaults: UserDefaults
 
@@ -25,6 +35,28 @@ nonisolated struct CatchAllSettings {
     /// Outputs that never get a catch-all.
     var excludedDeviceUIDs: Set<String> {
         Set(defaults.stringArray(forKey: Self.excludedDevicesKey) ?? [])
+    }
+
+    /// G in seconds; the key holds milliseconds.
+    var growMargin: TimeInterval {
+        Self.positive(defaults.double(forKey: Self.growMarginKey) / 1000) ?? Self.defaultGrowMargin
+    }
+
+    /// S in seconds; the key holds milliseconds.
+    var shrinkMargin: TimeInterval {
+        Self.positive(defaults.double(forKey: Self.shrinkMarginKey) / 1000) ?? Self.defaultShrinkMargin
+    }
+
+    /// Seconds an unlisted process's IO without output counts as needing the catch-all before
+    /// its output is polled instead (E3, `CatchAllRunLogic.ioOnlyCap`).
+    var ioOnlyCap: TimeInterval {
+        Self.positive(defaults.double(forKey: Self.ioOnlyCapKey)) ?? CatchAllRunLogic.defaultIOOnlyCap
+    }
+
+    /// nil for a missing, non-numeric, non-positive or infinite value (`double(forKey:)`
+    /// reads the first two as 0), so the caller uses its default.
+    private static func positive(_ value: Double) -> Double? {
+        value.isFinite && value > 0 ? value : nil
     }
 
     /// Harness steps to run once at launch (e.g. "all" or "H0,H1"), nil when not requested.

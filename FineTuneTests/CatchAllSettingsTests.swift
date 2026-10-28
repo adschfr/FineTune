@@ -1,8 +1,9 @@
 // FineTuneTests/CatchAllSettingsTests.swift
 //
-// Catch-all settings live in the fork's defaults domain and default to off; the harness
-// runs only for explicitly requested steps, and the H9 kill check only when named. Uses an
-// isolated defaults suite. Nothing here spawns the H9 helper or plays a tone.
+// Catch-all settings live in the fork's defaults domain and default to off; timing
+// overrides fall back to their defaults when invalid; the harness runs only for explicitly
+// requested steps, and the H9 kill check only when named. Uses an isolated defaults suite.
+// Nothing here spawns the H9 helper or plays a tone.
 
 import Foundation
 import Testing
@@ -11,8 +12,10 @@ import Testing
 @Suite("Catch-all settings and harness parsing")
 struct CatchAllSettingsTests {
 
-    private func makeDefaults() -> UserDefaults {
-        let name = "FineTuneTests-CatchAll-\(UUID().uuidString)"
+    /// One domain per test, emptied before use. Removing a domain leaves its plist behind, so
+    /// the name is stable across runs and each test reuses one file instead of adding one.
+    private func makeDefaults(_ test: String = #function) -> UserDefaults {
+        let name = "FineTuneTests-CatchAll-\(test.prefix { $0 != "(" })"
         let defaults = UserDefaults(suiteName: name)!
         defaults.removePersistentDomain(forName: name)
         return defaults
@@ -38,6 +41,47 @@ struct CatchAllSettingsTests {
         #expect(CatchAllSettings(defaults: defaults).excludedDeviceUIDs.isEmpty)
         defaults.set(["uid-tv", "uid-hdmi2"], forKey: CatchAllSettings.excludedDevicesKey)
         #expect(CatchAllSettings(defaults: defaults).excludedDeviceUIDs == ["uid-tv", "uid-hdmi2"])
+    }
+
+    @Test("Margins and the IO-only cap default to 130 ms, 400 ms and 120 s")
+    func timingDefaults() {
+        let settings = CatchAllSettings(defaults: makeDefaults())
+        #expect(settings.growMargin == 0.130)
+        #expect(settings.shrinkMargin == 0.400)
+        #expect(settings.ioOnlyCap == 120)
+        // The run logic's own default is the same constant
+        #expect(CatchAllRunLogic().ioOnlyCap == settings.ioOnlyCap)
+    }
+
+    @Test("Margins are read in milliseconds, the cap in seconds")
+    func timingOverrides() {
+        let defaults = makeDefaults()
+        defaults.set(200, forKey: CatchAllSettings.growMarginKey)
+        defaults.set(650.5, forKey: CatchAllSettings.shrinkMarginKey)
+        defaults.set(30, forKey: CatchAllSettings.ioOnlyCapKey)
+        let settings = CatchAllSettings(defaults: defaults)
+        #expect(settings.growMargin == 0.2)
+        #expect(settings.shrinkMargin == 0.6505)
+        #expect(settings.ioOnlyCap == 30)
+
+        // `defaults write … -string 250` stores a string
+        defaults.set("250", forKey: CatchAllSettings.growMarginKey)
+        #expect(CatchAllSettings(defaults: defaults).growMargin == 0.25)
+    }
+
+    @Test("Zero, negative, infinite and non-numeric values fall back to the defaults")
+    func timingInvalid() {
+        let defaults = makeDefaults()
+        let invalid: [Any] = [0, -50, Double.infinity, "fast", ["130"]]
+        for value in invalid {
+            defaults.set(value, forKey: CatchAllSettings.growMarginKey)
+            defaults.set(value, forKey: CatchAllSettings.shrinkMarginKey)
+            defaults.set(value, forKey: CatchAllSettings.ioOnlyCapKey)
+            let settings = CatchAllSettings(defaults: defaults)
+            #expect(settings.growMargin == CatchAllSettings.defaultGrowMargin)
+            #expect(settings.shrinkMargin == CatchAllSettings.defaultShrinkMargin)
+            #expect(settings.ioOnlyCap == CatchAllRunLogic.defaultIOOnlyCap)
+        }
     }
 
     @Test("No harness unless requested")

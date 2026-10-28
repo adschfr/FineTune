@@ -68,26 +68,26 @@ struct CatchAllPlanHandoverTests {
         #expect(CatchAllPlan.changedDevices(before: .empty, after: before, catchAllUIDs: ["uid-tv"]) == ["uid-tv"])
     }
 
-    @Test("No changed device needs no hold")
-    func noChangeNoHold() {
-        #expect(!CatchAllPlan.needsHold(changed: [], appOutputUIDs: nil, isPlain: { _ in true }))
+    @Test("A tap holds when a changed catch-all device is one of its targets")
+    func overlappingTargetsHold() {
+        #expect(CatchAllPlan.holds(changed: ["uid-tv"], targets: ["uid-tv"]))
+        // During a switch the targets are the old and the new output
+        #expect(CatchAllPlan.holds(changed: ["uid-tv"], targets: ["uid-airpods", "uid-tv"]))
+        #expect(CatchAllPlan.holds(changed: ["uid-tv", "uid-hdmi2"], targets: ["uid-hdmi2"]))
     }
 
-    @Test("An unknown or empty output list counts as possibly playing to the device")
-    func unknownOutputHolds() {
-        #expect(CatchAllPlan.needsHold(changed: ["uid-tv"], appOutputUIDs: nil, isPlain: { _ in true }))
-        #expect(CatchAllPlan.needsHold(changed: ["uid-tv"], appOutputUIDs: [], isPlain: { _ in true }))
+    @Test("A tap whose targets are all unchanged does not hold, even if it captures the changed device")
+    func disjointTargetsDoNotHold() {
+        // A mixdown tap on the AirPods changes the TV's list; doubling on the TV is inaudible
+        #expect(!CatchAllPlan.holds(changed: ["uid-tv"], targets: ["uid-airpods"]))
+        #expect(!CatchAllPlan.holds(changed: ["uid-tv", "uid-hdmi2"], targets: ["uid-airpods", "uid-speakers"]))
     }
 
-    @Test("An app playing to the changed device holds, one playing elsewhere does not")
-    func outputDecides() {
-        #expect(CatchAllPlan.needsHold(changed: ["uid-tv"], appOutputUIDs: ["uid-tv"], isPlain: { _ in true }))
-        #expect(!CatchAllPlan.needsHold(changed: ["uid-tv"], appOutputUIDs: ["uid-airpods"], isPlain: { _ in true }))
-    }
-
-    @Test("An app playing to an aggregate or virtual device holds")
-    func nonPlainOutputHolds() {
-        #expect(CatchAllPlan.needsHold(changed: ["uid-tv"], appOutputUIDs: ["uid-aggregate"], isPlain: { $0 != "uid-aggregate" }))
+    @Test("No changed device or no target means no hold")
+    func emptySetsDoNotHold() {
+        #expect(!CatchAllPlan.holds(changed: [], targets: ["uid-tv"]))
+        #expect(!CatchAllPlan.holds(changed: ["uid-tv"], targets: []))
+        #expect(!CatchAllPlan.holds(changed: [], targets: []))
     }
 
     @Test("P5: a stream source only with no catch-all or when it is the single catch-all device")
