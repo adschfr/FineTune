@@ -862,3 +862,494 @@ Run with the visible harness panel: each step announced with a countdown, the us
 | H7M | stopped muted catch-all, five plain tones at 10 %, each after the catch-all suspended (log: five resumes) | nothing, no onset click | nothing | pass |
 
 Plain tones have no fade-in, so a leak at the onset would have been an audible click. The catch-all holds audio back from the first sample, also while it resumes from a stop. Earlier runs could not show this by ear: FineTune merged its own afplay test processes into a "FineTune Fork" app entry and tapped them, fixed in `e22a935`.
+
+## 16. Variant B: catch-all as the normal path on software outputs
+
+The user chose variant B ("catch-all first") on 2026-10-28. For software outputs this section replaces the statement in §1 that per-app taps stay as they are. Where it differs from §3-§14, this section applies, and §16.9 replaces the §13 commits 8-15. It is the lean v1: everything not needed for the user's case or for safety is listed in §16.10. Nothing here is built yet. `AudioEngine.swift` means `FineTune/Audio/Engine/AudioEngine.swift`; all line numbers refer to `bef2b82`.
+
+### 16.1 Decision, scope, behavior changes
+
+**Decision.** On an output D that is eligible for a catch-all (§8.1) and whose catch-all (CA) is live, the CA is the normal processing path. For the user, D is the LG TV.
+
+- CA(D) holds every process that no per-app tap holds, from its first sample, and plays it at `outputProcessingGain(D)` followed by `SoftLimiter`.
+- FineTune creates a per-app tap on D only when the app needs per-app processing (§16.2).
+- A per-app tap is kept until its process object is gone. v1 never hands an app back to the CA.
+
+**Unchanged**
+
+- Hardware-volume outputs (AirPods, built-in speakers): per-app taps as today, created at once (no deferral, §16.10 rule H).
+- Mode `off` (default until the user signs off): `NoopCatchAllCoordinator`, no decorator. Every engine hook is either a call on the Noop (empty set, false, no-op) or a fork function that returns today's result at once when `!catchAll.isEnabled` or `!catchAll.affectsAudio`. Nothing else runs (rows 9 and 19 reshape lines without changing their result); the Noop golden-log test pins this (§16.8). The reentrancy guard and the routing prune are gated too, so the latent double-tap bug of today stays in mode off (§16.10).
+- Mode `observe`: every app is tapped as today; CAs observe with zero output; the gate logs the decision it would have made ("would cover").
+
+**The user's normal case** (`settings.json`: no per-app entries, `defaultNewAppVolume` 1, loudness off, no tier overrides, V9): one CA on the TV and no per-app taps. Nothing is claimed, pushed or held. The one audible effect is the silent onset loss of 24-37 ms when a sound starts after 10 s of silence on the TV (§15 H7). Today the same sounds play unprocessed at full scale.
+
+**Behavior changes** (go into `FORK.md` at sign-off)
+
+- Ignored apps on the TV follow the TV volume instead of playing at full scale.
+- Call apps: unchanged on the TV, where passthrough never applies (`AudioEngine.swift:605-620`). Only a call app that passthrough leaves untapped on the AirPods now plays its incidental TV-bound output at TV volume.
+- Covered apps show no per-app level (`getAudioLevel` returns 0 without a tap, `AudioEngine.swift:731-733`).
+- P5: while a TV CA exists, follows-default taps on other outputs use the mixdown.
+- TV → AirPods during playback: each playing covered app gets a new tap on the AirPods, with one dropout of about 60-100 ms (V5). Today its existing tap switches with a crossfade.
+- Mode on: an EQ change for an app without a tap is persisted (today dropped, `:953-957`); a covered app set back to 100 % (slider, keys, `finetune://reset`) gets no tap.
+
+**Code facts this section relies on**
+
+| # | Fact | Source |
+|---|---|---|
+| V1 | `applyPersistedSettings` visits only `apps`, i.e. apps with a running process object | `AudioEngine.swift:517-520, 1327` |
+| V2 | `onAppsChanged` fires only when the fingerprint of listed apps changes; daemons, other users and FineTune's children are never listed; output that starts while IO already runs changes no fingerprint | `AudioProcessMonitor.swift:261, 277, 289, 338` |
+| V3 | The run control learns about output from IsRunning edges with follow-up reads, process appearance, the post-stop recheck and a 10 s safety re-read; Devices only with the device filter on | `CatchAllRunControl.swift:149, 152-173, 201-202, 213-214, 228-230` |
+| V4 | `waitUntilReady` spins the main run loop inside a CA build and a per-app `activate`; the tap is registered only afterwards | `AudioObjectID+Readiness.swift:31-43`; `CatchAllTapController.swift:106`; `ProcessTapController.swift:679`; `AudioEngine.swift:1293-1294, 1463-1464` |
+| V5 | A new per-app tap mutes its process from tap creation until its IO starts | `ProcessTapController.swift:652, 671, 679, 728, 756` |
+| V6 | An app that does not play to the default gets the mixdown and is played to its routed device | `AudioEngine.swift:2088-2092` |
+| V7 | `setDevice` returns before creating a tap when the chosen device equals the routing | `AudioEngine.swift:1141, 1176` |
+| V8 | `resetAllSettings` clears software device volumes and tier overrides | `SettingsManager.swift:907-910` |
+| V9 | The user has no per-app settings, `callPassthroughEnabled` true, `systemSoundsFollowsDefault` false | user's `settings.json` |
+| V10 | `setDefaultDevice` does not update `defaultDeviceUID`; only the HAL listener does. FineTune-initiated switches route before that (`setDefaultOutputDevice`, `restoreConfirmedDefault`, `reEvaluateOutputDefault`) | `DeviceVolumeMonitor.swift:418-432, 559-583`; `AudioEngine.swift:1106-1111, 1486-1491, 1511-1518` |
+| V11 | The alive watcher is installed only in `handleDeviceConnected`, which fires only when the set of output UIDs changes | `AudioEngine.swift:1803-1807`; `AudioDeviceMonitor.swift:537-551` |
+
+### 16.2 When an app gets a per-app tap
+
+**Policy** (new file `FineTune/Audio/CatchAll/PerAppTapPolicy.swift`, nonisolated, pure):
+
+```swift
+nonisolated struct AppTapFacts: Sendable, Equatable {
+    var targetCovered: Bool            // C1, from isLive(D) (§16.4)
+    var singleMode: Bool               // C2
+    var followsDefaultPersisted: Bool  // C3
+    var appGain: Float                 // C4: volume × boost
+    var muted: Bool                    // C5
+    var eqActive: Bool                 // C6
+    var autoEQOnTarget: Bool           // C7
+    var loudnessOn: Bool               // C8
+    var playsElsewhere: Bool           // C9, computed only when targetCovered
+}
+nonisolated enum TapReason: String, Sendable, CaseIterable {
+    case noCatchAll, multiDevice, explicitRouting, appGain, muted, eq, autoEQ, loudness, playsElsewhere
+}
+nonisolated enum TapDecision: Sendable, Equatable { case coveredByCatchAll, tap(Set<TapReason>) }
+```
+
+`decide`: `processing` is the set of reasons from C2-C8. Not `targetCovered` gives `.tap(processing ∪ [.noCatchAll])`. Otherwise `processing` empty and no C9 gives `.coveredByCatchAll`, else `.tap(processing ∪ [.playsElsewhere if set])`.
+
+**Rule C.** App A (pid p, identifier i, process objects P), routed in single mode to D, gets no tap if all hold:
+
+| # | Condition | Source |
+|---|---|---|
+| C1 | `catchAll.covers(D)` (mode on, breaker closed, CA(D) live or dormant) | coordinator, §16.4 |
+| C2 | `volumeState.getDeviceSelectionMode(p) == .single` | `VolumeState.swift:126` |
+| C3 | `settingsManager.isFollowingDefault(i)`; persisted explicit routing gets a tap, also when it names D or while the app is moved to the default, because only tapped apps move back on reconnect (`AudioEngine.swift:1702-1720`) | `SettingsManager.swift:281-283` |
+| C4 | `abs(getVolume(p) * getBoost(p).rawValue - 1) <= 0.001`. The state is seeded with `defaultNewAppVolume` when a pid is first seen, so changing that default affects only pids seen afterwards | `VolumeState.swift:33-34, 63, 204-207` |
+| C5 | `!volumeState.getMute(p)` | `VolumeState.swift:95` |
+| C6 | `!eq.isEnabled \|\| eq.isFlat`, `eq = settingsManager.getEQSettings(i)` | `EQSettings.swift:17, 47` |
+| C7 | not (D supports AutoEQ and its selection is enabled), whether or not the profile is cached | `AudioEngine.swift:1040-1041` |
+| C8 | `!loudnessCompensationEnabled && !loudnessEqualizationEnabled` | `SettingsManager.swift:44-45` |
+| C9 | `!catchAll.playsElsewhere(P, target: D)` | settle rule below |
+
+**C9 settle rule.** A device-stream CA captures only streams addressed to D (F1). An app that follows the TV default but plays to an aggregate, a virtual or another device escapes it; today the mixdown tap catches it (V6).
+
+- The run queue observes `kAudioProcessPropertyDevices` (output scope) for every process and posts each change to main, each listed ID classified as plain, aggregate or virtual, or unresolvable. Commit 9 splits `hasNonPlain`, which merges the last two (`CatchAllRunLogic.swift:5-9`, `CatchAllRunControl.swift:276-284`). No Devices read happens on main.
+- *D-like* devices are D's currently listed `AudioDeviceID` and, for 2 s after each routing or default change, every device in `noteRouting`'s `from` set. macOS moves streams asynchronously, so a switch alone never creates a tap.
+- P is *foreign* for D at once when some object lists an aggregate or virtual device that is not D-like. It becomes foreign after 500 ms when no object lists a D-like device and some object lists another device or an unresolvable ID (a just-removed device has no readable UID), or reads empty or unknown while its IsRunningOutput is 1. P that lists D plus only plain devices stays covered; today's stream tap on D leaves its other streams alone too (`:2088-2092`).
+- `playsElsewhere(P, D)` is true while P is foreign. The coordinator calls `onCoverageMayHaveChanged` when P becomes foreign (also when a grace window ends), so the gate runs again.
+- A C9 tap always uses the mixdown (§16.5 row 25). A stream tap would leave the elsewhere-bound stream uncaptured.
+
+**Where the rule is checked.** Only where FineTune creates a tap on its own initiative or after a setter on an untapped app:
+
+- `applyPersistedSettings`, single-device branch, after the routing (`:1404`) and the switch block (`:1408-1423`), before `ensureTapExists` (`:1426`): `if taps[app.id] == nil, catchAllSkipsTap(for: app, deviceUID: deviceUID) { continue }`. A skipped app stays out of `appliedPIDs`, so every later call checks it again; such a call runs on each IsRunning edge of a listed app (`AudioProcessMonitor.swift:338-343`), so row 19 writes the observed `followsDefault` (`:1381, 1396`) and `appDeviceRouting` (`:1404`) only on change. An app with a tap is never skipped, so `:1430-1443` keep applying saved volume and mute. The routing is set, so the row renders (`MenuBarPopupView.swift:918`).
+- `catchAllReevaluateUntapped(app)` after `setVolume`, `setBoost`, `setMute`, `setEQSettings` without a tap and a same-device `setDevice` (V7): when `affectsAudio`, the app has no tap and is routed in single mode, it runs the gate at its routing and creates the tap if decided, also for a silent app.
+
+**Ungated, as today:** ignored apps (`:1329`), call passthrough (`:1333`), the multi path (`:1345-1371`), `setDevice` to another device (`:1176`), `updateTapForCurrentMode` (`:1271`), `recreateTap` (`:2367, 2372`, only for pids that have a tap), every switch site, and R2 (§16.3 E13).
+
+**Settings without per-app effect on a covered app:** pins; `autoEQPreampEnabled` (only with AutoEQ, C7); device volume and mute (the CA applies them); user EQ presets; `systemSoundsFollowsDefault` (alert routing, E2). Handled before the gate: `ignoredApps`, call passthrough, `appSelectedDeviceUIDs`. Handled by eligibility: tier overrides, `CatchAllExcludedDeviceUIDs`.
+
+**Re-evaluation.** Every existing `applyPersistedSettings` call checks skipped apps again: startup (`:382`), permission granted (`:406`), `onAppsChanged` (`:453`), `reconcileCallPassthrough` (`:643`), `unignoreApp` (`:650`), `start()` (`:742`), `handleSettingsReset` (`:810`). New triggers are `reevaluateCatchAllCoverage()` (no-op unless `affectsAudio`) from `routeFollowsDefaultApps` (before `:1558`) and the AutoEQ and loudness setters, and the coordinator's own changes (after a reconcile, or when C9 settles). None runs the gate in the caller: the coordinator's one coalesced next-turn task runs a pending `reconcile()` first, then `onCoverageMayHaveChanged`, whose handler runs `applyPersistedSettings`. So no `activate` and no build spins the run loop inside a device or default-change handler, where nested default callbacks would see half-updated priority state (`:1987-2003`, `:1820-1851`). While a FineTune-initiated default change has not reached `DeviceVolumeMonitor` yet (V10), `applyPersistedSettings` reads the intended target instead of the stale default (row 19).
+
+**Removal.** A tap is never removed because a rule became true; only as today (stale cleanup after 30 s, `ignoreApp`, passthrough release, replacement in `recreateTap`).
+
+### 16.3 Lifecycle events that differ from today
+
+| Constant | Value | Source |
+|---|---|---|
+| G, grow margin | 130 ms | §15 (2 × the 62.8 ms include outlier) |
+| S, shrink margin | 400 ms | §15 |
+| Per-app fade | 40 ms gate, re-armed on the unmute edge | `ProcessTapController.swift:754, 1695-1700` |
+| Suspend delay | 10 s | `CatchAllRunLogic.swift:45` |
+| `ioOnlyCap` (unlisted processes only) | 120 s, then a 100 ms poll while the CA is stopped | new |
+| Safety re-read while all CAs are stopped | 3 s, leeway 1 s (was 10 s, 5 s) | `CatchAllRunControl.swift:214, 221` |
+| C9 settle, grace | 500 ms, 2 s | new |
+| Watchdogs | grow `max(1 s, G + 0.6 s)`, retirement 2 s, shrink 2 s, format 2 s | §10 |
+| Detach and `stop()` wait | 1 s | §10 |
+
+"Hold" means the decorator forces the inner `isMuted`; "applied" is §4.6.
+
+**E1. Startup, mode on, TV default.** `catchAll.start()` runs after `deviceVolumeMonitor.start()` (`:366`) and before `applyPersistedSettings` (`:382`). It builds CA(TV) on main in about 20 ms (§15 H0) with the persisted gain (#375) and E = {self} ∪ foreign ∪ claims, attaches it **held**, and releases it once its applied list equals the list desired from the current claims (at once if none changed). The gate then decides `.coveredByCatchAll` for every TV app. A tap created by `onAppsChanged` during the build spin (V4) sees phase `building`, is created as today and kept; the held attach prevents doubling until its exclusion applies.
+
+**E2. Unlisted sounds** (system sounds, notifications, dictation daemons, harness tones, V2). Only the run queue sees them. They play through the CA at TV gain when they play to the TV; after 10 s of silence the CA starts in 12-18 ms and the onset loses 24-37 ms, silently (§15 H7, F10). System alerts go to the system alert device (V9); if that is not the TV, they are unaffected.
+
+**E3. Output that starts inside running IO** (MacWhisper with the microphone running).
+
+- A covered process with IsRunning 1 counts as needing audio. For a listed app (`appsChanged`) this has no cap, which is today's cost: its tap never suspends while IsRunning is 1 (`AudioEngine.swift:2183-2185`). The CA runs, so a later start or stop sound loses nothing.
+- An unlisted process counts for `ioOnlyCap`, then the run queue polls its IsRunningOutput every 100 ms while the CA is stopped. Worst case after the cap: a silent onset loss of about 120 ms.
+- Every output rise found by a poll or the safety re-read is logged "output without edge".
+
+**E4. A customized app starts, or a covered app's setting changes.** The CA plays the onset at app gain 1 × TV gain. The gate decides `.tap`; decorator A holds before `activate` (TV is a target and in `changed`), pushes E(TV) ∪ P, waits for grow, releases with the fade. A playing app dips once for about 170 ms; a silent one hears nothing. A persisted per-app mute is audible at TV volume until then (Q4).
+
+**E5. Back to defaults** (100 %, unmute, flat EQ, x1, System Audio, settings reset). The tap stays and plays at unity × TV gain. Without a tap, setting 100 % creates none.
+
+**E6. App quits.** Covered: nothing audible. When `catchAll.isEnabled`, the routing of untapped absent pids gets the same 30 s grace cleanup as taps (row 26), so a briefly absent call app keeps its routing. Tapped: as today, then B; dead objects make `removeClaim` return nil and the tap is invalidated at once.
+
+**E7. A covered app plays elsewhere.** The Devices listener reports a foreign device; under the settle rule the gate decides `.tap([.playsElsewhere])` with the mixdown, and decorator A holds the TV part. Until the tap exists, audio to the other device is unprocessed unless the CA also captures it: for an aggregate or virtual device (which may contain the TV) for the Devices post plus `activate`, like today's first playback of a new process; for another plain device or an unresolvable ID 500 ms longer. Today an app already tapped while silent has no such window.
+
+**E8. Default TV → AirPods** (no rule H in v1).
+
+1. macOS moves follows-default apps natively.
+2. `routeFollowsDefaultApps(AirPods)`: `catchAllWillRoute` passes the apps' previous routing and the monitor's default as `from` (C9 treats the TV as D-like for 2 s) and records AirPods as the intended default; the routing loop runs; before the early return at `:1558`, `reevaluateCatchAllCoverage()` schedules the gate.
+3. In the next turn every playing covered app gets `.tap([.noCatchAll])` on the AirPods, with the mixdown under P5. The AirPods are not in `changed`, so there is no hold; each app has the V5 dropout. S8 lets the user judge it (Q1).
+4. Existing taps switch as today; under P5 their claims cover the TV before and after, so no push and no hold.
+5. Silent covered apps get their tap at their next IO start. A CrossOver game still bound to the TV gets a mixdown tap and moves to the AirPods, as today.
+
+**E9. Default AirPods → TV.** Taps switch with a crossfade; the mixdown claim covers the TV before and after (P5), so no push and no hold. Untapped apps are evaluated against the target TV even while `defaultDeviceUID` is stale (V10) and decide `.coveredByCatchAll`; Devices still naming the AirPods is ignored for 2 s. Exception: a `stream(fallback)` tap from a time without CA grows TV coverage, so decorator C holds and it dips once (E11).
+
+**E10. macOS auto-switch that FineTune reverts** (case 1, `:1987-2007`). Only `restoreConfirmedDefault` → `routeFollowsDefaultApps(TV)` runs. The monitor already names the AirPods (`DeviceVolumeMonitor.swift:578-583`), so they are in `noteRouting`'s `from` set and a transient AirPods listing counts as D for 2 s. Covered apps stay covered; no AirPods taps.
+
+**E11. TV disconnect and reconnect** (power cycle, new `AudioDeviceID`).
+
+- Off: `catchAll.reconcile()` after `:1579`, run in the coordinator's next turn. The UID is absent, so G: detach, destroy (errors ignored), grow waiters release, shrink waiters invalidate, nothing counted. Taps switch to the fallback as today. `reEvaluateOutputDefault` (`:1682`) → `routeFollowsDefaultApps(fallback)` gives every playing covered app a tap there right after G, `stream(fallback)` when it already plays there (no CA exists, P5 allows it), otherwise mixdown.
+- On: `refreshOutputDeviceStates` (`:1692`), `refreshAllTapOutputStates` (`:1693`), then `catchAll.reconcile()`, requested before the default action (`:1809-1827`) and run after the handler, before the scheduled gate: CA(TV) with the new ID and the persisted gain, attached held until applied. Mixdown taps switch back without a hold; each `stream(fallback)` tap dips once (C). These apps keep their taps until they quit (Q6).
+- Exposure: from the TV becoming alive until the build ends (about 20 ms, at most 2 s), untapped TV-bound audio is unprocessed, as today.
+
+**E12. TV listed but not alive** (HDMI link drop, display sleep), or listed under the same UID with a new ID and no connect event (V11). G is not used. Checked at an IO failure, a start failure, a reconcile and every device-list refresh (`deviceListRefreshed`, a new callback at the end of `AudioDeviceMonitor.handleDeviceListChanged`, `AudioDeviceMonitor.swift:521`; that monitor fires connect and disconnect only when the UID set changes, `AudioDeviceMonitor.swift:537-551`):
+
+1. Listed ID differs from the stored ID and is alive: rebuild through E at once; if that fails, R. An IsAlive listener would never fire on an alive device.
+2. Listed ID not alive and a CA object exists: phase `dormant`. CA(D) held and detached from the run control, resources kept, nothing counted. Covered audio is silent because D plays nothing; for an unchanged ID the muted tap also holds it (for a new ID unverified, since the tap is built from the UID, `CatchAllTapDescription.swift:15-23`). `covers(D)` stays true, so no `activate` blocks on a dead device.
+3. The coordinator registers its own `kAudioDevicePropertyDeviceIsAlive` listener on the listed ID and reads IsAlive once right after registering. A 2 s main-thread check and every list refresh re-read the listed ID and alive state while dormant and move the listener when the ID changed.
+4. Alive: rebuild through E on the listed ID. If that fails: R.
+
+Without a CA object (a failed build, E14, E20) D never goes dormant: `covers(D)` stays false.
+
+**E13. Retirement with promotion, R (fail-open, mode on).** Reasons: push failure after the retry and a rebuild; give-up (3 counted IO failures for one ID within 2 min); breaker; run-queue timeout; tier found changed at a reconcile; failed rebuild after E12; injected (listening session only).
+
+1. **R1.** `phase(D) = .retiring(caHeld: false)`: `covers(D)` false, gain frozen, flush skips D, pending grow waiters on D become retirement holds, `reconcile` ignores D until R4 ends.
+2. **R2.** Synchronous `onCoverageWillEnd(D)` → `catchAllCoverageEnding(D)`: every present, untapped, non-ignored single-mode app in `processMonitor.activeApps` that is routed to D, or whose cached Devices name D or a non-plain device (`mayPlay`; for example a CrossOver game still on the TV after its AirPods tap failed), gets `ensureTapExists` on D, **silent apps included**: their suspended `.muted` taps then hold their next onset, as today (`ProcessTapController.swift:569-573`, `AudioEngine.swift:2095-2097`). An app routed elsewhere is not marked applied, so the next pass moves its tap to its routing (`:1408-1420`); a failed switch leaves it on D. The decorator takes a retirement hold before `activate` because `phase(D) == .retiring`, whatever `affectsAudio` is, and `setClaim` returns a retirement ticket. The callback returns true when an untapped app routed to D is absent within its 30 s grace (row 26).
+3. **R3.** One main-actor turn: `CA(D).hold()`, phase `.retiring(caHeld: true)`, complete all retirement tickets on D. Overlap or gap is at most one IO buffer; an overlap is faded in. After R3 no tap takes a hold on D and grow waits on D complete at once.
+4. **R4.** `detach(D)` with a 1 s timeout; destroy only after the queued detach has actually run (§16.7). If R2 returned true, the held, detached CA is kept aside and destroyed 30 s later (`stop()` destroys it at once; R4 still ends at the detach): until then its muted tap keeps a returning absent app silent until that app's tap exists (created on its return, `covers(D)` is false), at the cost of silent unlisted sounds on D for that time.
+5. Then: give-up keeps D off until a device, mode or relaunch event; IO and push failures back off 5/30/120 s; after the breaker, no rebuild this session.
+
+Result: today's per-app taps, also for silent apps; an app whose `activate` throws plays unprocessed (today's result for a failed tap); system sounds unprocessed, as today. In observe every retirement is G (all apps are tapped). G is used only for an absent UID, `stop()` and a service restart without the device.
+
+**E14. CA build fails.** `covers(D)` stays false and the gate creates today's taps. `notReady` blocks main up to 2 s, during which the tap already holds uncovered TV audio silent. Backoff 5/30/120 s, then give-up. A failure while D is listed but not alive is not counted: the coordinator installs the E12 alive listener (read once after registering) and builds when D is alive. After a later build, existing taps stay.
+
+**E15. Format or rate change on the TV.** `formatChanging` holds the CA (`:2407`); `formatUnchanged` releases it (after the in-flight guard `:2414`; the coordinator also ignores it while its own rebuild for that UID runs); `formatChanged` runs inside `handleOutputDeviceFormatChanged` right after `outputFormatChangeInFlight.insert` (`:2424`) and before the per-app recreation, only when called from the `onOutputDeviceFormatChanged` closure (`:471-475`). So the guard at `:2414` and the health monitor's skip at `:2288` protect the per-app taps on D during the CA rebuild, and a single tap's rate mismatch (`:2290-2297`) does not rebuild the CA. Rebuild through E: new CA built held, attached, first callback or 200 ms and its list applied, hold old, release new, detach and destroy old. 2 s watchdog.
+
+**E16. Settings reset** (`:786-813`). After `:799`: `catchAll.refreshGains(); catchAll.reconcile()` (V8). Taps stay (E5).
+
+**E17. Ignore, unignore.** Ignoring a tapped app on the TV runs B: hold, include, shrink wait, invalidate; a dip of about one exclusion latency (30-60 ms), then TV volume through the CA. An untapped app loses its routing and the CA keeps playing it. Unignore runs `applyPersistedSettings` and the gate.
+
+**E18. Modes.** `off`: Noop, unwrapped factory, every fork function returns at once. `observe`: CAs built unmuted with zero output; `isLive` true, `covers` false; every app tapped; claims and pushes run; the gate logs "would cover". The mode is read at launch. Kill switch: `defaults write com.adschfr.FineTuneFork CatchAllMode -string off`, relaunch.
+
+**E19. Quit and `stop()`.** Before the tap loop (`:766`), `catchAll.stop()` retires every CA with G (bounded wait, §16.7) and completes the waiters; taps are then invalidated without a handover. On process death the private taps disappear, which H9 must confirm before mode on.
+
+**E20. coreaudiod restart** (`ServiceRestarted`). Forget the CAs without destroy calls, reset the catalog and the Devices classification, re-resolve self. **Keep a claim only if every tap UUID of its owner resolves** in the restarted daemon (`kAudioHardwarePropertyTranslateUIDToTap`); void the others and pass their pids to `onClaimsVoided`, which schedules a recreate for each at once (the health monitor skips suspended and user-muted taps, `:2261-2267`). `setClaim` applies the same check to owners registered before the restart, because `liveCapture` trusts a stale `tapID` (`ProcessTapController.swift:954-959`). A stale object ID can therefore never exclude another process, and a tap created before the coordinator saw the restart keeps its exclusion (no lasting doubling). Rebuild with {self} ∪ foreign ∪ kept claims at the next device-list refresh (at most 1 s), on the listed ID, so `outputProcessingGain` finds the level (it returns 1.0 for an ID the device monitor does not know, `DeviceVolumeMonitor.swift:189-203`). If the rebuild fails: R, and while D is not alive the E12 alive listener builds later; never dormant.
+
+### 16.4 What remains from variant A
+
+**Kept unchanged (built):** `CaptureCoverage`, `liveCapture` and the revert in `updateProcesses`; `ProcessIdentity`, `ProcessCatalog`; `CatchAllTapDescription`, `CatchAllRender`, `CatchAllBackend`, `CatchAllTapController`; `CatchAllPlan.exclusions`, `changedDevices`, `allowsStreamTap` (P5) and `ineligibility`, whose existing `.notAlive` (`CatchAllPlan.swift:85, 101`) is the uncounted reason; `CatchAllSettings` and the harness (H9 added); invariants I1, I3, I4.
+
+**Changed**
+
+- **I2** now reads: if CA(D) and a per-app tap T capture a process on D **and D is one of T's targets**, T's output is held. Doubling across devices is inaudible.
+- **Hold rule:** `CatchAllPlan.holds(changed:targets:) = !changed.isDisjoint(with: targets)` replaces `needsHold` (`CatchAllPlan.swift:44-51`). Targets are the tap's output UIDs, old and new during a switch. `mayPlay` and the `processOutputDeviceUIDs` reads leave the decorator.
+- **Run control:** the IsRunning rule (E3), the listed set, Devices observed for every process under a new `observeDevices` flag (not `deviceFilterEnabled`, `CatchAllRunControl.swift:149, 161`) and classified as plain, aggregate or virtual, or unresolvable (C9), the 3 s safety re-read, new callbacks next to `:51-52`. The device filter stays off.
+- **Coordinator** (§3.1 listing replaced; the runtime I1 checker with repair is new work, not built):
+
+```swift
+enum CatchAllPhase: Equatable { case building, live, dormant, retiring(caHeld: Bool) }
+@MainActor protocol CatchAllClaimOwner: AnyObject {           // CatchAllAwareTap adopts it (commit 13)
+    var appPID: pid_t { get }                                 // for onClaimsVoided
+    var tapUUIDs: [UUID] { get }                              // E20 check
+}
+@MainActor protocol CatchAllCoordinating: AnyObject {
+    var isEnabled: Bool { get }                 // false only for Noop
+    var affectsAudio: Bool { get }              // mode == .on && breaker closed; no phase involved
+    var catchAllDeviceUIDs: Set<String> { get } // CAs building, live or dormant (input for P5)
+    func phase(_ uid: String) -> CatchAllPhase?
+    func isLive(_ uid: String) -> Bool          // live or dormant, in observe and on
+    func covers(_ uid: String) -> Bool          // affectsAudio && isLive(uid)
+    func playsElsewhere(_ processes: [AudioObjectID], target uid: String) -> Bool
+    func mayPlay(_ processes: [AudioObjectID], on uid: String) -> Bool  // cached Devices name D or a non-plain device (R2)
+    func noteDecision(_ app: AudioApp, target uid: String, _ decision: TapDecision)  // .notice on change
+    func noteRouting(from previousUIDs: Set<String>, to targetUID: String)
+    var onCoverageWillEnd: ((String) -> Bool)? { get set }      // synchronous, R2; true: an absent app was routed to D
+    var onCoverageMayHaveChanged: (() -> Void)? { get set }     // next turn, after a pending reconcile
+    func requestReevaluation()                                  // fires onCoverageMayHaveChanged next turn
+    var onClaimsVoided: ((Set<pid_t>) -> Void)? { get set }     // E20: recreate these taps
+    var onEvent: ((CatchAllEvent) -> Void)? { get set }         // listening session only
+    func start(); func stop(); func reconcile(); func refreshGains()  // reconcile runs in the next turn
+    func appsChanged(_ apps: [AudioApp])                        // listed processes for E3
+    func deviceListRefreshed()                                  // E12, E20
+    func deviceGainChanged(_ deviceID: AudioDeviceID)
+    func formatChanging(uid: String); func formatUnchanged(uid: String); func formatChanged(uid: String) async
+    // decorator only
+    func changedDevices(owner: ObjectIdentifier, proposed: Claim) -> Set<String>  // live CAs only
+    func setClaim(_ owner: any CatchAllClaimOwner, _ claim: Claim) -> ApplyTicket?  // nil: no list changed, no target retiring
+    func removeClaim(_ owner: ObjectIdentifier) -> ApplyTicket?
+    func prepareInclusion(of processes: [AudioObjectID], on uids: Set<String>)
+    func waitApplied(_ ticket: ApplyTicket, _ direction: ApplyDirection) async
+    func takesRetirementHold(targets: Set<String>) -> Bool      // some target in .retiring(caHeld: false)
+    func processIsLive(_ process: AudioObjectID) -> Bool
+    func isRunningOutput(_ process: AudioObjectID) -> Bool
+}
+```
+
+  Also: one generation counter per device; waiters on a dormant D complete at once (its rebuild uses the current claims); nested reconcile during a spin is deferred, retirements are queued; claims checked by tap UUID after a restart (E20). Retirement tickets: `setClaim` with a target in `.retiring(caHeld: false)` returns a ticket whose `.grow` wait ends at R3 (or the 2 s retirement watchdog), also when no list changed (§5 A step 6 would otherwise release at once); any grow wait on D registered between R1 and R3 is one, and a wait on D in `.retiring(caHeld: true)` completes at once.
+- **Decorator, handovers A-D (§5):** unchanged except the hold rule, retirement holds (A step 6 awaits the retirement ticket) and `processIsLive` in D.
+- **F:** build with E from the current claims, attached held until applied; existing taps stay; no source refresh.
+- **E:** unchanged, except that C′ is released only once its applied list equals the desired list.
+- **G:** only absent UID, `stop()`, restart without the device, and every retirement in observe.
+- **P5:** unchanged, plus the C9 mixdown guard.
+
+**Dropped:** the quiet point (A5); `refreshTapSourcesForCatchAll` (H5) and `onCatchAllDevicesChanged`; the device-filter probe (§6.6) and strategy B; the activity hint from `onAppsChanged`; design 2's lazy demotion, served-state maps, `cancelRemoval` and I5-I8; harness steps H5, H6, H11, H12 (H10 stays optional and manual).
+
+### 16.5 Engine hooks
+
+All private-state code goes into one `// MARK: - Catch-all (fork)` section at the end of `AudioEngine.swift` (about 90 lines). Hooks inside existing functions are one or two lines (about 35 in all). Rows marked 14 or 15 land in that commit (§16.9).
+
+| # | Site (`AudioEngine.swift`) | Line | Change | C |
+|---|---|---|---|---|
+| 1 | Stored properties | next to 25, 60-62 | `let catchAll: any CatchAllCoordinating`; `@ObservationIgnored private var catchAllTapsBeingCreated: Set<pid_t> = []`; `@ObservationIgnored private var catchAllRouteTargetUID: String?` | 14 |
+| 2 | `init` | 235-251, before 307 | parameter `catchAll: (any CatchAllCoordinating)? = nil`; default `startMonitorsAutomatically && s.mode != .off && s.harnessSteps == nil && s.pendingH9 == nil ? CatchAllCoordinator.live(…) : NoopCatchAllCoordinator()` with `s = CatchAllSettings()`. Test engines get Noop | 14 |
+| 3 | Tap factory | 307-328 | when `catchAll.isEnabled`, wrap: `CatchAllAwareTap(inner: try base(app, uids, src), targets: Set(uids), requestedSource: src, coordinator: coordinator)` | 14 |
+| 4 | DDC probe callback | 353-356 | `self?.catchAll.reconcile()` | 14 |
+| 5 | Startup Task | after 366; 369 | `self.catchAll.start()`; harness condition `\|\| CatchAllSettings().pendingH9 != nil` (commit 8); listening session start (commit 16) | 8/14/16 |
+| 6 | `observePermissionGranted` | between 405 and 406 | `self.catchAll.start()` | 14 |
+| 7 | `onVolumeChanged`, `onMuteChanged` | 419, 435 | first statement `self?.catchAll.deviceGainChanged(deviceID)` | 14 |
+| 8 | `onAppsChanged` | 449-455 | first statement `self?.catchAll.appsChanged(apps)` | 14 |
+| 9 | `onOutputDeviceFormatChanged` closure; `handleOutputDeviceFormatChanged` | 473; 2422, after 2424 | closure calls `handleOutputDeviceFormatChanged(uid: uid, rebuildCatchAll: true)`; new parameter defaulting to false (the health monitor at 2296 keeps it); `if rebuildCatchAll { await catchAll.formatChanged(uid: uid) }` | 14 |
+| 10 | End of `wireCallbacks` | before 512 | `catchAll.onCoverageWillEnd = { [weak self] in self?.catchAllCoverageEnding($0) ?? false }`; `catchAll.onCoverageMayHaveChanged = { [weak self] in self?.catchAllRunGate() }`; `catchAll.onClaimsVoided = { [weak self] in $0.forEach { self?.scheduleTapRecreation(for: $0) } }`; `(deviceMonitor as? AudioDeviceMonitor)?.onOutputDeviceListRefreshed = { [weak self] in self?.catchAll.deviceListRefreshed() }` | 14 |
+| 11 | `start()`, `stop()` | before 742; before 766 | `catchAll.start()`; `catchAll.stop()` | 14 |
+| 12 | `handleSettingsReset` | after 799 | `catchAll.refreshGains(); catchAll.reconcile()` | 14 |
+| 13 | `setVolume` | 817 | `if !catchAllReevaluateUntapped(app), let deviceUID = appDeviceRouting[app.id] { ensureTapExists(…) }` | 15 |
+| 14 | `setBoost`, `setMute` | after 835; after 945 | `catchAllReevaluateUntapped(app)` | 15 |
+| 15 | `setEQSettings` | 954 | `guard let tap = taps[app.id] else { catchAllEQWithoutTap(settings, for: app); return }`: persists and re-evaluates only when `affectsAudio` | 15 |
+| 16 | AutoEQ and loudness setters | after 977, 984, 1005, 1013 | `reevaluateCatchAllCoverage()` (`AudioTab.swift:44-49` sets the flag first) | 15 |
+| 17 | `setDevice` | before 1141 | `if appDeviceRouting[app.id] == deviceUID { catchAllReevaluateUntapped(app) }` (V7) | 15 |
+| 18 | `ensureTapWithDevices` | after 1280; after 1294 | `guard catchAllBeginCreation(app.id) else { return }; defer { catchAllEndCreation(app.id) }`; `catchAllDidRegister(tap, app, deviceUIDs)` | 14 |
+| 19 | `applyPersistedSettings` | 1382, 1397; 1381, 1396, 1404 | `deviceVolumeMonitor.defaultDeviceUID` → `catchAllDefaultOutputUID()`; write `followsDefault` and `appDeviceRouting` only on change (same result) | 15 |
+| 20 | Gate | before 1426 | `if taps[app.id] == nil, catchAllSkipsTap(for: app, deviceUID: deviceUID) { continue }` | 15 |
+| 21 | `ensureTapExists` | after 1450; after 1464 | as row 18 | 14 |
+| 22 | `routeFollowsDefaultApps` | start of body (1546, before the loop overwrites the routing); before 1558 | `catchAllWillRoute(to: targetUID)`; `reevaluateCatchAllCoverage()` (schedules) | 15 |
+| 23 | `handleDeviceDisconnected` | after 1579 | `catchAll.reconcile()` | 14 |
+| 24 | `handleDeviceConnected` | after 1693 | `catchAll.reconcile()` (before the default action at 1809) | 14 |
+| 25 | `preferredTapSourceDeviceUID` | after 2090 | `guard CatchAllPlan.allowsStreamTap(candidate: defaultUID, catchAllDevices: catchAll.catchAllDeviceUIDs), !catchAll.playsElsewhere(app.processObjectIDs, target: defaultUID) else { return nil }` (Noop: empty set, false) | 14 |
+| 26 | `cleanupStaleTaps` | 2100 | stale set `Set(taps.keys).union(catchAll.isEnabled ? Set(appDeviceRouting.keys) : []).subtracting(activePIDs)`; the existing 30 s task (2133-2154) prunes routing of untapped pids | 15 |
+| 27 | `prepareTapsForOutputFormatChange` | 2407 | `catchAll.formatChanging(uid: uid)` | 14 |
+| 28 | `cancelTapsOutputFormatChangePreparation` | after 2414 | `catchAll.formatUnchanged(uid: uid)` | 14 |
+
+Unchanged and seen through the decorator: `isCallPassthrough`, `ignoreApp`, `releaseCallPassthroughTaps`, `syncTapsWithProcessState`, the health monitor, `recreateTap`, `effectiveVolume`, every switch site (1133, 1167, 1261, 1414, 1566, 1648, 1662, 1730, 2441). `DeviceVolumeProviding` and `DeviceVolumeMonitor` are not touched.
+
+**Fork section, essential bodies**
+
+```swift
+func catchAllSkipsTap(for app: AudioApp, deviceUID: String) -> Bool {
+    guard catchAll.isEnabled else { return false }                      // off: nothing read
+    let live = catchAll.isLive(deviceUID)                               // observe logs "would cover"
+    let eq = settingsManager.getEQSettings(for: app.persistenceIdentifier)
+    let facts = AppTapFacts(
+        targetCovered: live,
+        singleMode: volumeState.getDeviceSelectionMode(for: app.id) == .single,
+        followsDefaultPersisted: settingsManager.isFollowingDefault(for: app.persistenceIdentifier),
+        appGain: volumeState.getVolume(for: app.id) * volumeState.getBoost(for: app.id).rawValue,
+        muted: volumeState.getMute(for: app.id),
+        eqActive: eq.isEnabled && !eq.isFlat,
+        autoEQOnTarget: deviceMonitor.device(for: deviceUID)?.supportsAutoEQ == true
+            && settingsManager.getAutoEQSelection(for: deviceUID)?.isEnabled == true,
+        loudnessOn: settingsManager.appSettings.loudnessCompensationEnabled
+            || settingsManager.appSettings.loudnessEqualizationEnabled,
+        playsElsewhere: live && catchAll.playsElsewhere(app.processObjectIDs, target: deviceUID))
+    let decision = PerAppTapPolicy.decide(facts)
+    catchAll.noteDecision(app, target: deviceUID, decision)
+    return catchAll.affectsAudio && decision == .coveredByCatchAll    // == covers(D) && covered
+}
+
+@discardableResult
+func catchAllReevaluateUntapped(_ app: AudioApp) -> Bool {             // true: the gate handled it
+    guard catchAll.affectsAudio, taps[app.id] == nil, let uid = appDeviceRouting[app.id],
+          volumeState.getDeviceSelectionMode(for: app.id) == .single else { return false }
+    if !catchAllSkipsTap(for: app, deviceUID: uid) {
+        ensureTapExists(for: app, deviceUID: uid)
+        if taps[app.id] != nil { appliedPIDs.insert(app.id) }
+    }
+    return true
+}
+
+func catchAllCoverageEnding(_ uid: String) -> Bool {                   // R2, also with the breaker open
+    guard catchAll.isEnabled else { return false }
+    for app in processMonitor.activeApps where taps[app.id] == nil
+        && volumeState.getDeviceSelectionMode(for: app.id) == .single
+        && !settingsManager.isIgnored(app.persistenceIdentifier) {
+        let routed = appDeviceRouting[app.id] == uid
+        guard routed || catchAll.mayPlay(app.processObjectIDs, on: uid) else { continue }
+        ensureTapExists(for: app, deviceUID: uid)                      // retirement hold in the decorator
+        if routed, taps[app.id] != nil { appliedPIDs.insert(app.id) }  // others move to their routing next pass
+    }
+    let present = Set(processMonitor.activeApps.map(\.id))
+    return appDeviceRouting.contains { $0.value == uid && taps[$0.key] == nil && !present.contains($0.key) }
+}
+
+func catchAllWillRoute(to targetUID: String) {                         // before the routing loop
+    guard catchAll.isEnabled else { return }
+    let previous = Set(followsDefault.compactMap { appDeviceRouting[$0] })
+        .union([deviceVolumeMonitor.defaultDeviceUID].compactMap { $0 })  // HAL-driven: already the new UID
+    catchAll.noteRouting(from: previous, to: targetUID)
+    guard catchAll.affectsAudio else { return }
+    catchAllRouteTargetUID = targetUID == deviceVolumeMonitor.defaultDeviceUID ? nil : targetUID
+}
+
+func catchAllDefaultOutputUID() -> String? {                           // V10
+    let monitorUID = deviceVolumeMonitor.defaultDeviceUID
+    guard catchAll.affectsAudio, let target = catchAllRouteTargetUID else { return monitorUID }
+    if target == monitorUID { catchAllRouteTargetUID = nil }
+    return target
+}
+```
+
+`reevaluateCatchAllCoverage()` is `guard catchAll.affectsAudio else { return }; catchAll.requestReevaluation()`; `catchAllRunGate()` is `guard catchAll.affectsAudio else { return }; applyPersistedSettings()`. `catchAllEQWithoutTap` persists through `settingsManager.setEQSettings` and calls `catchAllReevaluateUntapped` when `affectsAudio`. `catchAllBeginCreation` returns `true` when `!isEnabled`, otherwise `catchAllTapsBeingCreated.insert(pid).inserted`; every writer of `taps[pid]` for a pid without a tap goes through it (`recreateTap` removes the old tap first, `:2363`). `catchAllDidRegister` (only when enabled) calls `applyTapOutputState` again, so a volume or mute set by a nested setter during the spin reaches the tap. If the selection mode is still single and `appDeviceRouting[app.id]` changed meanwhile, it switches the tap there in a Task with the pattern of `:1408-1420`; only a changed selection mode runs `updateTapForCurrentMode(for:)`, which reads the stale default for follows-default apps (`:1235`, V10).
+
+**Other files:** `CatchAllRunLogic.swift`, `CatchAllRunControl.swift` (E3, `observeDevices`, refresh order, detach and stop timeouts, `onDevicesChanged` and event posts); `CatchAllPlan.swift:44-51`; `CatchAllSettings.swift` (H9 and its pending key, `CatchAllIOOnlyCapSeconds`, margin overrides, `CatchAllListening`); `CatchAllHarness.swift` (H9, alert-device line, ms timestamps); `AudioDeviceMonitor.swift` (`onOutputDeviceListRefreshed` at the end of `handleDeviceListChanged`, commit 14); new `PerAppTapPolicy.swift`, `CatchAllCoordinator.swift`, `CatchAllAwareTap.swift`, `CatchAllListening.swift`; tests: `FakeCatchAllCoordinator`, `FakeTapController.onActivate`.
+
+### 16.6 Failure modes and fail-open
+
+Every failure ends in one of three states: covered audio silent for a bounded time (unbounded only when the run queue or main never returns: silent, never loud), one short dip, or today's per-app taps (through R, or because `covers` is false). No path leaves a process excluded without a tap that holds it (I1 checker with repair), and none releases a per-app tap while the CA plays the same process on one of its targets.
+
+| Failure | Detection | Response | Worst audible result |
+|---|---|---|---|
+| Build fails, device alive | build throws | teardown; `covers` false; backoff 5/30/120 s, give-up; 1 breaker count | `notReady`: uncovered TV audio silent ≤ 2 s |
+| Device listed but not alive, or new ID under the same UID | `isAliveCheck`, listed ID ≠ stored ID at an IO failure, reconcile or device-list refresh | E12: new alive ID rebuilds E at once; not alive: dormant (only with a CA), alive listener read once, rebuild E, else R; never counted | silent while not alive, as today; new ID: until the list refresh and rebuild, silent or unprocessed (unmeasured) |
+| Device UID absent | reconcile | G | as today |
+| Push fails or read-back differs (`CatchAllTapController.swift:126-146`) | `push` false | retry with fresh list, rebuild E, then R; waiters complete | handover delayed, never unprocessed |
+| CA IO dead, `IOStoppedAbnormally`, start error | 2 liveness ticks, listener, status | rebuild E; 3 counted within 2 min: give-up and R | covered audio silent ~4 s plus rebuild |
+| IsRunning edge missed | follow-ups, stop-then-recheck, 3 s re-read | none | covered sound silent ≤ ~4 s |
+| Unlisted output inside IO after the cap | 100 ms poll | none | silent onset loss ≤ ~120 ms |
+| Covered app plays elsewhere | Devices listener, settle rule | mixdown tap | aggregate or virtual: as today's first playback; plain or unresolvable: 500 ms longer |
+| Exclusion slower than G | applied needs margin and 2 callbacks; grow watchdog | release | doubled (≤ +6 dB) for the excess |
+| Hold stuck (lost Task) | coordinator tick, only while holds exist | grow: release; retirement: CA hold, then release; shrink: invalidate after inclusion or CA gone | brief doubling or silence, `.fault` |
+| Reentrancy during a spin (V4) | creation guard, phases, deferred reconcile, queued retirements | nested effects re-applied after registration | none |
+| Run queue blocked in a HAL call | 1 s timeout on `detach` and `stop()` (other calls are `queue.async`) | `.fault`, breaker count, R; destroy only after the queued detach ran | as R; if the queue never returns, covered audio stays silent |
+| Breaker (3 counted failures within 10 min) | counter | `affectsAudio` false; R for every CA (retirement holds still apply); no rebuild this session | one R gap |
+| `activate` fails in R2 | throw | logged | that app unprocessed, as today for a failed tap |
+| Format change | hooks (E15) | hold, release or E; 2 s watchdog | covered audio silent ≤ 2 s |
+| coreaudiod restart | `ServiceRestarted` | E20: claims kept only for resolving tap UUIDs, voided taps recreated; R if the rebuild fails | unprocessed in the restart window, as today |
+| App absent from the process list at R | R2 return value | destroy deferred 30 s, held CA | returning app silent until its tap; unlisted sounds on D silent ≤ 30 s |
+| Quit, crash, `kill -9` | none | private taps die with the process (H9 gates mode on) | TV at full scale until relaunch |
+| Main thread hangs | none | CA IO and run queue continue at the last gain | holds in flight silent for the hang |
+| Other tap users (SoundSource, upstream FineTune) | none | kill switch, `CatchAllExcludedDeviceUIDs` | a process muted by another tool |
+
+**Residuals in v1:** a customized app's first 100-300 ms at TV gain, a persisted mute briefly audible (Q4); one dropout per playing app on TV → AirPods (Q1); apps keep taps until they quit after resets, AirPods sessions and TV power cycles during playback, and `stream(fallback)` taps dip once on return (Q6); an unlisted daemon with open IO costs CA IO for 120 s, then 100 ms polls; a covered app that starts on an aggregate or virtual device is unprocessed there until its tap exists (Devices post plus `activate`, as at today's first playback of a new process), on another plain device or an unresolvable ID 500 ms longer.
+
+### 16.7 RT and threading
+
+- **HAL IO thread:** no change. `CatchAllRender` and its lint test stay. A per-app hold uses the existing `isMuted`, a plain `nonisolated(unsafe)` Bool (`ProcessTapController.swift:60, 218-220`); the IO thread re-arms the 40 ms gate on the unmute edge (`:1695-1700`). The CA hold is the atomic `renderState.held`. R3 is one atomic store plus plain word-sized stores in one main-actor turn; the aggregates run independent IO cycles, so overlap or gap is at most one buffer.
+- **Run queue** (`com.adschfr.FineTuneFork.catchall`): IsRunning, IsRunningOutput and Devices listeners for every process. `refresh` reads IsRunning and IsRunningOutput and applies start effects first, then reads Devices; device classification is cached per `AudioDeviceID` and cleared on `ServiceRestarted`, so a resume never waits behind 1 + 3k HAL reads. Timers: 2 s tick while a CA runs; 100 ms poll only while a CA is stopped and a capped unlisted process exists; 3 s re-read (1 s leeway) while all are stopped. The interval comes from a pure `CatchAllRunLogic.timerInterval(now:)`. Devices changes and start or suspend times go to main through `Task { @MainActor … }`, coalesced; the queue never waits for main.
+- **Timeouts:** `detach` resumes a one-shot continuation (`Mutex<CheckedContinuation?>`) from the queue or from a 1 s `DispatchSourceTimer`. On timeout the coordinator completes R but destroys the CA only when the queued `detachOnQueue` has run, so no `backend.stop` or `start` hits destroyed IDs (`CatchAllRunControl.swift:175-196`). `stop()` uses `queue.async` and a semaphore wait of 1 s instead of `queue.sync` (`:78-87`); on timeout it skips destroy and relies on process exit (H9).
+- **Main:** builds, pushes, `activate`, gate decisions and C9 lookups (no HAL reads), the E12 IsAlive reads and the E20 tap-UUID check. Builds and `activate` spin the run loop (V4), hence the creation guard, one build per device and deferred nested reconciles. Engine hooks never spin inside device or default-change handlers: `reconcile()` (rows 4, 12, 23, 24) and `requestReevaluation()` only schedule the coordinator's next-turn task (reconcile first, then the gate), so builds, R and its R2 run in the coordinator's own turn. `onCoverageWillEnd` is the only synchronous callback into the engine. A 2 s main check runs only while a CA is dormant.
+- **Isolation** (app target nonisolated by default, test target MainActor): `PerAppTapPolicy`, `CatchAllPlan`, `CatchAllRunLogic` nonisolated; coordinator and decorator `@MainActor`.
+- **Helper processes** (`afplay`, `osascript`, the H9 `/bin/sh` helper) are started only by the harness and the listening session, never by tests or normal operation.
+
+### 16.8 Tests
+
+**Rules** (§12.1, MEMORY "test runs and TCC"): no unit test creates a tap or aggregate, spawns a process or plays sound; real backends exist only in `CatchAllCoordinator.live`; `./scripts/test.sh` fails on any TCC prompt (`scripts/test.sh:57-63`); settings tests use `UserDefaults(suiteName:)`. Existing tests outside the CatchAll suites stay green unchanged; commit 9 rewrites `followUpReadCatchesLateOutput` (`CatchAllRunTests.swift:326-343`, the IsRunning edge now starts the CA) and commit 10 replaces the `needsHold` tests (`CatchAllPlanTests.swift:71-91`).
+
+**Unit tests (Swift Testing, fakes only)**
+
+1. **`CatchAllRunTests`** (pure logic, manual clock): IsRunning without output starts for a listed process with no cap; an unlisted one counts for 120 s, then poll effects at 100 ms, and a poll that finds output starts; `timerInterval` gives 3 s while all are stopped and the re-read restarts a missed resume; poll and re-read rises are flagged "output without edge"; a Devices change emits `devicesChanged`, an identical read does not; start effects precede the Devices read; no suspend while output runs; excluded, self and foreign never start.
+2. **`PerAppTapPolicyTests`:** each of C2-C9 alone turns covered into tap; C1 false gives `noCatchAll`; gain 0.9995 covered, 0.99 tap, 0.5 × x2 covered; EQ enabled and flat covered, disabled with gains covered; AutoEQ selection on a device without support covered; explicit routing to D and multi mode tap; every reason reported.
+3. **`CatchAllPlanTests`:** `holds` for disjoint, overlapping and empty sets.
+4. **`CatchAllCoordinatorTests`** (injected: fake backend and run control, clock, process list, self object, device facts (listed, alive, ID, tier, aggregate, virtual, stream count), Devices feed): `isLive`, `covers`, `affectsAudio` per mode and phase, with a single retiring CA keeping `affectsAudio` true; gain seeded, followed, frozen; flush coalescing, generation, applied waits; a new CA attaches held and releases only after its initial list applies; I1 repair; `playsElsewhere` true at once for an aggregate or virtual device, after 500 ms for another plain ID, an unresolvable ID, or an empty or unknown list while IsRunningOutput is 1; false for D plus plain devices and for an empty list while silent; every `from` device counts as D for 2 s; re-evaluation callback when P becomes foreign; `mayPlay` for D, non-plain and other lists; retirement tickets per the "Also" rules; `reconcile` and `requestReevaluation` share one next-turn task, reconcile first; reentrancy: the fake backend's `waitUntilReady` calls `reconcile` and the flush through `MainActor.assumeIsolated`, giving one build per device and no push to a building CA.
+5. **`CatchAllCoordinatorFailureTests`** (fake claim owners, one ordered log; coordinator side only): R with one CA logs `retiring → onCoverageWillEnd → CA hold → retirement tickets complete → detach → destroy` and fails if a ticket completes before the CA hold or destroy precedes the detach; `takesRetirementHold` true between R1 and R3, false after; R2 returning true defers destroy by 30 s; absent UID gives G without callback or count; listed-not-alive with a CA gives dormant (no destroy, no callback, no count), alive again rebuilds, a failed rebuild runs R; a new listed ID that is already alive rebuilds at once (device-list refresh); IsAlive already true when the listener is registered rebuilds; a failed build while not alive leaves `covers` false, is not dormant and builds when alive; 3 counted failures give give-up and R; breaker runs R for every CA; format changing, unchanged and changed in E order, `formatUnchanged` ignored during the rebuild; `ServiceRestarted` forgets without destroy, keeps a claim whose tap UUIDs resolve, voids and reports the others, builds after the list refresh; detach timeout never destroys before the queued detach; watchdogs fire.
+6. **`CatchAllAwareTapTests`** (`FakeTapController`, `FakeCatchAllCoordinator`, one ordered log): create on a live CA target `mute true → activate → exclude → applied → mute false`; on the AirPods with a mixdown claim covering the TV: exclusion pushed, no mute; on a retiring target `mute true → activate → (R3) → mute false`, released only when the coordinator completes the ticket; a tap created after R3 takes no hold; remove `mute true → include → applied → invalidate`; dead processes invalidate at once; P5 switch without push; a coverage-losing switch shrinks first; two concurrent switches end with claim = `liveCapture`; D rules; user mute survives a hold.
+7. **Forwarding test:** every requirement in `ProcessTapControlling.swift:9-48` reaches the inner tap; a source count fails on a new upstream requirement.
+
+**8. Engine tests** (fixture of `AudioEngineTapLifecycleTests.swift:72-90`, which injects `isProcessRunning` and `currentDate`, plus `processOutputDeviceUIDs` and `FakeCatchAllCoordinator`, which fires `onCoverageMayHaveChanged` in the next turn after `requestReevaluation`; `MockDeviceVolumeProviding.setDefaultDevice` leaves the default stale, `DeviceVolumeTierTests.swift:194`):
+
+- covered app at defaults: no factory call, routing set; then `appSettings.loudnessCompensationEnabled = true` and `setLoudnessCompensationEnabled(true)` (row 16, through `applyPersistedSettings`) give exactly one factory call after one turn, which shows the pid was not marked applied;
+- observe, live CA, app at defaults: `noteDecision(.coveredByCatchAll)` and exactly one factory call;
+- `setVolume` ≠ 1, `setBoost`, `setMute(true)`, `setEQSettings` (persisted), same-device explicit routing, multi mode, loudness, AutoEQ each create exactly one tap, also for a silent app where the setter is per app; `setVolume(1)` and `setMute(false)` on a covered app (URL reset) create none;
+- reset keeps taps; saved volume and mute still reach an existing tap;
+- `playsElsewhere` creates one tap with the mixdown source;
+- `setDefaultOutputDevice(AirPods)` with a stale monitor default: routing AirPods, no factory call inside the call, one tap per playing covered app on the AirPods (mixdown) after one turn; AirPods → TV and the case-1 restore: no factory call, routing TV; a default change arriving with the monitor already updated passes the previous routing in `noteRouting`'s `from`;
+- `onCoverageWillEnd(TV)` creates taps synchronously for running and silent covered apps routed to the TV and for an untapped app routed to the AirPods whose Devices name the TV (not marked applied), not for ignored ones; it returns true for an absent untapped pid routed to the TV;
+- `onClaimsVoided` schedules one recreate per pid;
+- reentrancy: `FakeTapController.onActivate` fires `onAppsChanged`, `setVolume`, `setMute` and `setDevice` for the same pid; one tap is registered, carries the nested volume and mute, and is switched to the nested routing without `updateTapForCurrentMode`;
+- routing of a quit untapped app is pruned after the 30 s grace, not at the 350 ms pass; a pid that reappears keeps it;
+- wiring order: `catchAll.start()` before the first `applyPersistedSettings`; gain hooks; reset calls `refreshGains` and `reconcile`; reconcile requested on connect before the default action, no factory call inside the handler; the format closure passes `rebuildCatchAll: true`, the health monitor false; `stop()` before the tap loop;
+- **Noop golden log** (mode off): a scripted run (start, app plays, `setVolume`, `setEQSettings` without a tap, default switch, disconnect, stale cleanup, reset, a reentrant creation) produces the factory calls and tap events of `bef2b82`; `setEQSettings` without a tap persists nothing.
+
+**9. Harness and listening, pure parts:** H9 is not part of `all`; the pending-H9 record round-trips; S-step parsing; injection is refused without a session token.
+
+**H9, gate G1** (commit 8, only after the user's consent, TV default): a muted harness CA holds the long tone at `afplay -v 0.02`, quiet even unscaled. The panel counts down to the kill. A `/bin/sh -c` helper started with `posix_spawn` and `POSIX_SPAWN_SETSID` sends SIGKILL to FineTune at the shown time, stops the tone 3 s later and relaunches with `open -b com.adschfr.FineTuneFork`. The relaunched app reads `CatchAllHarnessPendingH9`, clears it and asks at once: "FineTune wurde um HH:mm:ss.SSS beendet. Wann wurde der Ton hörbar?" ("sofort (unter 1 s)", "später", "gar nicht", "unsicher"). Pass only on "sofort". Otherwise variant B stops here, and the panel tells the user to restart the Mac if TV audio stays silent. The same run logs the system alert device (`kAudioHardwarePropertyDefaultSystemOutputDevice`).
+
+**Listening session** (commit 16, mode on, `CatchAllListening`, live coordinator, TV at about 10 %). It uses the existing panel: each step announced with a countdown and the expected result, coordinator events as `HH:mm:ss.SSS` lines, the answer asked right after the step ("ok", "zu laut", "Lücke", "doppelt/Echo", "Knacken", "anderes").
+
+| Step | Action | Expected |
+|---|---|---|
+| S0 | plain afplay tone | audible at TV volume; "CA start" line |
+| S1 | `osascript -e 'beep'`, panel names the alert device | quiet if the alert device is the TV, otherwise unchanged |
+| S2 | 12 s countdown (CA suspends), then a plain tone | not loud; "CA start" with ms (re-measures resume after commit 9) |
+| S3 | user starts and stops a MacWhisper dictation | start and stop sounds quiet and complete; IsRunning, CA start and output lines |
+| S4 | user starts Music or QuickTime | "covered, no tap"; no gap |
+| S5 | session calls `setVolume(app, 0.5)` at the marker | one dip ≤ 200 ms, then half loudness; hold and release lines |
+| S6 | back to 100 % | no change; "tap kept" |
+| S7 | user presses volume down twice and up twice during a tone | smooth steps |
+| S8 | (AirPods present) user switches TV → AirPods → TV during music | one short dropout on the AirPods, never loud; back on the TV no dip. Answers Q1 |
+| S9 | session injects R on the TV (session token only) | at most a very short gap, not loud, no echo; music continues at TV volume |
+| S10 | nothing playing; user power-cycles the TV, then a tone | not loud; "retired (device gone)" and "built" |
+
+Pass: no "zu laut" or "doppelt/Echo"; dips only in S5, S8 and S9 within the stated bounds; no silence beyond the H7 onset loss elsewhere.
+
+**Live phase** (no commit): a read-only check whether an aggregate or multi-output device containing the TV exists; optionally a few hours in observe with a log review (`/usr/bin/log show --predicate 'subsystem == "com.adschfr.FineTuneFork" AND category BEGINSWITH "CatchAll"'`: "would cover", push and resume latency, output without edge, `.fault`, I1 repairs); the listening session; one week in mode on with the kill switch documented. Results go into `HANDOFF.md`.
+
+### 16.9 Commit plan
+
+Commits 1-7 and the harness are done (`d818f55` … `bef2b82`). Each commit builds, passes `./scripts/test.sh` without a TCC prompt, and leaves behavior unchanged while `CatchAllMode` is `off`.
+
+8. **feat(catchall): H9 kill check.** H9 step and pending record in `CatchAllSettings` and `CatchAllHarness`, excluded from `all`; engine condition at `:369` extended (row 5); ms timestamps and the alert-device line in the panel. Test 9 (H9 parts). **Gate G1** after consent: continue only on "sofort".
+9. **feat(catchall): run control for covered IO.** IsRunning rule with listed set, cap and poll; `observeDevices` and `onDevicesChanged`; refresh order and classification cache, with `hasNonPlain` split into aggregate or virtual and unresolvable (`CatchAllRunControl.swift:280-282`); 3 s re-read with the leeway at `:221`; `timerInterval` in the logic; bounded `detach` and `stop`. Test 1. Not wired; the harness (`CatchAllHarness.swift:174, 305`) now uses this logic, so the §15 H7 and §15.1 H7M results predate it.
+10. **feat(catchall): per-app tap policy and target hold rule.** `PerAppTapPolicy.swift`, `holds`, margin and cap settings. Tests 2-3.
+11. **feat(catchall): coordinator core.** Protocol with `CatchAllClaimOwner`, Noop, live coordinator (phases incl. dormant, `isLive`, `covers`, `CatchAllPlan.ineligibility`, reconcile and reevaluation in one next-turn task, build held until applied, gain, claims, retirement tickets, flush with read-back, generation, waits, I1 checker, C9 settle state, `mayPlay`, `noteDecision`, `noteRouting`, `onEvent`); `FakeCatchAllCoordinator` and a fake claim owner in the test target. Test 4.
+12. **feat(catchall): failure handling with fail-open.** R with the deferred destroy, G, E12 (immediate rebuild for a new alive ID, dormant only with a CA, alive listener read once, `deviceListRefreshed`, 2 s check), E rebuild, counting without non-alive failures, breaker, format hooks, `ServiceRestarted` with the tap-UUID check and `onClaimsVoided`, watchdogs, queued retirements. Test 5 (coordinator side, fake owners).
+13. **feat(catchall): CatchAllAwareTap decorator.** A-D, hold rule, retirement holds and tickets, `userMuted`/`holdCount`, forwarding; adopts `CatchAllClaimOwner`. Tests 6-7, including the decorator side of R.
+14. **feat(engine): wire the coordinator, mode off by default.** Rows 1-12, 18, 21, 23-25, 27-28 (row 9 adds the `rebuildCatchAll` parameter); `AudioDeviceMonitor.onOutputDeviceListRefreshed`; fork functions `catchAllCoverageEnding`, `reevaluateCatchAllCoverage`, `catchAllRunGate`, creation guard, `catchAllDidRegister`; `FakeTapController.onActivate`. Engine tests for wiring, reentrancy and the Noop golden log. Mode on now behaves like variant A; observe is usable.
+15. **feat(engine): catch-all first on software outputs.** Rows 13-17, 19-20, 22, 26; the remaining fork functions. Remaining engine tests.
+16. **feat(catchall): listening session.** `CatchAllListening.swift` on the existing panel, S0-S10, token-guarded R injection, `onEvent` lines. Test 9 (session parts).
+- **Live phase** (§16.8).
+17. **docs(fork):** `FORK.md` (catch-all first, the tap rule, ignored apps on the TV, P5, the AirPods dropout and other residuals, the kill switch); fix the `.mutedWhenTapped` comment (`OrphanedTapCleanup.swift:7-9`); flip the `CatchAllMode` default only if the user answers Q5 with yes after the week.
+
+### 16.10 Later (one commit each, only when the trigger occurs)
+
+- **Rule H** (defer AirPods taps until the app's next IO start). Trigger: the S8 dropout bothers the user. Constraints from the review: an entry stores its source UID and is valid only while `covers(source)`; only for hardware-tier targets; cleared on routing to a covered or software device and in `onCoverageWillEnd`; never pruned by `cleanupStaleTaps`; absence from `activeApps` counts as idle.
+- **Handover model test** (seeded random). Trigger: first commit after v1.
+- **Mode-independent reentrancy guard** (fixes today's double tap in mode off). Trigger: the user wants the fix outside the feature; own test.
+- **Panel timeline, level traces, click marks.** Trigger: Q7 answered yes; panel-only commit.
+- **Live log panel with "Jetzt war etwas".** Trigger: an incident in the mode-on week that the user cannot time.
+- **H2 at n = 200 and a tuned G.** Trigger: a customized app on the TV, or a doubling report.
+- **H13** (`say -a` to another device or an aggregate). Trigger: the live-phase check finds an aggregate or multi-output device containing the TV.
+- **Settings drift test** with the full field partition. Trigger: the next upstream merge.
+- **Row hint for covered apps** (needs an observed coverage counter, since the coordinator's phases are not observed). Trigger: Q3 answered yes.
+- **Audio-tab switch.** Trigger: Q5 asks for it.
+- **`onOutputTierChanged`.** Trigger: the user uses tier overrides.
+- **Session-resign and wake observers.** Trigger: a second user account on the Mac.
+- **Poll back-off to 1 s after 10 min.** Trigger: wakeups show up in power measurements.
+- **Quiet point, H5 source refresh, device filter, strategy B.** Trigger: dips or power cost the user notices.
+- **Prewarm taps for customized apps** (Q4), **hand-back to the CA** (Q6). Trigger: the user's answer.
+- **C9 sticky set** (keep a `.playsElsewhere` result per process object across empty reads). Trigger: hand-back to the CA (Q6).
+
+### 16.11 Open questions for the user
+
+- **Q1.** On TV → AirPods during playback, v1 gives each playing app a new tap with a dropout of about 60-100 ms (never loud). Alternative: keep it playing natively until its next stop (rule H). Recommendation: ship v1 without rule H, let the user judge the dropout in S8, add rule H only if it bothers them.
+- **Q2.** Should ignored apps on the TV follow the TV volume instead of playing at full scale? Recommendation: yes, documented in `FORK.md`; keeping them at full scale would mean excluding them without a tap, the path this feature removes. Call apps on the TV are already processed today.
+- **Q3.** Covered apps show no per-app meter. Recommendation: never the CA level (it mixes in system sounds); a dimmed meter with a hint after v1 if wanted.
+- **Q4.** Create taps for customized apps as soon as their process appears? Recommendation: no for v1; the user has none, and prewarming blocks main up to 2 s per app (`ProcessTapController.swift:679`). The residual plays at TV volume, never at full scale.
+- **Q5.** After the week in mode on, make the catch-all the default, and add an Audio-tab switch? Recommendation: flip the default in the docs commit; no switch, since the mode is read at launch (`CatchAllSettings.swift:19-22`) and a switch would not roll back faster than the kill switch.
+- **Q6.** Apps keep their taps until they quit after a reset, an AirPods session or a TV power cycle during playback. Recommendation: acceptable for v1; a kept tap at defaults sounds like the CA, and hand-back is what made design 2's demotion unsafe.
+- **Q7.** Do the listening checks need a graphical timeline, or are the existing panel, ms event lines and categorized answers enough? Recommendation: start with the existing panel and ask before the listening session.
