@@ -33,6 +33,10 @@ final class CatchAllTapController {
     let renderState: CatchAllRenderState
     let ioHandle: CatchAllIOHandle
     private(set) var appliedExclusions: [AudioObjectID]
+    /// The UUID FineTune set on the description and the tap UID Core Audio reports (they
+    /// can differ; the aggregate uses the reported one).
+    let requestedTapUID: String
+    let assignedTapUID: String
 
     private let backend: any CatchAllBackend
     private let description: CATapDescription
@@ -42,13 +46,15 @@ final class CatchAllTapController {
 
     private init(deviceUID: String, deviceID: AudioDeviceID, description: CATapDescription,
                  resources: CatchAllResources, procID: AudioDeviceIOProcID, renderState: CatchAllRenderState,
-                 exclusions: [AudioObjectID], backend: any CatchAllBackend) {
+                 exclusions: [AudioObjectID], assignedTapUID: String, backend: any CatchAllBackend) {
         self.deviceUID = deviceUID
         self.deviceID = deviceID
         self.description = description
         self.resources = resources
         self.renderState = renderState
         self.appliedExclusions = exclusions
+        self.requestedTapUID = description.uuid.uuidString
+        self.assignedTapUID = assignedTapUID
         self.backend = backend
         self.ioHandle = CatchAllIOHandle(deviceUID: deviceUID, aggregateID: resources.aggregateID, procID: procID, state: renderState)
     }
@@ -112,7 +118,7 @@ final class CatchAllTapController {
 
         return CatchAllTapController(deviceUID: deviceUID, deviceID: deviceID, description: description,
                                      resources: resources, procID: procID, renderState: state,
-                                     exclusions: exclusions, backend: backend)
+                                     exclusions: exclusions, assignedTapUID: tapUID, backend: backend)
     }
 
     /// Sets a new exclusion list on the live tap and reads it back. On failure the stored
