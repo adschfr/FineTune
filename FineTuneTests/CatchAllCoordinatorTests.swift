@@ -727,6 +727,31 @@ struct CatchAllCoordinatorTests {
         withExtendedLifetime(owner) {}
     }
 
+    @Test("A push whose read-back failed is confirmed by its retry: a later claim change that leaves the list as it is ends its wait at once")
+    func retryConfirmsList() async throws {
+        let rig = makeCatchAllRig { $0.foreign = [13] }
+        let coordinator = rig.coordinator
+        coordinator.start()
+        rig.clock.runDue()
+        let owners = [FakeClaimOwner(), FakeClaimOwner(pid: 2)]
+        rig.backend.failReadBacks = 1
+        _ = coordinator.setClaim(owners[0], Claim(processes: [11], coverage: .allDevices))
+        rig.clock.runDue()
+        #expect(rig.pushes == ["set [5, 11, 13]", "set [5, 11, 13]"])
+        #expect(rig.tv?.appliedExclusions == [5, 11, 13])
+        rig.clock.advance(1)
+
+        // Another user's process is excluded anyway: claiming it changes no list
+        let ticket = try #require(coordinator.setClaim(owners[1], Claim(processes: [13], coverage: .allDevices)))
+        rig.clock.runDue()
+        let done = CoordinatorTestBox(false)
+        Task { await coordinator.waitApplied(ticket, .grow); done.value = true }
+        #expect(await waitUntil { done.value })
+        #expect(rig.pushes.count == 2)
+        #expect(rig.backend.log.filter { $0 == "createTap" }.count == 1)
+        withExtendedLifetime(owners) {}
+    }
+
     @Test("I1: other users' processes stay excluded; a list that holds them is pushed once")
     func invariantAllowsForeign() {
         let rig = makeCatchAllRig { $0.foreign = [13] }
@@ -926,15 +951,16 @@ struct CatchAllCoordinatorTests {
         #expect(rig.events.events.contains(.buildFailed(uid: "uid-tv", reason: "process list unreadable")))
     }
 
-    @Test("The flush and the I1 check skip a dormant catch-all")
-    func dormantSkipped() {
+    @Test("The flush and the I1 check skip a dormant or retiring catch-all",
+          arguments: [CatchAllPhase.dormant, .retiring(caHeld: false)])
+    func inactiveSkipped(phase: CatchAllPhase) {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
         coordinator.start()
         let owner = FakeClaimOwner()
         _ = coordinator.setClaim(owner, Claim(processes: [11], coverage: .allDevices))
         rig.clock.runDue()
-        coordinator.setPhaseForTesting(.dormant, for: "uid-tv")
+        coordinator.setPhaseForTesting(phase, for: "uid-tv")
         let pushes = rig.pushes
 
         #expect(coordinator.removeClaim(ObjectIdentifier(owner)) == nil)

@@ -271,6 +271,35 @@ struct CatchAllCoordinatorFailureTests {
         #expect(calls.value == 2)
     }
 
+    @Test("Generations survive R4: an older ticket resolves against the catch-all built again, and new tickets count on")
+    func generationsSurviveRetirement() async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        coordinator.start()
+        rig.clock.runDue()
+        let owners = [FakeClaimOwner(), FakeClaimOwner(pid: 2)]
+        let first = try #require(coordinator.setClaim(owners[0], Claim(processes: [11], coverage: .allDevices)))
+        #expect(first.generations == ["uid-tv": 1])
+        rig.clock.advance(1)
+        coordinator.onCoverageWillEnd = { _ in false }
+        coordinator.retire("uid-tv", reason: .injected)
+        rig.clock.runDue()
+        #expect(await eventually { coordinator.phase("uid-tv") == nil })
+
+        // Without backoff yet, the next reconcile builds the device again with the claim's list
+        coordinator.reconcile()
+        rig.clock.runDue()
+        #expect(coordinator.phase("uid-tv") == .live)
+        #expect(rig.tv?.appliedExclusions == [5, 11])
+        let done = CoordinatorTestBox(false)
+        Task { await coordinator.waitApplied(first, .grow); done.value = true }
+        #expect(await eventually { done.value || coordinator.pendingWaitCount == 1 })
+        #expect(done.value)
+        let second = try #require(coordinator.setClaim(owners[1], Claim(processes: [12], coverage: .allDevices)))
+        #expect(second.generations == ["uid-tv": 2])
+        withExtendedLifetime(owners) {}
+    }
+
     @Test("A reconcile that finds the device without software volume retires its live catch-all (R) and builds none")
     func tierChanged() async {
         let rig = makeCatchAllRig()
@@ -581,6 +610,41 @@ struct CatchAllCoordinatorFailureTests {
             "queue ran detach uid-tv 200",
             "destroy tap=100 aggregate=200 proc=true",
         ])
+    }
+
+    /// `atStop`: the keep-aside ends at stop() instead of at its expiry.
+    @Test("A kept-aside catch-all whose detach timed out is destroyed only after the queued detach ran, when its keep-aside ends at expiry or at stop()",
+          arguments: [false, true])
+    func keptAsideDetachTimeout(atStop: Bool) async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        coordinator.start()
+        rig.clock.runDue()
+        let log = trace(rig)
+        rig.runControl.blocked = true
+        // R2 finds an absent app routed here; at expiry it is no longer
+        let answers = CoordinatorTestBox(atStop ? [true] : [true, false])
+        coordinator.onCoverageWillEnd = { _ in answers.value.removeFirst() }
+
+        coordinator.retire("uid-tv", reason: .injected)
+        rig.clock.runDue()
+        #expect(await eventually { coordinator.phase("uid-tv") == nil })
+        #expect(log.all.contains("detach uid-tv 200 timed out"))
+
+        if atStop {
+            coordinator.stop()
+        } else {
+            rig.clock.advance(30)
+        }
+        #expect(answers.value.isEmpty)
+        await settle()
+        #expect(!log.all.contains { $0.hasPrefix("destroy") })
+
+        rig.runControl.unblock()
+        #expect(await eventually { log.all.contains { $0.hasPrefix("destroy") } })
+        let ran = try #require(log.all.firstIndex(of: "queue ran detach uid-tv 200"))
+        let destroy = try #require(log.all.firstIndex(of: "destroy tap=100 aggregate=200 proc=true"))
+        #expect(ran < destroy)
     }
 
     // MARK: Rebuild (E) and push failures
@@ -1016,6 +1080,104 @@ struct CatchAllCoordinatorFailureTests {
         #expect(!rig.events.events.contains { if case .buildFailed = $0 { true } else { false } })
     }
 
+    @Test("A push whose read-back failed twice leaves the tap's list unconfirmed: a claim change back to the recorded list ends no wait before the rebuild takes over, and the rebuilt list counts again")
+    func unconfirmedListAfterFailedPush() async throws {
+        let rig = makeCatchAllRig { $0.foreign = [13] }
+        let coordinator = rig.coordinator
+        let system = rig.system
+        let events = rig.events
+        coordinator.start()
+        rig.clock.runDue()
+        let old = try #require(rig.tv)
+        #expect(old.appliedExclusions == [5, 13])
+        let owners = [FakeClaimOwner(), FakeClaimOwner(pid: 2)]
+        // Both sets of [5, 11, 13] take effect, but neither reads back. The process list then
+        // cannot be read for a while, so the rebuild that follows is postponed.
+        rig.backend.failReadBacks = 2
+        coordinator.onEvent = { event in
+            events.events.append(event)
+            if case .pushFailed = event { system.processListReadable = false }
+        }
+        let grow = try #require(coordinator.setClaim(owners[0], Claim(processes: [11], coverage: .allDevices)))
+        let done = CoordinatorTestBox(0)
+        Task { await coordinator.waitApplied(grow, .grow); done.value += 1 }
+        #expect(await eventually { coordinator.pendingWaitCount == 1 })
+        rig.clock.runDue()
+        #expect(old.appliedExclusions == [5, 13])
+        #expect(rig.backend.processes(on: 100) == [5, 11, 13])
+        #expect(rig.tv === old)
+
+        // The per-app tap goes, so the desired list is the recorded one again, while the tap
+        // still excludes 11: neither wait may end on that
+        system.processListReadable = true
+        let shrink = try #require(coordinator.removeClaim(ObjectIdentifier(owners[0])))
+        Task { await coordinator.waitApplied(shrink, .shrink); done.value += 1 }
+        #expect(await eventually { coordinator.pendingWaitCount == 2 })
+        rig.clock.runDue()
+        await settle()
+        #expect(done.value == 0)
+        #expect(rig.backend.processes(on: 100) == [5, 11, 13])
+
+        // The rebuild runs 100 ms later and takes over 200 ms after that; both waits end then
+        rig.clock.advance(0.1)
+        let new = try #require(rig.tv)
+        #expect(new !== old)
+        #expect(new.appliedExclusions == [5, 13])
+        rig.clock.advance(0.19)
+        await settle()
+        #expect(done.value == 0)
+        rig.clock.advance(0.01)
+        #expect(await eventually { done.value == 2 })
+        #expect(held(old))
+        #expect(!held(new))
+
+        // The rebuilt catch-all's list is confirmed: a claim change that leaves it as it is (another
+        // user's process is excluded anyway) ends its wait at once
+        let unchanged = try #require(coordinator.setClaim(owners[1], Claim(processes: [13], coverage: .allDevices)))
+        rig.clock.runDue()
+        Task { await coordinator.waitApplied(unchanged, .grow); done.value += 1 }
+        #expect(await eventually { done.value == 3 })
+        withExtendedLifetime(owners) {}
+    }
+
+    @Test("A push that fails once and whose retry finds nothing left to push rebuilds, since the tap may hold the list it was sent")
+    func retryWithNothingToPushRebuilds() async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        let system = rig.system
+        let events = rig.events
+        coordinator.start()
+        rig.clock.runDue()
+        let old = try #require(rig.tv)
+        let owner = FakeClaimOwner()
+        // The set of [5, 11] takes effect but does not read back, and 11 quits before the retry
+        // reads the process list again: the desired list is the recorded [5] again
+        rig.backend.failReadBacks = 1
+        coordinator.onEvent = { event in
+            events.events.append(event)
+            if case .pushFailed = event { system.processes = [5, 12, 13] }
+        }
+        let ticket = try #require(coordinator.setClaim(owner, Claim(processes: [11], coverage: .allDevices)))
+        let done = CoordinatorTestBox(false)
+        Task { await coordinator.waitApplied(ticket, .grow); done.value = true }
+        #expect(await eventually { coordinator.pendingWaitCount == 1 })
+        rig.clock.runDue()
+
+        // The old tap still excludes 11, which a recycled object ID would inherit; the new one
+        // is built without it
+        #expect(rig.pushes == ["set [5, 11]"])
+        #expect(rig.backend.processes(on: 100) == [5, 11])
+        let new = try #require(rig.tv)
+        #expect(new !== old)
+        #expect(new.appliedExclusions == [5])
+        await settle()
+        #expect(!done.value)
+        rig.clock.advance(0.2)
+        #expect(rig.events.events.contains(.rebuilt(uid: "uid-tv")))
+        #expect(await eventually { done.value })
+        withExtendedLifetime(owner) {}
+    }
+
     // MARK: Watchdogs
 
     @Test("Grow watchdog: a wait whose exclusion is in force but not confirmed ends after max(1 s, G + 0.6 s)")
@@ -1165,7 +1327,7 @@ struct CatchAllCoordinatorFailureTests {
         withExtendedLifetime(owners) {}
     }
 
-    @Test("Shrink watchdog: a wait whose inclusion is in force ends after 2 s, before S has passed")
+    @Test("Shrink watchdog: with the process list unreadable, a wait whose list is in force ends at its last chance, 2 s after its time")
     func shrinkWatchdog() async throws {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
@@ -1175,28 +1337,33 @@ struct CatchAllCoordinatorFailureTests {
         rig.clock.advance(1)
         let tv = try #require(rig.tv)
         #expect(tv.appliedExclusions == [5, 11])
+        // 11 quits: the flush pushes the list without it, and the claim stays
+        rig.system.processes = [5, 12, 13]
+        rig.runControl.onProcessListChanged?()
+        rig.clock.advance(1)
+        #expect(tv.appliedExclusions == [5])
+        // The claim goes while the process list cannot be read, so its change is never pushed
         rig.system.processListReadable = false
         let ticket = try #require(coordinator.removeClaim(ObjectIdentifier(owner)))
         let done = CoordinatorTestBox(false)
         Task { await coordinator.waitApplied(ticket, .shrink); done.value = true }
         #expect(await eventually { coordinator.pendingWaitCount == 1 })
 
-        // The flush reads no process list until 1.7 s, then pushes the inclusion
-        rig.clock.advance(1.65)
-        rig.system.processListReadable = true
-        rig.clock.advance(0.1)
-        #expect(tv.appliedExclusions == [5])
-        rig.clock.advance(0.24)
+        // Not judged at 2 s but at 2 s + 2 s, where the applied list excludes no process
+        // without a claim
+        rig.clock.advance(3.99)
         await settle()
         #expect(!done.value)
-
+        #expect(!rig.events.events.contains { if case .watchdog = $0 { true } else { false } })
         rig.clock.advance(0.01)
         #expect(await eventually { done.value })
         #expect(rig.events.events.contains(.watchdog(uid: "uid-tv", .shrink)))
+        #expect(rig.backend.log.filter { $0 == "createTap" }.count == 1)
+        withExtendedLifetime(owner) {}
     }
 
     /// `judged`: the watchdog's time (2 s) or its last chance with an unreadable list (2 s more).
-    @Test("Shrink watchdog: an inclusion pushed when the wait is judged ends it only G after the push, since Core Audio may not apply it before",
+    @Test("Shrink watchdog: an inclusion pushed when the wait is judged ends it only S after the push, as the shrink wait itself does",
           arguments: [2.0, 4.0])
     func shrinkWatchdogYoungInclusion(judged: Double) async throws {
         let rig = makeCatchAllRig()
@@ -1223,12 +1390,13 @@ struct CatchAllCoordinatorFailureTests {
         #expect(!done.value)
         #expect(!rig.events.events.contains { if case .watchdog = $0 { true } else { false } })
 
-        rig.clock.advance(0.12)
+        // Past G it still waits: an inclusion judged too early would leave 11 in neither tap
+        rig.clock.advance(0.39)
         await settle()
         #expect(!done.value)
         rig.clock.advance(0.01)
         #expect(await eventually { done.value })
-        #expect(rig.events.events.contains(.watchdog(uid: "uid-tv", .shrink)))
+        #expect(rig.backend.log.filter { $0 == "createTap" }.count == 1)
         withExtendedLifetime(owner) {}
     }
 
@@ -1298,6 +1466,51 @@ struct CatchAllCoordinatorFailureTests {
         #expect(rig.events.events.contains(.watchdog(uid: "uid-tv", .rebuild)))
         #expect(rig.events.events.contains(.retiring(uid: "uid-tv", .pushFailed)))
         #expect(!rig.events.events.contains { if case .failure = $0 { true } else { false } })
+        #expect(held(tv))
+        withExtendedLifetime(owner) {}
+    }
+
+    @Test("Initial-list watchdog: quiet while the rebuild of a new catch-all still held is postponed; the rebuild's own bound ends it with R")
+    func initialListWatchdogQuietWhileRebuildDeferred() throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        let system = rig.system
+        let backend = rig.backend
+        let owner = FakeClaimOwner()
+        backend.onWaitUntilReady = {
+            MainActor.assumeIsolated {
+                // A per-app tap created during the build's wait; the push after the build fails twice
+                _ = coordinator.setClaim(owner, Claim(processes: [11], coverage: .allDevices))
+                backend.failSets = 2
+            }
+        }
+        coordinator.start()
+        backend.onWaitUntilReady = nil
+        let tv = try #require(rig.tv)
+        #expect(held(tv))
+        // The list becomes unreadable with the first push, so the rebuild that follows the
+        // failed retry is postponed
+        backend.onRecord = { entry in
+            guard entry.hasPrefix("set") else { return }
+            MainActor.assumeIsolated { system.processListReadable = false }
+        }
+
+        rig.clock.runDue()
+        #expect(rig.pushes.count == 2)
+        #expect(rig.tv === tv)
+        #expect(held(tv))
+
+        // The initial-list watchdog would only ask for the rebuild that is already postponed
+        rig.clock.advance(1)
+        #expect(!rig.events.events.contains { if case .watchdog = $0 { true } else { false } })
+        rig.clock.advance(0.99)
+        #expect(!rig.events.events.contains { if case .retiring = $0 { true } else { false } })
+        rig.clock.advance(0.01)
+        #expect(rig.events.events.contains(.watchdog(uid: "uid-tv", .rebuild)))
+        #expect(rig.events.events.contains(.retiring(uid: "uid-tv", .pushFailed)))
+        #expect(!rig.events.events.contains(.watchdog(uid: "uid-tv", .initialList)))
+        #expect(!rig.events.events.contains { if case .failure = $0 { true } else { false } })
+        #expect(rig.backend.log.filter { $0 == "createTap" }.count == 1)
         #expect(held(tv))
         withExtendedLifetime(owner) {}
     }

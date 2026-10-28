@@ -24,6 +24,7 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
     private var _deviceIDs: [String: AudioDeviceID] = ["uid-tv": 42]
     private var _setTaps: [AudioObjectID] = []
     private var _failSets = 0
+    private var _failReadBacks = 0
     private var _onWaitUntilReady: (@Sendable () -> Void)?
     private var _onRecord: (@Sendable (String) -> Void)?
     var failAt: Step?
@@ -57,6 +58,11 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
         get { lock.withLock { _failSets } }
         set { lock.withLock { _failSets = newValue } }
     }
+    /// The next this many read-backs return nothing, although a set before them took effect.
+    var failReadBacks: Int {
+        get { lock.withLock { _failReadBacks } }
+        set { lock.withLock { _failReadBacks = newValue } }
+    }
     /// Runs inside `waitUntilReady`, where the real wait spins the main run loop.
     var onWaitUntilReady: (@Sendable () -> Void)? {
         get { lock.withLock { _onWaitUntilReady } }
@@ -66,6 +72,8 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
     var lastTap: AudioObjectID { lock.withLock { _nextTap - 1 } }
     /// Description sets made on `tap`, failed ones included.
     func sets(on tap: AudioObjectID) -> Int { lock.withLock { _setTaps.filter { $0 == tap }.count } }
+    /// The exclusion list `tap` holds, whatever its read-back says.
+    func processes(on tap: AudioObjectID) -> [AudioObjectID] { lock.withLock { _tapProcesses[tap] ?? [] } }
 
     func deviceID(forUID uid: String) -> AudioDeviceID? { lock.withLock { _deviceIDs[uid] } }
     func firstOutputStreamIndex(of device: AudioDeviceID) throws -> UInt { 0 }
@@ -87,7 +95,12 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
     func readTapDescription(_ tap: AudioObjectID) -> CATapDescription? {
         record("readBack")
         let processes = readBackOverride ?? lock.withLock { _tapProcesses[tap] ?? [] }
-        if failAt == .readBack { return nil }
+        let failOnce = lock.withLock {
+            guard _failReadBacks > 0 else { return false }
+            _failReadBacks -= 1
+            return true
+        }
+        if failAt == .readBack || failOnce { return nil }
         let description = CATapDescription(excludingProcesses: processes, deviceUID: "uid-tv", stream: 0)
         description.isExclusive = true
         return description

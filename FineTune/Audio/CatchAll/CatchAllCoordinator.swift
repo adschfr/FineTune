@@ -310,7 +310,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             entry.keepTimer = nil
             destroyIfDone(entry)
         }
-        // G completed the waits on every device; none is left to wait for
+        // G completed the waits on every device, so none is expected here; this backstop ends
+        // any left over, whose handover would otherwise hang
         let open = waiters
         waiters.removeAll()
         for action in [turn, flushAction, checkAction, settleAction, watchdogAction] { action?.cancel() }
@@ -746,12 +747,12 @@ final class CatchAllCoordinator: CatchAllCoordinating {
                 continue
             }
             if push(device, desired, desired: desired) { continue }
-            // §4.6 failure, step 1: once more with a fresh process list
+            // §4.6 failure, step 1: once more with a fresh process list. The tap may now hold
+            // the list it was sent, and a list equal to the applied one cannot be pushed to
+            // confirm what it holds, so that case rebuilds too.
             if let fresh = readProcesses() { processes = fresh }
             desired = desiredList(for: device.uid, processes)
-            if desired == controller.appliedExclusions {
-                noteCurrent(device)
-            } else if !push(device, desired, desired: desired) {
+            if desired == controller.appliedExclusions || !push(device, desired, desired: desired) {
                 pushStillFails(device)
             }
         }
@@ -787,7 +788,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     }
 
     /// The applied list already is the current generation's list: it applied with the last push.
+    /// Not while the tap's list is unconfirmed, since the tap may hold another one.
     private func noteCurrent(_ device: CatchAllDevice) {
+        guard !device.listUnconfirmed else { return }
         let generation = generations[device.uid, default: 0]
         if let last = device.pushes.indices.last {
             device.pushes[last].generation = max(device.pushes[last].generation, generation)
@@ -797,15 +800,18 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     }
 
     /// Pushes with read-back and records when. A push of the desired list applies the current
-    /// generation; any other list (an I1 repair) applies none newer than the last push.
+    /// generation; any other list (an I1 repair) applies none newer than the last push. A
+    /// failed push leaves the tap's list unconfirmed; one that succeeds confirms it again.
     private func push(_ device: CatchAllDevice, _ list: [AudioObjectID], desired: [AudioObjectID]) -> Bool {
         guard let controller = device.controller else { return false }
         let includes = controller.appliedExclusions.contains { !list.contains($0) }
         guard controller.push(list) else {
             // The controller logged it
+            device.listUnconfirmed = true
             emit(.pushFailed(uid: device.uid, excluded: list))
             return false
         }
+        device.listUnconfirmed = false
         env.runControl.setExcluded(controller.ioHandle, Set(list))
         let generation = list == desired
             ? generations[device.uid, default: 0]
@@ -1343,6 +1349,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         device.rebuild?.outgoingAttached = device.attached
         device.rebuild?.stage = .waiting(since: now, callbacks: controller.callbackCount)
         device.controller = controller
+        device.listUnconfirmed = false
         device.attached = true
         device.attachedAt = now
         device.initialEscalated = false
@@ -1472,7 +1479,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             if let since = rebuildWaitingSince(device) {
                 deadlines.append(since + Self.rebuildWatchdog)
             }
-            if device.phase == .live, device.rebuild == nil, device.holds.contains(.initialList), !device.initialEscalated {
+            if device.phase == .live, !isRebuilding(device), device.holds.contains(.initialList), !device.initialEscalated {
                 deadlines.append(device.attachedAt + growWatchdog)
             }
         }
@@ -1514,7 +1521,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
                 device.rebuild?.failed = true
                 queueRetirement(device.uid, Self.retireReason(after: rebuild.reason))
             }
-            if device.phase == .live, device.rebuild == nil, device.holds.contains(.initialList),
+            // A rebuild already queued, postponed or running is what this would ask for: it
+            // attaches a new catch-all (a new attach time) or ends in R or G
+            if device.phase == .live, !isRebuilding(device), device.holds.contains(.initialList),
                !device.initialEscalated, due(device.attachedAt + growWatchdog) {
                 fire(.initialList, device.uid, "a new catch-all is still held for its list; rebuilding")
                 device.initialEscalated = true
@@ -1531,9 +1540,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// path and is never released into doubling. A device that is building, rebuilding or
     /// retiring is left to that, which its own watchdog bounds, without a fault. A device is
     /// not judged yet while the process list is unreadable (up to `unreadableListGrace` past
-    /// the watchdog) or while a push the wait depends on is younger than G (for shrink, one
-    /// that removed exclusions). A wait that still waits is judged again later, so every wait
-    /// ends in bounded time.
+    /// the watchdog) or while a push the wait depends on is younger than its margin (grow: any
+    /// push, G; shrink: one that removed exclusions, S). A wait that still waits is judged
+    /// again later, so every wait ends in bounded time.
     private func checkStuckWaits(now: Double) {
         guard waiters.contains(where: { now + Self.tolerance >= $0.deadline }) else { return }
         let live = env.processList().map(Set.init)
@@ -1561,12 +1570,17 @@ final class CatchAllCoordinator: CatchAllCoordinating {
                     continue
                 }
                 // A read-back shows a push at once, but Core Audio applies it up to G later (G is
-                // twice the measured p99 latency, for an exclusion and an inclusion alike). Each
-                // guard waits at most G past the push, so it also holds past the last chance.
+                // twice the measured p99 latency, for an exclusion and an inclusion alike). The
+                // grow guard waits G past the push. The shrink guard waits S, as the shrink wait
+                // itself does: an inclusion judged too early leaves the process in neither tap,
+                // unprocessed at full scale, while waiting longer at most lengthens a silent gap
+                // (the held per-app tap keeps it muted). Each guard waits a bounded time past the
+                // push, so it also holds past the last chance.
+                let margin = waiter.direction == .grow ? env.growMargin : env.shrinkMargin
                 if let pushed = youngestRelevantPush(device, waiter.direction),
-                   now + Self.tolerance < pushed + env.growMargin {
+                   now + Self.tolerance < pushed + margin {
                     waiting = true
-                    next = min(next, pushed + env.growMargin)
+                    next = min(next, pushed + margin)
                     continue
                 }
                 if listInForce(device, controller, waiter.direction, live: live, foreign: foreign, claims: claims) {
@@ -1786,6 +1800,12 @@ private final class CatchAllDevice {
     var settledGeneration: UInt64 = 0
     /// Pushes to `controller` that have not applied in both directions, oldest first.
     var pushes: [PushRecord] = []
+    /// A push to `controller` failed. A read-back can fail after the set took effect, so its
+    /// tap may hold the list it was sent or `appliedExclusions`. Until a push to it succeeds or
+    /// a rebuild replaces it, no generation is noted as current on the recorded list, so a wait
+    /// on a later claim change ends only with a confirmed push, the takeover, R3 or G. A
+    /// failure that its retry does not clear rebuilds or retires.
+    var listUnconfirmed = false
     /// A make-before-break rebuild in progress (E).
     var rebuild: RebuildState?
     /// A rebuild asked for during `rebuild`; it runs once that one took over.
