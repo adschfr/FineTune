@@ -31,8 +31,8 @@ nonisolated enum CatchAllEvent: Sendable, Equatable {
     case watchdog(uid: String, CatchAllWatchdog)
     /// A counted failure (§16.6): an IO failure counts toward give-up for its device ID, a build
     /// failure and a blocked run queue toward the breaker. Not reported for G, for a device
-    /// that is not alive (also 1 s after an IO or build failure, or found so during the 1 s
-    /// after a build failure), or for an unreadable process list.
+    /// that is not alive (also 1 s after an IO or build failure, or found so during that 1 s),
+    /// or for an unreadable process list.
     case failure(uid: String, CatchAllFailure)
     /// The next build on the device waits this many seconds (E14).
     case backoff(uid: String, seconds: Double)
@@ -84,7 +84,7 @@ nonisolated enum CatchAllFailure: String, Sendable, Equatable {
     case buildFailed
     /// The run control reported dead IO or a failed start on an alive device; once per
     /// aggregate, 1 s after the report and only if the device is then still listed under the
-    /// same ID and alive. Counts toward give-up only.
+    /// same ID and alive, and was not found otherwise meanwhile. Counts toward give-up only.
     case ioFailed
     /// The run queue did not answer a detach within its bound; once until it has run the
     /// detaches that timed out. Not for G, a device that went dormant, nor a rebuilt catch-all
@@ -131,11 +131,11 @@ nonisolated enum CatchAllWatchdog: String, Sendable, Equatable {
 /// A device that is listed but not alive keeps its catch-all dormant (E12): held, detached and
 /// still covering, until IsAlive or a 2 s check finds it alive again and it is rebuilt; a new
 /// listed ID that is alive rebuilds at once. Dead IO reported by the run control rebuilds.
-/// Failures on alive devices count (§16.6), an IO or build failure only if the device is still
-/// alive under its ID 1 s later (a build failure only if it stayed so): three IO failures
-/// within 10 min give the device ID up, failed builds and some retirements back off
-/// 5/30/120 s, and three failed builds, blocked run queues or give-ups within 10 min open the
-/// breaker, which retires every catch-all for the rest of the session.
+/// Failures on alive devices count (§16.6), an IO or build failure only if the device stayed
+/// alive under its ID for 1 s, observed meanwhile: three IO failures within 10 min give the
+/// device ID up, failed builds and some retirements back off 5/30/120 s, and three failed
+/// builds, blocked run queues or give-ups within 10 min open the breaker, which retires every
+/// catch-all for the rest of the session.
 @MainActor
 final class CatchAllCoordinator: CatchAllCoordinating {
     /// C9: seconds after the last Devices or IsRunningOutput change before processes that
@@ -178,8 +178,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     static let giveUpWindow: Double = 600
     /// A failure on a device that reads alive counts, a failed build backs off, and a failed
     /// rebuild retires, only if the device is still listed under the same ID and alive this long
-    /// after it (and, for a build, was not found otherwise meanwhile): on an HDMI link drop or a
-    /// display sleep the IO may stop, and a build fail, before IsAlive turns false.
+    /// after it, and was not found otherwise meanwhile (IsAlive is observed): on an HDMI link
+    /// drop or a display sleep the IO may stop, and a build fail, before IsAlive turns false,
+    /// and a link that renegotiates at wake flaps IsAlive.
     static let failureSettle: Double = 1
     /// Breaker: this many failed builds, blocked run queues and give-ups within the window. IO
     /// failures count toward give-up only.
@@ -219,11 +220,12 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// Aggregates whose IO failure was reported (reports repeat), each a candidate for one
     /// count; forgotten when destroyed, since aggregate IDs are reused.
     private var countedAggregates: Set<AudioDeviceID> = []
-    /// The checks that count a reported IO failure once it settled.
-    private var ioFailureChecks: [Int: CatchAllScheduledAction] = [:]
+    /// Reported IO failures that count toward give-up only once they settled.
+    private var ioFailureSettles: [Int: IOFailureSettle] = [:]
     private var nextIOFailureCheck = 0
     /// Per UID, a failed build, rebuild or rebuilt catch-all whose count, backoff and R wait
-    /// until it settled (`failureSettle`); nothing is built or rebuilt there meanwhile.
+    /// until it settled (`failureSettle`); nothing is built or rebuilt there meanwhile. While
+    /// this or an IO failure settles, IsAlive of its device is observed (`observeWhileSettling`).
     private var failureSettles: [String: FailureSettle] = [:]
     private var backoffs: [String: Backoff] = [:]
     /// A first build found the process list unreadable: the reconcile runs again.
@@ -236,9 +238,11 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     private var buildFoundListUnreadable = false
 
     // E12
-    /// IsAlive observed per UID: for a dormant catch-all, and for a listed device without one
-    /// that is not alive and not ruled out otherwise (`updateAliveWatch`).
+    /// IsAlive observed per UID: for a dormant catch-all, for a listed device without one that
+    /// is not alive and not ruled out otherwise (`updateAliveWatch`), and while a failure on the
+    /// device settles (`observeWhileSettling`). One observation serves all of them.
     private var aliveWatches: [String: AliveWatch] = [:]
+    private var nextAliveWatch = 0
     /// Dormant catch-alls whose detach has not run on the run queue yet; destroyed only after.
     private var dormantDetaches: Set<ObjectIdentifier> = []
     private var dormantCheckAction: CatchAllScheduledAction?
@@ -272,7 +276,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     // The next-turn task, the flush and the timers
     private var pendingReconcile = false
     private var pendingReevaluation = false
-    /// Retirements and rebuilds wait for the next turn: R2 and a build spin the main run loop.
+    /// Retirements and rebuilds wait for the next turn: R2 and a build spin the main run loop. A
+    /// rebuild stays here until its turn runs it (`runTurn`).
     private var pendingRetirements: [String: CatchAllRetireReason] = [:]
     private var pendingRebuilds: [String: CatchAllRebuildReason] = [:]
     /// Catch-alls kept aside whose time ran out; their check calls the engine, which spins.
@@ -424,8 +429,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             backoffs[uid]?.timer?.cancel()
             backoffs[uid]?.timer = nil
         }
-        for check in ioFailureChecks.values { check.cancel() }
-        ioFailureChecks.removeAll()
+        for settle in ioFailureSettles.values { settle.check.cancel() }
+        ioFailureSettles.removeAll()
         cancelFailureSettles()
         endUnreadableBuildStreak()
         for waiter in open { waiter.continuation.resume() }
@@ -485,9 +490,12 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         let checks = pendingKeptChecks
         pendingKeptChecks = []
         for entry in checks { recheckKeptAside(entry) }
-        let rebuilds = pendingRebuilds
-        pendingRebuilds = [:]
-        for (uid, reason) in rebuilds.sorted(by: { $0.key < $1.key }) {
+        // Each request leaves the queue only when it runs, so a device whose rebuild still waits
+        // in this turn counts as rebuilding while an earlier one runs (its waits on a dormant
+        // device stay, `isApplied`). One cleared meanwhile (stop(), the breaker, its entry gone)
+        // is skipped; one added meanwhile runs in the next turn.
+        for uid in pendingRebuilds.keys.sorted() {
+            guard let reason = pendingRebuilds.removeValue(forKey: uid) else { continue }
             performRebuild(uid, reason)
         }
         if pendingReconcile {
@@ -538,6 +546,11 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         for device in devices.values.sorted(by: { $0.uid < $1.uid }) where !listedUIDs.contains(device.uid) {
             guard device.phase == .live || device.phase == .dormant else { continue }
             endCoverage(device, reason: "absent")
+        }
+        // A device no longer listed went away (E11): no failure that settles on it stood, even if
+        // it is listed again under the same ID before the settle ends
+        for uid in settlingUIDs() where !listedUIDs.contains(uid) {
+            noteNotUsableWhileSettling(uid)
         }
         aliveWatches = aliveWatches.filter { listedUIDs.contains($0.key) }
         var built = false
@@ -1315,7 +1328,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         cancelRebuildDeferral(device)
         pendingRebuilds[uid] = nil
         cancelBackoffReset(device)
-        // From dormant: E12 ends for it until R4 is over
+        // From dormant: E12 ends for it until R4 is over. A failure that settles on the device
+        // keeps observing it, and its handler only notes a death for that settle
         stopObservingAlive(uid)
         stopDormantCheckIfIdle()
         logger.notice("Catch-all on \(uid, privacy: .public) retiring: \(reason.rawValue, privacy: .public)")
@@ -1410,11 +1424,13 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         Task { await self.detachAndDestroy(entries) }
     }
 
-    /// G for a device that went away during R or a rebuild (E11). While its UID is still listed
-    /// (Core Audio no longer resolves it, and the device list has not caught up), no device-list
-    /// change may follow to run the gate: it runs now, so the apps the catch-all played get
-    /// their taps, and a reconcile builds again (uncounted while the UID does not resolve).
+    /// G for a device that went away during R or a rebuild (E11), which no failure that settles
+    /// on it survives. While its UID is still listed (Core Audio no longer resolves it, and the
+    /// device list has not caught up), no device-list change may follow to run the gate: it runs
+    /// now, so the apps the catch-all played get their taps, and a reconcile builds again
+    /// (uncounted while the UID does not resolve).
     private func endAbsent(_ device: CatchAllDevice) {
+        noteNotUsableWhileSettling(device.uid)
         endCoverage(device, reason: "absent")
         guard isStarted, listedOutputs().contains(where: { $0.uid == device.uid }) else { return }
         logger.notice("Catch-all on \(device.uid, privacy: .public) ended while its UID is still listed; reconciling and re-running the gate")
@@ -1865,11 +1881,12 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// whether the device is alive again matters. Then E12 first: a device that is not alive
     /// goes dormant, and a new alive ID is rebuilt, both uncounted. Otherwise the catch-all is
     /// rebuilt at once (E), and the failure counts toward give-up once per aggregate if the
-    /// device is still listed under the same ID and alive 1 s later. A report about a rebuilt
-    /// catch-all that waits to take over fails its rebuild: that catch-all goes, the one it
-    /// replaces serves on as before the rebuild, and the failure settles as a failed rebuild's
-    /// does (`failureSettled`): R and the backoff if the device is then still listed under the
-    /// same ID and usable and was not found otherwise meanwhile, else the E12 check.
+    /// device is still listed under the same ID and alive 1 s later and was not found otherwise
+    /// meanwhile (`ioFailureSettled`). A report about a rebuilt catch-all that waits to take
+    /// over fails its rebuild: that catch-all goes, the one it replaces serves on as before the
+    /// rebuild, and the failure settles as a failed rebuild's does (`failureSettled`): R and the
+    /// backoff if the device is then still listed under the same ID and usable and was not
+    /// found otherwise meanwhile, else the E12 check.
     func reportIOFailure(_ uid: String, aggregate: AudioDeviceID, _ reason: CatchAllRunLogic.RebuildReason) {
         guard isStarted, !breakerOpen, let device = devices[uid], pendingRetirements[uid] == nil else { return }
         switch device.phase {
@@ -1895,7 +1912,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             // A push failure or watchdog that failed the rebuild already queued R.
             guard !rebuild.failed else { return }
             logger.error("Catch-all on \(uid, privacy: .public): the rebuilt catch-all failed before it took over; the one it replaces serves until the failure settled")
-            // First: the dormant one put back observes IsAlive, whose read may ask for a rebuild
+            // First: a dormant one put back takes over the settle's IsAlive observation, and a
+            // rebuild asked for from here is left to the settle
             settleFailure(uid, deviceID: device.deviceID, countsBuild: false,
                           cause: "its rebuilt catch-all failed before it took over", failedRebuild: rebuild.reason)
             dropFailedRebuild(device)
@@ -1948,22 +1966,30 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     }
 
     /// An IO failure counts only once it settled: on an HDMI link drop the IO may stop before
-    /// IsAlive turns false, and a link that flaps at wake must not give the device up or open
-    /// the breaker. The rebuild does not wait for it.
+    /// IsAlive turns false, and a link that renegotiates at wake stops the IO and flaps IsAlive,
+    /// which must not give the device up. The rebuild does not wait for it. IsAlive of the device
+    /// is observed meanwhile, so a flap that no reconcile or report sees still counts as found.
     private func settleIOFailure(_ uid: String, deviceID id: AudioDeviceID, aggregate: AudioDeviceID) {
         nextIOFailureCheck += 1
         let key = nextIOFailureCheck
-        ioFailureChecks[key] = env.clock.schedule(after: Self.failureSettle) { [weak self] in
-            guard let self else { return }
-            self.ioFailureChecks[key] = nil
-            self.ioFailureSettled(uid, deviceID: id, aggregate: aggregate)
-        }
+        let check = env.clock.schedule(after: Self.failureSettle) { [weak self] in self?.ioFailureSettled(key) }
+        ioFailureSettles[key] = IOFailureSettle(uid: uid, deviceID: id, aggregate: aggregate, check: check)
+        observeWhileSettling(uid, id)
     }
 
-    private func ioFailureSettled(_ uid: String, deviceID id: AudioDeviceID, aggregate: AudioDeviceID) {
+    /// Counts the IO failure toward give-up if the device is still listed under the same ID and
+    /// alive, and was not found not usable meanwhile (an HDMI link that renegotiates at wake).
+    private func ioFailureSettled(_ key: Int) {
+        guard let settle = ioFailureSettles.removeValue(forKey: key) else { return }
+        let uid = settle.uid
+        let id = settle.deviceID
+        defer { settleEnded(uid) }
         guard isStarted, !breakerOpen else { return }
-        guard listedOutputs().contains(CatchAllOutput(uid: uid, id: id)), env.isAlive(id) else {
-            logger.notice("Catch-all on \(uid, privacy: .public) (aggregate \(aggregate)): IO failure not counted, device \(id) is no longer listed under this ID or not alive")
+        guard !settle.diedMeanwhile, listedOutputs().contains(CatchAllOutput(uid: uid, id: id)), env.isAlive(id) else {
+            let why = settle.diedMeanwhile
+                ? "the device was not usable meanwhile"
+                : "device \(id) is no longer listed under this ID or not alive"
+            logger.notice("Catch-all on \(uid, privacy: .public) (aggregate \(settle.aggregate)): IO failure not counted, \(why, privacy: .public)")
             return
         }
         noteFailure(uid, .ioFailed, deviceID: id)
@@ -1974,7 +2000,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// backs off and, after a failed rebuild (`failedRebuild`), retires the catch-all that serves
     /// meanwhile only once it settled, as an IO failure counts. Until then nothing is built or
     /// rebuilt on the device, so one failure is not followed by another that would count for
-    /// it, and a push failure or IO report meanwhile is decided with it (`rebuild`).
+    /// it, and a push failure or IO report meanwhile is decided with it (`rebuild`). IsAlive of
+    /// the device is observed meanwhile, with or without a catch-all.
     private func settleFailure(_ uid: String, deviceID id: AudioDeviceID, countsBuild: Bool, cause: String,
                                failedRebuild: CatchAllRebuildReason? = nil) {
         if let pending = failureSettles[uid] {
@@ -1985,6 +2012,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         let check = env.clock.schedule(after: Self.failureSettle) { [weak self] in self?.failureSettled(uid) }
         failureSettles[uid] = FailureSettle(deviceID: id, countsBuild: countsBuild, cause: cause,
                                             failedRebuild: failedRebuild, check: check)
+        observeWhileSettling(uid, id)
     }
 
     /// If the device is still listed under the same ID and usable, as the build required at the
@@ -2000,7 +2028,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// is asked for again, so no request left to the settle is lost. A shrink wait that waited
     /// only for this end, and finds the device dormant, ends (`isApplied`).
     private func failureSettled(_ uid: String) {
-        guard let settle = failureSettles.removeValue(forKey: uid), isStarted, !breakerOpen else { return }
+        guard let settle = failureSettles.removeValue(forKey: uid) else { return }
+        // Last: the E12 check below may keep the observation for a dormant catch-all
+        defer { settleEnded(uid) }
+        guard isStarted, !breakerOpen else { return }
         let id = settle.deviceID
         guard !settle.diedMeanwhile, listedOutputs().contains(CatchAllOutput(uid: uid, id: id)), deviceUsable(uid, id) else {
             let why = settle.diedMeanwhile
@@ -2025,12 +2056,32 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         backOff(uid, deviceID: id, after: settle.cause, elapsed: Self.failureSettle)
     }
 
-    /// The device was found not usable while a failure on it settles: the failure did not stand,
-    /// even if the device reads alive at the end (`failureSettled`).
+    /// The device was found not usable while failures on it settle, IsAlive reported a change,
+    /// or the device went away: none of them stood, even if the device reads alive at the end
+    /// (`failureSettled`, `ioFailureSettled`).
     private func noteNotUsableWhileSettling(_ uid: String) {
-        guard failureSettles[uid]?.diedMeanwhile == false else { return }
-        failureSettles[uid]?.diedMeanwhile = true
-        logger.notice("Catch-all on \(uid, privacy: .public): the device is not usable while its last failure settles; that failure will not count")
+        var marked = false
+        if failureSettles[uid]?.diedMeanwhile == false {
+            failureSettles[uid]?.diedMeanwhile = true
+            marked = true
+        }
+        for key in ioFailureSettles.keys.sorted() where ioFailureSettles[key]?.uid == uid {
+            guard ioFailureSettles[key]?.diedMeanwhile == false else { continue }
+            ioFailureSettles[key]?.diedMeanwhile = true
+            marked = true
+        }
+        guard marked else { return }
+        logger.notice("Catch-all on \(uid, privacy: .public): the device was not usable while failures on it settle; they will not count")
+    }
+
+    /// A failure or IO failure settles on the device.
+    private func isSettling(_ uid: String) -> Bool {
+        failureSettles[uid] != nil || ioFailureSettles.values.contains { $0.uid == uid }
+    }
+
+    /// The UIDs on which a failure or IO failure settles, sorted.
+    private func settlingUIDs() -> [String] {
+        Set(failureSettles.keys).union(ioFailureSettles.values.map(\.uid)).sorted()
     }
 
     private func cancelFailureSettles() {
@@ -2068,6 +2119,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         if let rebuild = device.rebuild, !rebuild.isWaiting { return .unchanged }
         let uid = device.uid
         guard let output = listedOutputs().first(where: { $0.uid == uid }) else {
+            // Went away (E11): no failure that settles on it stood, even if it is listed again
+            // before the reconcile runs
+            noteNotUsableWhileSettling(uid)
             reconcile()
             return .gone
         }
@@ -2174,19 +2228,57 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         }
     }
 
-    /// Observes IsAlive of `id` for `uid`, moving an observation of another ID, and reads it once
-    /// right after registering: a device that came back between the check and the registration
-    /// is caught.
+    /// E12 and E14: observes IsAlive of the listed ID `id` for `uid`, moving an observation of
+    /// another ID (a settle on that ID is no longer listed, so it counts nothing anyway), and
+    /// reads it once right after registering: a device that came back between the check and the
+    /// registration is caught. An observation of `id` that a settle began is kept.
     private func observeAlive(_ uid: String, _ id: AudioDeviceID) {
-        guard aliveWatches[uid]?.id != id else { return }
-        stopObservingAlive(uid)
-        let token = env.observeAlive(id) { [weak self] in self?.aliveChanged(uid, id) }
-        aliveWatches[uid] = AliveWatch(id: id, token: token)
-        logger.notice("Catch-all on \(uid, privacy: .public): observing IsAlive of device \(id)")
+        if aliveWatches[uid]?.id == id {
+            aliveWatches[uid]?.forDevice = true
+            return
+        }
+        aliveWatches[uid] = nil
+        registerAliveWatch(uid, id, forDevice: true)
         if env.isAlive(id) { aliveChanged(uid, id) }
     }
 
+    /// While a failure or IO failure on `uid` settles, IsAlive of its device ID `id` is observed,
+    /// with or without a catch-all, live or dormant: an HDMI link that renegotiates at wake flaps
+    /// IsAlive without a device-list change, and the settle must see it (`aliveChanged`). An
+    /// observation of `id` serves it. One of another ID moves to `id`, the ID listed when the
+    /// failure was read usable, and keeps what it is for: a dormant catch-all's observation of
+    /// an older ID follows the device to it. No read follows: the settle began right after a
+    /// read found the device usable.
+    private func observeWhileSettling(_ uid: String, _ id: AudioDeviceID) {
+        if aliveWatches[uid]?.id == id { return }
+        let forDevice = aliveWatches[uid]?.forDevice ?? false
+        aliveWatches[uid] = nil
+        registerAliveWatch(uid, id, forDevice: forDevice)
+    }
+
+    private func registerAliveWatch(_ uid: String, _ id: AudioDeviceID, forDevice: Bool) {
+        nextAliveWatch += 1
+        let serial = nextAliveWatch
+        let token = env.observeAlive(id) { [weak self] in self?.aliveChanged(uid, id, notified: serial) }
+        aliveWatches[uid] = AliveWatch(id: id, serial: serial, token: token, forDevice: forDevice)
+        logger.notice("Catch-all on \(uid, privacy: .public): observing IsAlive of device \(id)")
+    }
+
+    /// The E12 or E14 rule no longer observes `uid`; a settle on the device keeps the observation
+    /// until it ends (`settleEnded`).
     private func stopObservingAlive(_ uid: String) {
+        guard aliveWatches[uid] != nil else { return }
+        if isSettling(uid) {
+            aliveWatches[uid]?.forDevice = false
+        } else {
+            aliveWatches[uid] = nil
+        }
+    }
+
+    /// A settle on `uid` ended: its observation ends unless another settle or the E12 or E14 rule
+    /// still wants it.
+    private func settleEnded(_ uid: String) {
+        guard aliveWatches[uid]?.forDevice == false, !isSettling(uid) else { return }
         aliveWatches[uid] = nil
     }
 
@@ -2195,7 +2287,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// `.notAlive` passed; opted out, given up). A dead device's own facts (tier, kind, stream
     /// count) are not judged: they may read differently until it is alive again, and the
     /// reconcile its return triggers judges them. Any other device without one is not observed.
-    /// A failed build that settles did not fail for good when the device is not alive now.
+    /// A failure that settles on the device did not fail for good when the device is not alive
+    /// now. A settle keeps an observation this ends until it settled (`stopObservingAlive`).
     private func updateAliveWatch(_ output: CatchAllOutput, _ reason: CatchAllPlan.Ineligibility?) {
         if reason == .notAlive { noteNotUsableWhileSettling(output.uid) }
         if reason == .notAlive, !env.excludedDeviceUIDs.contains(output.uid), !givenUp.contains(output.id) {
@@ -2205,16 +2298,27 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         }
     }
 
-    /// IsAlive of an observed device changed, or the read after registering found it alive. A
-    /// dormant catch-all is rebuilt once the device is alive (a retiring one is left alone); a
-    /// device without one is reconciled, which builds it.
-    private func aliveChanged(_ uid: String, _ id: AudioDeviceID) {
-        guard isStarted, aliveWatches[uid]?.id == id else { return }
+    /// IsAlive of an observed device changed (`notified` names the registration whose listener
+    /// reported it), or the read after registering found it alive. A block of a released
+    /// registration, queued before the release, is dropped. No failure that settles on the
+    /// device stood if the device is found not usable, or if the current registration reported
+    /// a change at all: the HAL reports only changes, and each settle began on a read that found
+    /// the device usable, but the listener's blocks run on the main queue, which a build's wait
+    /// or R2 can hold until both edges of a flap have passed, so the read here may find it alive
+    /// again. Then the E12 check runs for a catch-all: a live one goes dormant, uncounted, a
+    /// dormant one is rebuilt once the device is alive (left to a failure that settles), a
+    /// retiring one is left alone. A device without one is reconciled once alive, which builds
+    /// it, unless a failure on it settles, whose end reconciles.
+    private func aliveChanged(_ uid: String, _ id: AudioDeviceID, notified serial: Int? = nil) {
+        guard isStarted, let watch = aliveWatches[uid], watch.id == id else { return }
+        if let serial, serial != watch.serial { return }
+        let usable = deviceUsable(uid, id)
+        if !usable || serial != nil { noteNotUsableWhileSettling(uid) }
         if let device = devices[uid] {
             checkDevice(device)
             return
         }
-        guard deviceUsable(uid, id) else { return }
+        guard usable, failureSettles[uid] == nil else { return }
         logger.notice("Device \(id) for \(uid, privacy: .public) is alive; reconciling")
         reconcile()
     }
@@ -2783,10 +2887,27 @@ private struct FailureSettle {
     let check: CatchAllScheduledAction
 }
 
-/// An IsAlive observation (E12) of one listed device ID, until the token is released.
+/// An IsAlive observation (E12) of one device ID, until the token is released.
 private struct AliveWatch {
     let id: AudioDeviceID
+    /// Tells this registration's notifications from those a released one queued before.
+    let serial: Int
     let token: AnyObject
+    /// The E12 or E14 rule wants it (a dormant catch-all, a listed device without one that is
+    /// not alive); otherwise only a settle on the device does, and it ends with the last one.
+    var forDevice: Bool
+}
+
+/// A reported IO failure whose count toward give-up waits until it settled.
+private struct IOFailureSettle {
+    let uid: String
+    /// The listed ID at the report; nothing counts if the device is not alive under it then.
+    let deviceID: AudioDeviceID
+    let aggregate: AudioDeviceID
+    /// The device was found not usable meanwhile (an HDMI link that renegotiates at wake): the
+    /// failure did not stand, whatever the device reads at the end.
+    var diedMeanwhile = false
+    let check: CatchAllScheduledAction
 }
 
 /// A make-before-break rebuild (E). From its attach on, the new catch-all is the device's
