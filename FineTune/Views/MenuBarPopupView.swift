@@ -367,8 +367,8 @@ struct MenuBarPopupView: View {
                         isSupportHovered = hovering
                     }
                 }
-                .accessibilityLabel("Donate to FineTune")
-                .help("Donate to FineTune")
+                .accessibilityLabel("Donate to FineTune Fork")
+                .help("Donate to FineTune Fork")
 
                 Spacer()
 

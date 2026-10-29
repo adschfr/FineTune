@@ -485,8 +485,14 @@ enum DesignTokens {
     // MARK: - Links
 
     enum Links {
-        /// Financial support page (currently Ko-fi, URL is platform-agnostic in UI)
-        static let support = URL(string: "https://ko-fi.com/ronitsingh10")!
+        /// Financial support page for the fork's maintainer (currently Ko-fi, URL is platform-agnostic in UI)
+        static let support = URL(string: "https://ko-fi.com/adschfr")!
+
+        /// The fork's repository on GitHub
+        static let repository = URL(string: "https://github.com/adschfr/FineTune")!
+
+        /// The original FineTune by Ronit Singh, which this fork is based on
+        static let upstream = URL(string: "https://github.com/ronitsingh10/FineTune")!
 
         /// Project license on GitHub
         static let license = URL(string: "https://github.com/ronitsingh10/FineTune/blob/main/LICENSE")!

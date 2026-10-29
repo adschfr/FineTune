@@ -1,7 +1,7 @@
 # FineTune Fork
 
-A maintained fork of [ronitsingh10/FineTune](https://github.com/ronitsingh10/FineTune) based on v1.9.0.
-It installs as **FineTune Fork** (`com.adschfr.FineTuneFork`) next to upstream FineTune and shares its
+A maintained fork of [ronitsingh10/FineTune](https://github.com/ronitsingh10/FineTune) based on v1.9.0,
+maintained by [adschfr](https://github.com/adschfr) since 2026-10-21. It installs as **FineTune Fork** (`com.adschfr.FineTuneFork`) next to upstream FineTune and shares its
 settings in `~/Library/Application Support/FineTune`. Run only one of the two at a time.
 
 ## Build and install
@@ -10,9 +10,12 @@ settings in `~/Library/Application Support/FineTune`. Run only one of the two at
 ./scripts/install-fork.sh
 ```
 
-Builds an ad-hoc signed Release (hardened runtime off, so the embedded Sparkle framework loads),
-installs it to `/Applications/FineTune Fork.app` and launches it. Requires Xcode. Sparkle updates are
-disabled, so the fork never replaces itself with an upstream release.
+Builds a Release, installs it to `/Applications/FineTune Fork.app` and launches it. Requires Xcode.
+With an Apple Development certificate in the keychain (a free Personal Team in Xcode is enough) the
+app is signed with it, so macOS keeps its audio capture permission across builds. Without one it is
+signed ad hoc, and the permission has to be granted again after every build. Hardened runtime stays
+off, so the embedded Sparkle framework loads. Sparkle updates are disabled, so the fork never
+replaces itself with an upstream release.
 
 ```bash
 ./scripts/test.sh
@@ -47,3 +50,13 @@ headroom, #478 AirPlay selection, #479 nested helper apps and one-channel audio,
 on screen, #314 follow-default routing on reconnect, #413 call passthrough, #396 output format
 changes, #383 option to hide the HUD, #438 paired Bluetooth outputs, #473 Bluetooth input guard,
 and from #412 the menu bar panel position fix and auto-switch to newly connected outputs.
+
+## Credits, license and support
+
+FineTune was created by [Ronit Singh](https://github.com/ronitsingh10/FineTune) and is licensed under
+the GNU General Public License v3 ([LICENSE](LICENSE)). This fork modifies it: changes by adschfr since
+2026-10-21, each one dated in the git history. The fork is released under the same license, and the
+original copyright notices stay in place.
+
+If the fork helps you, you can support its maintenance on [Ko-fi](https://ko-fi.com/adschfr). To support
+the original app, see [ronitsingh10/FineTune](https://github.com/ronitsingh10/FineTune).
