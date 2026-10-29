@@ -855,7 +855,7 @@ struct CatchAllCoordinatorFailureTests {
         #expect(rig.events.events.filter { $0 == .rebuilt(uid: "uid-tv") }.count == 2)
     }
 
-    @Test("A push that fails after its retry and a rebuild that fails retire the catch-all (R); the waits complete at R3")
+    @Test("A push that fails after its retry and a rebuild that fails retire the catch-all (R) once the failure settled with the device still alive under its ID; the old one serves until then, and the waits complete at R3")
     func pushFailureRetires() async throws {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
@@ -875,21 +875,27 @@ struct CatchAllCoordinatorFailureTests {
         }
 
         rig.clock.runDue()
-        log.add("turn done pending=\(coordinator.pendingWaitCount)")
+        #expect(log.all.isEmpty)
+        #expect(rig.tv === tv)
+        #expect(!held(tv))
+        // The grow watchdog judges the wait at the same moment: the list lacks 11, and the
+        // rebuild it asks for is left to the settle, whose R ends the wait
+        rig.clock.advance(CatchAllCoordinator.failureSettle)
+        log.add("settled pending=\(coordinator.pendingWaitCount)")
 
         #expect(await eventually { log.all.contains { $0.hasPrefix("destroy") } })
         #expect(log.all == [
+            "watchdog grow uid-tv",
+            "failure buildFailed uid-tv",
             "retiring uid-tv pushFailed",
             "onCoverageWillEnd uid-tv pending=1",
             "hold 200 pending=1",
-            "turn done pending=0",
+            "settled pending=0",
             "detach uid-tv 200",
             "ended uid-tv pushFailed",
             "destroy tap=100 aggregate=200 proc=true",
         ])
-        // The failed rebuild counts once it settled, the device still alive under its ID
-        rig.clock.advance(CatchAllCoordinator.failureSettle)
-        #expect(log.all.last == "failure buildFailed uid-tv")
+        #expect(builds(rig) == 2)
         #expect(await eventually { heldAtEnd.value == true })
         #expect(rig.events.events.contains { if case .buildFailed(uid: "uid-tv", _) = $0 { true } else { false } })
         withExtendedLifetime(owner) {}
@@ -1874,7 +1880,7 @@ struct CatchAllCoordinatorFailureTests {
         withExtendedLifetime(owners) {}
     }
 
-    @Test("A rebuild from dormant that fails runs R from dormant: no second detach, the failure counts 1 s later since the device is still alive, and the next build backs off 5 s from the failure")
+    @Test("A rebuild from dormant that fails while the device reads alive keeps the catch-all dormant until the failure settled; still alive under its ID then, the failure counts, R runs from dormant with no second detach, and the next build backs off 5 s from the failure")
     func dormantRebuildFails() async throws {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
@@ -1892,9 +1898,15 @@ struct CatchAllCoordinatorFailureTests {
         rig.system.alive.insert(42)
         rig.aliveObservers.fire(42)
         rig.clock.runDue()
+        rig.backend.failAt = nil
+        #expect(coordinator.phase("uid-tv") == .dormant)
+        #expect(log.all.isEmpty)
+        rig.clock.advance(CatchAllCoordinator.failureSettle)
 
         #expect(await eventually { log.all.contains { $0.hasPrefix("destroy") } })
         #expect(log.all == [
+            "failure buildFailed uid-tv",
+            "backoff uid-tv 5",
             "unobserve 42",
             "retiring uid-tv rebuildFailed",
             "phase uid-tv retiring(caHeld: false)",
@@ -1906,10 +1918,8 @@ struct CatchAllCoordinatorFailureTests {
         ])
         #expect(rig.runControl.log.filter { $0.hasPrefix("detach") } == ["detach uid-tv 200"])
         #expect(coordinator.phase("uid-tv") == nil)
-        rig.backend.failAt = nil
         coordinator.reconcile()
-        rig.clock.advance(4.99)
-        #expect(Array(log.all.suffix(2)) == ["failure buildFailed uid-tv", "backoff uid-tv 5"])
+        rig.clock.advance(3.99)
         #expect(builds(rig) == 2)
         rig.clock.advance(0.01)
         #expect(builds(rig) == 3)
@@ -2556,13 +2566,15 @@ struct CatchAllCoordinatorFailureTests {
             return false
         }
 
-        // The TV's rebuild fails: it retires at once, and the failure counts once it settled
+        // The TV's rebuild fails: its old catch-all serves until the failure settled, which counts
+        // it, opens the breaker and retires the TV with the rebuild's reason
         rig.backend.failAt = .createTap
         coordinator.rebuild("uid-tv", reason: .formatChanged)
         let built = builds(rig)
         rig.clock.runDue()
         rig.backend.failAt = nil
         #expect(coordinator.affectsAudio)
+        #expect(coordinator.phase("uid-tv") == .live)
         rig.clock.advance(CatchAllCoordinator.failureSettle)
 
         // At once, before any retirement it causes
@@ -2573,7 +2585,7 @@ struct CatchAllCoordinatorFailureTests {
         })
         #expect(builds(rig) == built + 1)
         #expect(log.all.filter { $0.hasPrefix("onCoverageWillEnd") } == [
-            "onCoverageWillEnd uid-tv affectsAudio=true retirementHold=true",
+            "onCoverageWillEnd uid-tv affectsAudio=false retirementHold=true",
             "onCoverageWillEnd uid-tv2 affectsAudio=false retirementHold=true",
             "onCoverageWillEnd uid-tv3 affectsAudio=false retirementHold=true",
         ])
@@ -2769,7 +2781,7 @@ struct CatchAllCoordinatorFailureTests {
         #expect(coordinator.phase("uid-tv") == .live)
     }
 
-    @Test("A rebuild failure on an alive device retires it at once with the rebuild's reason (fail open); as the third failure it opens the breaker once it settled, and nothing is built again")
+    @Test("A rebuild failure on a device still alive under its ID 1 s later retires it then with the rebuild's reason; as the third failure it opens the breaker at the same moment, and nothing is built again")
     func rebuildFailureOpensBreaker() async throws {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
@@ -2782,11 +2794,13 @@ struct CatchAllCoordinatorFailureTests {
         coordinator.rebuild("uid-tv", reason: .formatChanged)
         rig.clock.runDue()
         rig.backend.failAt = nil
-
-        #expect(rig.events.events.filter { if case .retiring = $0 { true } else { false } } == [.retiring(uid: "uid-tv", .rebuildFailed)])
+        #expect(!rig.events.events.contains { if case .retiring = $0 { true } else { false } })
+        #expect(coordinator.phase("uid-tv") == .live)
         #expect(!coordinator.breakerOpen)
-        #expect(await eventually { coordinator.phase("uid-tv") == nil })
+
         rig.clock.advance(CatchAllCoordinator.failureSettle)
+        #expect(rig.events.events.filter { if case .retiring = $0 { true } else { false } } == [.retiring(uid: "uid-tv", .rebuildFailed)])
+        #expect(await eventually { coordinator.phase("uid-tv") == nil })
         #expect(coordinator.breakerOpen)
         #expect(coordinator.givenUp.isEmpty)
         coordinator.reconcile()
@@ -2833,13 +2847,14 @@ struct CatchAllCoordinatorFailureTests {
         let start = rig.clock.now
         failFirstBuilds(rig, 1)
 
-        // Failed rebuilds retire the catch-all; each backoff's build succeeds
+        // Failed rebuilds retire the catch-all once they settled; each backoff's build succeeds
         for at in [300, last] {
             rig.clock.advance(start + at - rig.clock.now)
             rig.backend.failAt = .createTap
             coordinator.rebuild("uid-tv", reason: .formatChanged)
             rig.clock.runDue()
             rig.backend.failAt = nil
+            rig.clock.advance(CatchAllCoordinator.failureSettle)
             #expect(await eventually { coordinator.phase("uid-tv") == nil })
             rig.clock.advance(30)
         }
@@ -3636,9 +3651,9 @@ struct CatchAllCoordinatorFailureTests {
         coordinator.rebuild("uid-tv", reason: .formatChanged)
         rig.clock.runDue()
         rig.backend.failAt = nil
-        #expect(rig.events.events.contains(.retiring(uid: "uid-tv", .rebuildFailed)))
         #expect(!coordinator.breakerOpen)
         rig.clock.advance(CatchAllCoordinator.failureSettle)
+        #expect(rig.events.events.contains(.retiring(uid: "uid-tv", .rebuildFailed)))
         #expect(coordinator.breakerOpen)
     }
 
@@ -3735,7 +3750,7 @@ struct CatchAllCoordinatorFailureTests {
         #expect(slow.clock.pendingCount == 0)
     }
 
-    @Test("An IO failure report about a rebuilt catch-all that waits to take over fails the rebuild: it never takes over silent, the one it replaces plays until R3, and R follows without another build")
+    @Test("An IO failure report about a rebuilt catch-all that waits to take over fails the rebuild: it never takes over silent and is detached and destroyed, the one it replaces serves on, and R follows once the failure settled with the device still alive under its ID, without another build")
     func ioFailureOfWaitingRebuild() async throws {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
@@ -3754,9 +3769,15 @@ struct CatchAllCoordinatorFailureTests {
 
         // The run queue could not start the new one
         await reportIO(rig, "uid-tv", new.ioHandle.aggregateID, .startFailed)
+        #expect(rig.tv === old)
+        #expect(await eventually { rig.backend.log.contains("destroy tap=101 aggregate=201 proc=true") })
+        #expect(rig.runControl.log.filter { $0.hasPrefix("detach") } == ["detach uid-tv 201"])
         rig.clock.advance(0.2)
-
         #expect(!rig.events.events.contains(.rebuilt(uid: "uid-tv")))
+        #expect(!rig.events.events.contains { if case .retiring = $0 { true } else { false } })
+        #expect(!held(old))
+
+        rig.clock.advance(0.8)
         #expect(rig.events.events.contains(.retiring(uid: "uid-tv", .rebuildFailed)))
         #expect(played.value == true)
         #expect(await eventually { coordinator.phase("uid-tv") == nil })
@@ -3961,50 +3982,88 @@ struct CatchAllCoordinatorFailureTests {
         withExtendedLifetime(owner) {}
     }
 
-    /// `path`: a first build fails, a rebuild fails, or a rebuilt catch-all fails to start
-    /// before it takes over. `then`: the device 1 s after the failure: still alive under its ID,
-    /// no longer alive (the link dropped after the build or start failed), or the coordinator
-    /// stopped.
-    @Test("A failed build or rebuilt catch-all on a device that reads alive retires at once where there is a catch-all, but counts and backs off only 1 s later, the backoff counted from the failure, and only if the device is then still listed under the same ID and alive; nothing is built there meanwhile, and stop() drops it",
-          arguments: ["build", "rebuild", "waitingRebuild"], ["alive", "dead", "stopped"])
+    /// `path`: a first build fails; a rebuild fails; a rebuilt catch-all fails to start before it
+    /// takes over; or one of the last two from dormant, once the device is alive again. `then`:
+    /// the device 0.5 s after the failure: still alive under its ID, no longer alive (the link
+    /// dropped after the build or start failed), listed under a new alive ID, no longer listed,
+    /// or the coordinator stopped.
+    @Test("A failure on a device that reads alive is decided 1 s later: still listed under the same ID and usable, it counts, a catch-all that served meanwhile retires (R) and the next build backs off from the failure; otherwise the E12 check decides (dormant, a rebuild on the new ID, G) with nothing counted, no R, no backoff and no callback. Until then the old catch-all serves as it was, a failed new one is destroyed, nothing is built or rebuilt there, and stop() drops it",
+          arguments: ["build", "rebuild", "waitingRebuild", "dormantRebuild", "dormantWaitingRebuild"],
+          ["alive", "dead", "newID", "unlisted", "stopped"])
     func failureSettles(path: String, then: String) async throws {
         let rig = makeCatchAllRig()
         let coordinator = rig.coordinator
-        coordinator.onCoverageWillEnd = { _ in false }
+        let calledBack = CoordinatorTestBox(false)
+        coordinator.onCoverageWillEnd = { _ in
+            calledBack.value = true
+            return false
+        }
+        let startFails = ["waitingRebuild", "dormantWaitingRebuild"].contains(path)
+        if path != "build" {
+            coordinator.start()
+            rig.clock.runDue()
+        }
+        if path.hasPrefix("dormant") {
+            makeDormant(rig)
+            #expect(await eventually { rig.runControl.log.contains("detach uid-tv 200") })
+        }
         switch path {
         case "build":
             rig.backend.failAt = .createTap
             coordinator.start()
             rig.backend.failAt = nil
-        case "rebuild":
-            coordinator.start()
-            rig.clock.runDue()
+        case "rebuild", "dormantRebuild":
             rig.backend.failAt = .createTap
-            coordinator.rebuild("uid-tv", reason: .formatChanged)
+            if path == "rebuild" {
+                coordinator.rebuild("uid-tv", reason: .formatChanged)
+            } else {
+                rig.system.alive.insert(42)
+                rig.aliveObservers.fire(42)
+            }
             rig.clock.runDue()
             rig.backend.failAt = nil
         default:
-            coordinator.start()
+            if path == "waitingRebuild" {
+                coordinator.rebuild("uid-tv", reason: .formatChanged)
+            } else {
+                rig.system.alive.insert(42)
+                rig.aliveObservers.fire(42)
+            }
             rig.clock.runDue()
-            coordinator.rebuild("uid-tv", reason: .formatChanged)
-            rig.clock.runDue()
-            let new = try #require(rig.tv)
-            await reportIO(rig, "uid-tv", new.ioHandle.aggregateID, .startFailed)
-            rig.clock.runDue()
+            #expect(rig.tv?.ioHandle.aggregateID == 201)
+            #expect(coordinator.phase("uid-tv") == .live)
+            await reportIO(rig, "uid-tv", 201, .startFailed)
+            #expect(await eventually { rig.backend.log.contains("destroy tap=101 aggregate=201 proc=true") })
         }
         let built = builds(rig)
-        if path != "build" {
-            #expect(rig.events.events.contains { if case .retiring(uid: "uid-tv", _) = $0 { true } else { false } })
-            #expect(await eventually { coordinator.phase("uid-tv") == nil })
+        // The old catch-all serves as it was: live and playing, or dormant and held
+        switch path {
+        case "build":
+            #expect(coordinator.phase("uid-tv") == nil)
+        case "rebuild", "waitingRebuild":
+            #expect(coordinator.phase("uid-tv") == .live)
+            #expect(rig.tv?.ioHandle.aggregateID == 200)
+            #expect(rig.tv.map(held) == false)
+        default:
+            #expect(coordinator.phase("uid-tv") == .dormant)
+            #expect(rig.tv?.ioHandle.aggregateID == 200)
+            #expect(rig.tv.map(held) == true)
         }
-        #expect(coordinator.phase("uid-tv") == nil)
 
+        // Nothing is built or rebuilt meanwhile, whatever asks for it
         coordinator.reconcile()
+        coordinator.rebuild("uid-tv", reason: .formatChanged)
+        rig.aliveObservers.fire(42)
         rig.clock.advance(0.5)
         #expect(builds(rig) == built)
+        #expect(!calledBack.value)
         switch then {
         case "dead":
             rig.system.alive.remove(42)
+        case "newID":
+            relist(rig, as: 52, alive: true)
+        case "unlisted":
+            rig.system.outputs.removeAll { $0.uid == "uid-tv" }
         case "stopped":
             coordinator.stop()
             #expect(rig.clock.pendingCount == 0)
@@ -4013,31 +4072,49 @@ struct CatchAllCoordinatorFailureTests {
         }
         rig.clock.advance(0.5)
 
-        let backoffs = rig.events.events.filter { if case .backoff = $0 { true } else { false } }
-        switch then {
-        case "alive":
-            // A rebuilt catch-all that failed to start counts its IO failure toward give-up only
-            #expect(failures(rig) == [.failure(uid: "uid-tv", path == "waitingRebuild" ? CatchAllFailure.ioFailed : .buildFailed)])
-            #expect(backoffs == [.backoff(uid: "uid-tv", seconds: 5)])
-            rig.clock.advance(3.99)
-            #expect(builds(rig) == built)
-            rig.clock.advance(0.01)
-            #expect(builds(rig) == built + 1)
-            #expect(coordinator.phase("uid-tv") == .live)
-        case "dead":
+        let backoffs = { rig.events.events.filter { if case .backoff = $0 { true } else { false } } }
+        let retirements = rig.events.events.filter { if case .retiring = $0 { true } else { false } }
+        guard then == "alive" else {
             #expect(failures(rig).isEmpty)
-            #expect(backoffs.isEmpty)
-            #expect(rig.aliveObservers.observed == [42])
-            // Alive again: built at once, no backoff in the way
-            rig.system.alive.insert(42)
-            rig.aliveObservers.fire(42)
-            rig.clock.runDue()
-            #expect(builds(rig) == built + 1)
-            #expect(coordinator.phase("uid-tv") == .live)
-        default:
-            #expect(failures(rig).isEmpty)
-            #expect(backoffs.isEmpty)
+            #expect(backoffs().isEmpty)
+            #expect(retirements.isEmpty)
+            #expect(!calledBack.value)
+            switch then {
+            case "dead":
+                // Dormant with its catch-all, observed without one; alive again, built at once,
+                // no backoff in the way
+                #expect(coordinator.phase("uid-tv") == (path == "build" ? nil : .dormant))
+                #expect(rig.aliveObservers.observed == [42])
+                rig.system.alive.insert(42)
+                rig.aliveObservers.fire(42)
+                rig.clock.runDue()
+                #expect(builds(rig) == built + 1)
+                #expect(coordinator.phase("uid-tv") == .live)
+            case "newID":
+                #expect(builds(rig) == built + 1)
+                #expect(rig.tv?.deviceID == 52)
+            case "unlisted":
+                #expect(coordinator.phase("uid-tv") == nil)
+                #expect(rig.events.events.contains(.ended(uid: "uid-tv", reason: "absent")) == (path != "build"))
+            default:
+                #expect(coordinator.phase("uid-tv") == nil)
+            }
+            return
         }
+        // A rebuilt catch-all that failed to start counts its IO failure toward give-up only
+        #expect(failures(rig) == [.failure(uid: "uid-tv", startFails ? CatchAllFailure.ioFailed : .buildFailed)])
+        if path != "build" {
+            #expect(retirements == [.retiring(uid: "uid-tv", .rebuildFailed)])
+            #expect(calledBack.value)
+            #expect(await eventually { coordinator.phase("uid-tv") == nil })
+        }
+        // R4 backs off no further
+        #expect(backoffs() == [.backoff(uid: "uid-tv", seconds: 5)])
+        rig.clock.advance(3.99)
+        #expect(builds(rig) == built)
+        rig.clock.advance(0.01)
+        #expect(builds(rig) == built + 1)
+        #expect(coordinator.phase("uid-tv") == .live)
     }
 
     @Test("A reconcile in which no build finds the process list unreadable ends that streak: a build that finds it unreadable later tries again 100 ms after, not 2 s, and reports it again")
@@ -4070,5 +4147,510 @@ struct CatchAllCoordinatorFailureTests {
         #expect(coordinator.phase("uid-tv") == .live)
         #expect(builds(rig) == 1)
         #expect(rig.events.events.filter { $0 == .buildFailed(uid: "uid-tv", reason: "process list unreadable") }.count == 2)
+    }
+
+    // MARK: Failures decided after the settle, dormant shrinks during a rebuild (D5, D6)
+
+    /// `late`: a push failure, or an IO report about the old catch-all, 0.5 s into the settle of a
+    /// failed rebuild. `end`: the device at the settle's end, still alive under its ID or no
+    /// longer alive.
+    @Test("A push failure or IO report during the settle of a failed rebuild is decided with it at its end, never on its own: nothing is rebuilt meanwhile; still alive under its ID, the catch-all retires once and the wait the push failure left ends at R3; no longer alive, it goes dormant, uncounted and without R",
+          arguments: ["pushFailure", "ioReport"], ["alive", "dead"])
+    func laterFailureDecidedAtSettle(late: String, end: String) async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        coordinator.start()
+        rig.clock.runDue()
+        let tv = try #require(rig.tv)
+        let calledBack = CoordinatorTestBox(0)
+        coordinator.onCoverageWillEnd = { _ in
+            calledBack.value += 1
+            return false
+        }
+        rig.backend.failAt = .createTap
+        coordinator.rebuild("uid-tv", reason: .formatChanged)
+        rig.clock.runDue()
+        rig.backend.failAt = nil
+        rig.clock.advance(0.5)
+
+        let owner = FakeClaimOwner()
+        let done = CoordinatorTestBox(false)
+        if late == "pushFailure" {
+            rig.backend.failSets = 2
+            let ticket = try #require(coordinator.setClaim(owner, Claim(processes: [11], coverage: .allDevices)))
+            Task { await coordinator.waitApplied(ticket, .grow); done.value = true }
+            #expect(await eventually { coordinator.pendingWaitCount == 1 })
+            rig.clock.runDue()
+            #expect(rig.events.events.filter { $0 == .pushFailed(uid: "uid-tv", excluded: [5, 11]) }.count == 2)
+        } else {
+            await reportIO(rig, "uid-tv", tv.ioHandle.aggregateID)
+            rig.clock.runDue()
+        }
+        // Left to the settle: nothing rebuilt, nothing retired
+        #expect(builds(rig) == 2)
+        #expect(rig.tv === tv)
+        #expect(calledBack.value == 0)
+        if end == "dead" { rig.system.alive.remove(42) }
+        rig.clock.advance(0.5)
+
+        let retirements = { rig.events.events.filter { if case .retiring = $0 { true } else { false } } }
+        if end == "alive" {
+            #expect(retirements() == [.retiring(uid: "uid-tv", .rebuildFailed)])
+            #expect(await eventually { coordinator.phase("uid-tv") == nil })
+            #expect(calledBack.value == 1)
+        } else {
+            #expect(coordinator.phase("uid-tv") == .dormant)
+            #expect(retirements().isEmpty)
+            #expect(calledBack.value == 0)
+        }
+        // A grow wait ends at R3, or at once on a dormant catch-all
+        if late == "pushFailure" { #expect(await eventually { done.value }) }
+        // The IO report counts toward give-up on its own, 1 s after it, if the device is alive then
+        rig.clock.advance(1)
+        #expect(builds(rig) == 2)
+        var counted: [CatchAllEvent] = []
+        if end == "alive" {
+            counted.append(.failure(uid: "uid-tv", .buildFailed))
+            if late == "ioReport" { counted.append(.failure(uid: "uid-tv", .ioFailed)) }
+        }
+        #expect(failures(rig) == counted)
+        withExtendedLifetime(owner) {}
+    }
+
+    /// `late`: what is left to the settle 0.5 s after the failure: a push failure (its wait's
+    /// watchdog is due only 0.5 s after the settle), or an IO report about the old catch-all.
+    @Test("A failed rebuild on a new listed ID whose old ID is listed again before the settle ends finds the catch-all unchanged: nothing counted and no R, and the rebuild is asked for again at once, so a push failure or IO report left to the settle is served by it",
+          arguments: ["pushFailure", "ioReport"])
+    func failedRebuildAskedAgainWhenUnchanged(late: String) async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        coordinator.start()
+        rig.clock.runDue()
+        coordinator.onCoverageWillEnd = { _ in false }
+        // The TV is listed under a new alive ID (V11), and its rebuild there fails
+        relist(rig, as: 52, alive: true)
+        rig.backend.failAt = .createTap
+        coordinator.deviceListRefreshed()
+        rig.clock.runDue()
+        rig.backend.failAt = nil
+        #expect(builds(rig) == 2)
+        #expect(rig.tv?.deviceID == 42)
+        rig.clock.advance(0.5)
+
+        let owner = FakeClaimOwner()
+        let done = CoordinatorTestBox(false)
+        if late == "pushFailure" {
+            rig.backend.failSets = 2
+            let ticket = try #require(coordinator.setClaim(owner, Claim(processes: [11], coverage: .allDevices)))
+            Task { await coordinator.waitApplied(ticket, .grow); done.value = true }
+            #expect(await eventually { coordinator.pendingWaitCount == 1 })
+        } else {
+            await reportIO(rig, "uid-tv", 200)
+        }
+        rig.clock.runDue()
+        #expect(builds(rig) == 2)
+
+        // The old ID is back before the settle ends: the catch-all on it is unchanged
+        relist(rig, as: 42, alive: true)
+        rig.clock.advance(0.5)
+        #expect(builds(rig) == 3)
+        #expect(rig.tv?.appliedExclusions == (late == "pushFailure" ? [5, 11] : [5]))
+        rig.clock.advance(0.2)
+        #expect(rig.events.events.contains(.rebuilt(uid: "uid-tv")))
+        if late == "pushFailure" { #expect(await eventually { done.value }) }
+        #expect(failures(rig).isEmpty)
+        #expect(!rig.events.events.contains { if case .retiring = $0 { true } else { false } })
+        withExtendedLifetime(owner) {}
+    }
+
+    /// `state`: the dormant TV's rebuild when the claim of the tap on the AirPods ends: not
+    /// requested, requested by IsAlive, postponed by an unreadable process list, or building.
+    @Test("Once the rebuild of a dormant catch-all is requested, postponed or building, the mixdown claim of a tap on another device that ends gets a ticket for it, since the device is alive and the catch-all being built may still exclude the process: the shrink wait ends at the takeover. Without a rebuild it gets none",
+          arguments: ["none", "requested", "postponed", "building"])
+    func dormantShrinkDuringRebuild(state: String) async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        let system = rig.system
+        coordinator.start()
+        rig.clock.runDue()
+        // P5: while the TV has a catch-all, a tap on the AirPods uses the mixdown
+        let onAirPods = FakeClaimOwner(pid: 2, targets: ["uid-air"])
+        let id = ObjectIdentifier(onAirPods)
+        _ = coordinator.setClaim(onAirPods, Claim(processes: [12], coverage: .allDevices))
+        rig.clock.advance(1)
+        makeDormant(rig)
+        #expect(await eventually { rig.runControl.log.contains("detach uid-tv 200") })
+
+        // The AirPods tap of a call app is released
+        let changed = CoordinatorTestBox<Set<String>?>(nil)
+        let ticket = CoordinatorTestBox<ApplyTicket?>(nil)
+        let release: @MainActor @Sendable () -> Void = {
+            changed.value = coordinator.changedDevices(owner: id, proposed: .empty)
+            ticket.value = coordinator.removeClaim(id)
+        }
+        if state != "none" {
+            // The TV wakes; IsAlive asks for its rebuild
+            system.alive.insert(42)
+            if state == "postponed" { system.processListReadable = false }
+            if state == "building" { rig.backend.onWaitUntilReady = { MainActor.assumeIsolated { release() } } }
+            rig.aliveObservers.fire(42)
+            if state != "requested" { rig.clock.runDue() }
+            rig.backend.onWaitUntilReady = nil
+        }
+        if state != "building" { release() }
+        guard state != "none" else {
+            #expect(changed.value == [])
+            #expect(ticket.value == nil)
+            withExtendedLifetime(onAirPods) {}
+            return
+        }
+        let applied = try #require(ticket.value)
+        #expect(applied.devices == ["uid-tv"])
+        #expect(changed.value == applied.devices)
+        let done = CoordinatorTestBox(false)
+        Task { await coordinator.waitApplied(applied, .shrink); done.value = true }
+        #expect(await eventually { coordinator.pendingWaitCount == 1 })
+        system.processListReadable = true
+        rig.clock.runDue()
+
+        // The takeover: 200 ms after the attach (100 ms later for the postponed one), or S after
+        // the push without 12 to a catch-all built with it
+        let takeover: Double = switch state {
+        case "requested": 0.2
+        case "postponed": 0.3
+        default: 0.4
+        }
+        rig.clock.advance(takeover - 0.01)
+        await settle()
+        #expect(!done.value)
+        #expect(!rig.events.events.contains(.rebuilt(uid: "uid-tv")))
+        rig.clock.advance(0.01)
+        #expect(rig.events.events.contains(.rebuilt(uid: "uid-tv")))
+        #expect(await eventually { done.value })
+        #expect(rig.tv?.appliedExclusions == [5])
+        withExtendedLifetime(onAirPods) {}
+    }
+
+    @Test("The catch-all a failed rebuilt one would have replaced serves on with its own record: a shrink pushed to it just before the rebuild ends S after that push, not at once, and a claim that changed while the rebuilt one waited is pushed to it")
+    func failedRebuildRestoresOldRecord() async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        coordinator.start()
+        rig.clock.runDue()
+        coordinator.onCoverageWillEnd = { _ in false }
+        let owners = [FakeClaimOwner(), FakeClaimOwner(pid: 2)]
+        _ = coordinator.setClaim(owners[0], Claim(processes: [11], coverage: .allDevices))
+        rig.clock.advance(1)
+        let old = try #require(rig.tv)
+
+        // 11's tap goes: the list without it is pushed, and a rebuild attaches in the same instant
+        let shrink = try #require(coordinator.removeClaim(ObjectIdentifier(owners[0])))
+        rig.clock.runDue()
+        #expect(old.appliedExclusions == [5])
+        coordinator.rebuild("uid-tv", reason: .formatChanged)
+        rig.clock.runDue()
+        let new = try #require(rig.tv)
+        #expect(new !== old)
+        // While the rebuilt one waits, 12 gets a tap; the push goes to the rebuilt one only
+        let grow = try #require(coordinator.setClaim(owners[1], Claim(processes: [12], coverage: .allDevices)))
+        rig.clock.runDue()
+        #expect(new.appliedExclusions == [5, 12])
+        #expect(old.appliedExclusions == [5])
+
+        await reportIO(rig, "uid-tv", new.ioHandle.aggregateID, .startFailed)
+        #expect(rig.tv === old)
+        let shrunk = CoordinatorTestBox(false)
+        let grown = CoordinatorTestBox(false)
+        Task { await coordinator.waitApplied(shrink, .shrink); shrunk.value = true }
+        Task { await coordinator.waitApplied(grow, .grow); grown.value = true }
+        #expect(await eventually { coordinator.pendingWaitCount == 2 })
+        rig.clock.runDue()
+        #expect(old.appliedExclusions == [5, 12])
+        rig.clock.advance(0.39)
+        await settle()
+        #expect(grown.value)
+        #expect(!shrunk.value)
+        rig.clock.advance(0.01)
+        #expect(await eventually { shrunk.value })
+        withExtendedLifetime(owners) {}
+    }
+
+    // MARK: Review findings after D5 and D6
+
+    /// `path`: how the rebuild of the dormant TV, requested when it woke, ends with the TV dead
+    /// again: its turn finds it so (requested), the retry after an unreadable process list does
+    /// (postponed), its build fails because the TV died during it (buildFailsDead), or its build
+    /// fails while the TV reads alive and the TV is dead when that failure settled
+    /// (settleEndsDead).
+    @Test("A shrink ticket a dormant catch-all got only because its rebuild was underway, for a tap on another device, ends once that rebuild ended with the device still dormant, and not before; the ticket of a tap on the device waits on for the next rebuild, R or G",
+          arguments: ["requested", "postponed", "buildFailsDead", "settleEndsDead"])
+    func rebuildShrinkEndsWhenStillDormant(path: String) async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        let system = rig.system
+        let backend = rig.backend
+        coordinator.start()
+        rig.clock.runDue()
+        coordinator.onCoverageWillEnd = { _ in false }
+        // P5: while the TV has a catch-all, a tap on the AirPods uses the mixdown
+        let onTV = FakeClaimOwner()
+        let onAirPods = FakeClaimOwner(pid: 2, targets: ["uid-air"])
+        _ = coordinator.setClaim(onTV, Claim(processes: [11], coverage: .allDevices))
+        _ = coordinator.setClaim(onAirPods, Claim(processes: [12], coverage: .allDevices))
+        rig.clock.advance(1)
+        makeDormant(rig)
+        #expect(await eventually { rig.runControl.log.contains("detach uid-tv 200") })
+
+        // The TV wakes; IsAlive asks for its rebuild
+        system.alive.insert(42)
+        if path == "postponed" { system.processListReadable = false }
+        rig.aliveObservers.fire(42)
+        if path == "postponed" { rig.clock.runDue() }
+        // The AirPods tap of a call app is released, and the app on the TV is ignored
+        let airPods = try #require(coordinator.removeClaim(ObjectIdentifier(onAirPods)))
+        let tv = try #require(coordinator.removeClaim(ObjectIdentifier(onTV)))
+        #expect(airPods.devices == ["uid-tv"])
+        let airPodsDone = CoordinatorTestBox(false)
+        let tvDone = CoordinatorTestBox(false)
+        Task { await coordinator.waitApplied(airPods, .shrink); airPodsDone.value = true }
+        Task { await coordinator.waitApplied(tv, .shrink); tvDone.value = true }
+        #expect(await eventually { coordinator.pendingWaitCount == 2 })
+        system.processListReadable = true
+
+        switch path {
+        case "requested":
+            system.alive.remove(42)
+            rig.clock.runDue()
+        case "postponed":
+            system.alive.remove(42)
+            rig.clock.advance(0.09)
+            await settle()
+            #expect(!airPodsDone.value)
+            rig.clock.advance(0.01)
+        case "buildFailsDead":
+            let clock = rig.clock
+            backend.failAt = .ready
+            backend.onWaitUntilReady = {
+                MainActor.assumeIsolated {
+                    // The spin runs the flush the claim changes scheduled; its check finds the
+                    // rebuild still running, so only the end of the rebuild can end the wait
+                    clock.runDue()
+                    _ = system.alive.remove(42)
+                }
+            }
+            rig.clock.runDue()
+            backend.onWaitUntilReady = nil
+            backend.failAt = nil
+        default:
+            backend.failAt = .ready
+            rig.clock.runDue()
+            backend.failAt = nil
+            rig.clock.advance(0.5)
+            system.alive.remove(42)
+            rig.clock.advance(0.49)
+            await settle()
+            #expect(!airPodsDone.value)
+            rig.clock.advance(0.01)
+        }
+        #expect(await eventually { airPodsDone.value })
+        #expect(coordinator.phase("uid-tv") == .dormant)
+        #expect(coordinator.pendingWaitCount == 1)
+        rig.clock.advance(60)
+        await settle()
+        #expect(!tvDone.value)
+        coordinator.stop()
+        #expect(await eventually { tvDone.value })
+        #expect(failures(rig).isEmpty)
+        #expect(!rig.events.events.contains { if case .retiring = $0 { true } else { false } })
+        withExtendedLifetime([onTV, onAirPods]) {}
+    }
+
+    /// `path`: the TV wakes and its rebuild from dormant fails while it reads alive, or the
+    /// rebuilt catch-all fails to start before it takes over and the TV is dormant again. `end`:
+    /// the TV when that failure settled: still alive under its ID (R), or no longer alive.
+    @Test("While a failure settles on a dormant catch-all whose device reads alive, the mixdown claim of a tap on another device that ends gets a ticket for it, as during a rebuild, since the dormant tap still excludes the process: its shrink wait ends at R3 if the failure stood, not before R even when another device's report checks the waits first, and at the settle's end if the device stays dormant",
+          arguments: ["dormantRebuild", "dormantWaitingRebuild"], ["alive", "dead"])
+    func dormantShrinkDuringSettle(path: String, end: String) async throws {
+        let rig = makeTwoDeviceRig()
+        let coordinator = rig.coordinator
+        let system = rig.system
+        coordinator.start()
+        rig.clock.runDue()
+        let pendingAtR2 = CoordinatorTestBox<Int?>(nil)
+        coordinator.onCoverageWillEnd = { uid in
+            if uid == "uid-tv" { pendingAtR2.value = coordinator.pendingWaitCount }
+            return false
+        }
+        // P5: while the TVs have a catch-all, a tap on the AirPods uses the mixdown
+        let onAirPods = FakeClaimOwner(pid: 2, targets: ["uid-air"])
+        let id = ObjectIdentifier(onAirPods)
+        _ = coordinator.setClaim(onAirPods, Claim(processes: [12], coverage: .allDevices))
+        rig.clock.advance(1)
+        makeDormant(rig)
+        #expect(await eventually { rig.runControl.log.contains("detach uid-tv 200") })
+
+        // The TV wakes, and its catch-all cannot be rebuilt, or not started, while it reads alive
+        system.alive.insert(42)
+        if path == "dormantRebuild" { rig.backend.failAt = .createTap }
+        rig.aliveObservers.fire(42)
+        rig.clock.runDue()
+        rig.backend.failAt = nil
+        if path == "dormantWaitingRebuild" {
+            #expect(rig.tv?.ioHandle.aggregateID == 202)
+            await reportIO(rig, "uid-tv", 202, .startFailed)
+        }
+        #expect(coordinator.phase("uid-tv") == .dormant)
+        // The other TV's IO report reaches main right after the settle's end, before R runs
+        let other = try #require(coordinator.catchAll(for: "uid-tv2")).ioHandle.aggregateID
+        _ = rig.clock.schedule(after: CatchAllCoordinator.failureSettle) {
+            _ = system.alive.remove(44)
+            coordinator.reportIOFailure("uid-tv2", aggregate: other, .ioDead)
+        }
+
+        // The AirPods tap of a call app is released
+        rig.clock.advance(0.3)
+        let changed = coordinator.changedDevices(owner: id, proposed: .empty)
+        let ticket = try #require(coordinator.removeClaim(id))
+        #expect(changed == ["uid-tv", "uid-tv2"])
+        #expect(ticket.devices == ["uid-tv", "uid-tv2"])
+        let done = CoordinatorTestBox(false)
+        Task { await coordinator.waitApplied(ticket, .shrink); done.value = true }
+        #expect(await eventually { coordinator.pendingWaitCount == 1 })
+        // The other TV's part applies S after its push; the TV's waits for the settle's end
+        rig.clock.advance(0.69)
+        await settle()
+        #expect(!done.value)
+        if end == "dead" { system.alive.remove(42) }
+        rig.clock.advance(0.01)
+
+        if end == "alive" {
+            #expect(rig.events.events.contains(.retiring(uid: "uid-tv", .rebuildFailed)))
+            #expect(pendingAtR2.value == 1)
+        } else {
+            #expect(coordinator.phase("uid-tv") == .dormant)
+            #expect(pendingAtR2.value == nil)
+        }
+        #expect(coordinator.phase("uid-tv2") == .dormant)
+        #expect(await eventually { done.value })
+        withExtendedLifetime(onAirPods) {}
+    }
+
+    /// `end`: the TV when the failure settled: still alive under its ID, or no longer alive.
+    @Test("A rebuilt catch-all that fails to start while the run queue is blocked counts nothing when its detach times out, and the one it would have replaced is left to the settle, not retired at once: still alive under its ID then, it retires and its own R4 detach counts the blocked queue once; no longer alive, it goes dormant and nothing counts",
+          arguments: ["alive", "dead"])
+    func failedRebuildDetachTimeout(end: String) async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        coordinator.start()
+        rig.clock.runDue()
+        coordinator.onCoverageWillEnd = { _ in false }
+        let old = try #require(rig.tv)
+        coordinator.rebuild("uid-tv", reason: .formatChanged)
+        rig.clock.runDue()
+        let new = try #require(rig.tv)
+        #expect(new !== old)
+        let retirements = { rig.events.events.filter { if case .retiring = $0 { true } else { false } } }
+
+        // The display sleeps: the run queue is stuck in a HAL call on the TV, and the new
+        // catch-all does not start
+        rig.runControl.blocked = true
+        await reportIO(rig, "uid-tv", new.ioHandle.aggregateID, .startFailed)
+        #expect(rig.tv === old)
+        #expect(await eventually { rig.runControl.queuedWorkRequests == 1 })
+        #expect(rig.runControl.log.contains("detach uid-tv 201 timed out"))
+        rig.clock.runDue()
+        #expect(failures(rig).isEmpty)
+        #expect(retirements().isEmpty)
+        #expect(coordinator.phase("uid-tv") == .live)
+        #expect(!held(old))
+
+        if end == "dead" { rig.system.alive.remove(42) }
+        rig.clock.advance(CatchAllCoordinator.failureSettle)
+        #expect(await eventually { rig.runControl.log.contains("detach uid-tv 200 timed out") })
+        if end == "alive" {
+            #expect(retirements() == [.retiring(uid: "uid-tv", .rebuildFailed)])
+            #expect(await eventually { failures(rig).count == 2 })
+            #expect(failures(rig) == [.failure(uid: "uid-tv", .ioFailed), .failure(uid: "uid-tv", .runQueueTimeout)])
+        } else {
+            #expect(coordinator.phase("uid-tv") == .dormant)
+            await settle()
+            #expect(failures(rig).isEmpty)
+            #expect(retirements().isEmpty)
+        }
+        rig.runControl.unblock()
+        #expect(await eventually { rig.backend.log.contains { $0.hasPrefix("destroy tap=101 ") } })
+        if end == "alive" {
+            #expect(await eventually { rig.backend.log.contains { $0.hasPrefix("destroy tap=100 ") } })
+        } else {
+            // A dormant catch-all keeps its resources
+            await settle()
+            #expect(!rig.backend.log.contains { $0.hasPrefix("destroy tap=100 ") })
+        }
+    }
+
+    /// `path`: a first build fails while the TV reads alive, a rebuild of its live catch-all
+    /// does, or its rebuild from dormant does. 0.4 s later the coordinator finds the TV not alive
+    /// (a reconcile, a device-list refresh, its IsAlive listener), and 0.7 s after the failure
+    /// IsAlive reports it alive again under the same ID: an HDMI link that renegotiates at wake.
+    @Test("A failure on a device the coordinator found not alive while the failure settled did not stand, although the device is alive under its ID again at the settle's end: nothing counted, no R and no backoff, and the device is built or rebuilt at once",
+          arguments: ["build", "rebuild", "dormantRebuild"])
+    func failureSettleAfterFlap(path: String) async throws {
+        let rig = makeCatchAllRig()
+        let coordinator = rig.coordinator
+        let system = rig.system
+        let calledBack = CoordinatorTestBox(false)
+        coordinator.onCoverageWillEnd = { _ in
+            calledBack.value = true
+            return false
+        }
+        if path != "build" {
+            coordinator.start()
+            rig.clock.runDue()
+        }
+        if path == "dormantRebuild" {
+            makeDormant(rig)
+            #expect(await eventually { rig.runControl.log.contains("detach uid-tv 200") })
+        }
+        rig.backend.failAt = .createTap
+        switch path {
+        case "build":
+            coordinator.start()
+        case "rebuild":
+            coordinator.rebuild("uid-tv", reason: .formatChanged)
+            rig.clock.runDue()
+        default:
+            system.alive.insert(42)
+            rig.aliveObservers.fire(42)
+            rig.clock.runDue()
+        }
+        rig.backend.failAt = nil
+        let built = builds(rig)
+
+        rig.clock.advance(0.4)
+        system.alive.remove(42)
+        switch path {
+        case "build":
+            coordinator.reconcile()
+        case "rebuild":
+            coordinator.deviceListRefreshed()
+        default:
+            rig.aliveObservers.fire(42)
+        }
+        rig.clock.runDue()
+        #expect(coordinator.phase("uid-tv") == (path == "build" ? nil : .dormant))
+        rig.clock.advance(0.3)
+        system.alive.insert(42)
+        rig.aliveObservers.fire(42)
+        rig.clock.runDue()
+        // Left to the settle
+        #expect(builds(rig) == built)
+
+        rig.clock.advance(0.3)
+        #expect(failures(rig).isEmpty)
+        #expect(!rig.events.events.contains { if case .backoff = $0 { true } else { false } })
+        #expect(!rig.events.events.contains { if case .retiring = $0 { true } else { false } })
+        #expect(!calledBack.value)
+        #expect(builds(rig) == built + 1)
+        #expect(coordinator.phase("uid-tv") == .live)
     }
 }
