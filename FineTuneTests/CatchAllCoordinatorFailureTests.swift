@@ -132,7 +132,7 @@ private func failures(_ rig: CatchAllCoordinatorRig) -> [CatchAllEvent] {
 /// `waitUntil` with room for a main actor that other suites block for a while: these paths hop
 /// through several tasks (wait, detach, destroy).
 private func eventually(_ condition: () -> Bool) async -> Bool {
-    await waitUntil(timeout: .seconds(10), condition)
+    await waitUntil(condition)
 }
 
 /// Starts a grow wait; `heldAtEnd` says whether the catch-all was held when it ended. Which of

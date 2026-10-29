@@ -152,8 +152,12 @@ func settle() async {
 
 /// Polls `condition` on the main actor until it holds or `timeout` passes. For
 /// engine paths that hop through an unstructured Task (e.g. tap recreation).
+///
+/// The default bound is generous on purpose: suites running in parallel block the main
+/// actor for seconds at a time (about 3.5 s on a fast Mac, over 10 s on a GitHub runner).
+/// A condition that holds returns at once, so only a failing test waits the full bound.
 @MainActor
-func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool) async -> Bool {
+func waitUntil(timeout: Duration = .seconds(60), _ condition: () -> Bool) async -> Bool {
     let clock = ContinuousClock()
     let deadline = clock.now + timeout
     while !condition() {

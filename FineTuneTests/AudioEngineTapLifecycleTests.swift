@@ -405,7 +405,7 @@ struct AudioEngineTapLifecycleTests {
         fix.running.ids = []
         fix.publish([silent])
 
-        #expect(await waitUntil(timeout: .seconds(10)) { controlTap.isInvalidated })
+        #expect(await waitUntil { controlTap.isInvalidated })
         #expect(!silentTap.isInvalidated)
     }
 
@@ -417,7 +417,7 @@ struct AudioEngineTapLifecycleTests {
         fix.running.ids = []
         fix.publish([])
 
-        #expect(await waitUntil(timeout: .seconds(10)) { tap.isInvalidated })
+        #expect(await waitUntil { tap.isInvalidated })
     }
 
     @Test("An app that comes back within the grace period keeps its tap")
@@ -429,7 +429,7 @@ struct AudioEngineTapLifecycleTests {
         try await Task.sleep(for: .milliseconds(100))
         fix.publish([returning])
 
-        #expect(await waitUntil(timeout: .seconds(10)) { controlTap.isInvalidated })
+        #expect(await waitUntil { controlTap.isInvalidated })
         #expect(!returningTap.isInvalidated)
     }
 
@@ -458,7 +458,7 @@ struct AudioEngineTapLifecycleTests {
         fix.publish([app])  // the only app-list change
         fix.clock.advance(10)
 
-        #expect(await waitUntil(timeout: .seconds(10)) { tap.isSuspended })
+        #expect(await waitUntil { tap.isSuspended })
     }
 
     @Test("Health monitoring stops once every tap is suspended and restarts on playback")
@@ -470,7 +470,7 @@ struct AudioEngineTapLifecycleTests {
         stayIdle(fix, app, for: 10)
         #expect(tap.isSuspended)
 
-        #expect(await waitUntil(timeout: .seconds(10)) { !fix.engine.isHealthMonitorRunning })
+        #expect(await waitUntil { !fix.engine.isHealthMonitorRunning })
 
         fix.running.ids.insert(mainProcess)
         fix.publish([app])
@@ -487,7 +487,7 @@ struct AudioEngineTapLifecycleTests {
 
         fix.engine.startHealthMonitoring()
 
-        #expect(await waitUntil(timeout: .seconds(10)) { fix.taps.created.count == 2 && tap.isInvalidated })
+        #expect(await waitUntil { fix.taps.created.count == 2 && tap.isInvalidated })
         let newTap = try #require(fix.taps.last)
         #expect(newTap.currentDeviceUIDs == [fix.tvUID])
         #expect(approx(newTap.volumeAtActivate, 0.25))
@@ -505,7 +505,7 @@ struct AudioEngineTapLifecycleTests {
 
         fix.engine.startHealthMonitoring()
 
-        #expect(await waitUntil(timeout: .seconds(10)) { controlTap.isInvalidated })
+        #expect(await waitUntil { controlTap.isInvalidated })
         #expect(!playerTap.isInvalidated)
     }
 }

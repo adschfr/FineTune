@@ -19,7 +19,7 @@ private func held(_ controller: CatchAllTapController) -> Bool {
 
 /// `waitUntil` with room for a main actor that other suites block for a while.
 private func eventually(_ condition: () -> Bool) async -> Bool {
-    await waitUntil(timeout: .seconds(10), condition)
+    await waitUntil(condition)
 }
 
 /// Catch-alls built so far, failed builds included.
