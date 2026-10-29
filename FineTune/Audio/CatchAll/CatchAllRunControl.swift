@@ -46,6 +46,9 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
     private let source: ProcessOutputActivitySource
     private let backend: any CatchAllBackend
     private let hostTime: @Sendable () -> UInt64
+    /// Reads a device's or an aggregate's nominal sample rate for the rate check, on the queue;
+    /// nil when the read fails.
+    private let nominalRate: @Sendable (AudioDeviceID) -> Double?
     private let ticksPerSecond: Double
     /// Longest wait of `detach` and `stop()` for the queue.
     private let waitTimeout: Double
@@ -75,7 +78,8 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
 
     /// Called on `queue` with the device UID and aggregate; the owner hops to main. An IO
     /// that died can ask more than once (its listener, then the liveness check every 4 s
-    /// until it is detached): the owner deduplicates per aggregate.
+    /// until it is detached): the owner deduplicates per aggregate. An aggregate whose rate
+    /// no longer matches its device's (`.rateMismatch`) asks once.
     var onRebuild: (@Sendable (String, AudioDeviceID, CatchAllRunLogic.RebuildReason) -> Void)?
     /// Called on `queue` before anything is read from the restarted daemon. The handles
     /// attached until then are dead and get no further start, stop or rebuild; the owner's
@@ -99,7 +103,8 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
         observeDevices: Bool = false,
         queue: DispatchQueue = DispatchQueue(label: "com.adschfr.FineTuneFork.catchall", qos: .userInteractive),
         waitTimeout: Double = 1,
-        hostTime: @escaping @Sendable () -> UInt64 = { mach_absolute_time() }
+        hostTime: @escaping @Sendable () -> UInt64 = { mach_absolute_time() },
+        nominalRate: (@Sendable (AudioDeviceID) -> Double?)? = nil
     ) {
         self.source = source
         self.backend = backend
@@ -108,6 +113,7 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
         self.queue = queue
         self.waitTimeout = waitTimeout
         self.hostTime = hostTime
+        self.nominalRate = nominalRate ?? { [backend] in backend.nominalSampleRate($0) }
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
         ticksPerSecond = 1_000_000_000 * Double(timebase.denom) / Double(timebase.numer)
@@ -423,7 +429,12 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
                 }
             case .rebuild(let aggregate, let reason):
                 guard let handle = handles[aggregate] else { continue }
-                logger.error("Catch-all on \(handle.deviceUID, privacy: .public) (aggregate \(aggregate)) needs a rebuild: \(reason.rawValue, privacy: .public)")
+                if reason == .rateMismatch {
+                    // Not an IO failure
+                    logger.notice("Catch-all on \(handle.deviceUID, privacy: .public) (aggregate \(aggregate)) needs a rebuild: \(reason.rawValue, privacy: .public)")
+                } else {
+                    logger.error("Catch-all on \(handle.deviceUID, privacy: .public) (aggregate \(aggregate)) needs a rebuild: \(reason.rawValue, privacy: .public)")
+                }
                 onRebuild?(handle.deviceUID, aggregate, reason)
             case .outputWithoutEdge(let process):
                 logger.notice("Process \(process) runs output without edge")
@@ -504,13 +515,28 @@ nonisolated final class CatchAllRunControl: @unchecked Sendable {
 
     private func tick() {
         guard isStarted else { return }
+        let current = now()
         var lastAudible: [AudioDeviceID: Double] = [:]
         var lastCallback: [AudioDeviceID: Double] = [:]
         for (aggregate, handle) in handles {
             lastAudible[aggregate] = seconds(handle.state.lastAudibleHostTime.load(ordering: .relaxed))
             lastCallback[aggregate] = seconds(handle.state.lastCallbackHostTime.load(ordering: .relaxed))
         }
-        apply(logic.tick(now: now(), lastAudible: lastAudible, lastCallback: lastCallback))
+        apply(logic.tick(now: current, lastAudible: lastAudible, lastCallback: lastCallback))
+        // §16.12 item 3, after the liveness and suspend effects, so no rate read delays a
+        // dead-IO report (its IsAlive lookback assumes it follows the tick)
+        let mismatched = Set(logic.rateCheckTargets(now: current, lastCallback: lastCallback).filter(rateDiffers))
+        apply(logic.rateChecked(mismatched, now: current))
+    }
+
+    /// §16.12 item 3: the attached aggregate and its device both report a nominal rate, and
+    /// they differ. A failed read counts as a match, so only rates Core Audio reports rebuild.
+    private func rateDiffers(_ aggregate: AudioDeviceID) -> Bool {
+        guard let handle = handles[aggregate], let device = logic.handles[aggregate]?.deviceID,
+              let aggregateRate = nominalRate(aggregate), let deviceRate = nominalRate(device),
+              abs(aggregateRate - deviceRate) >= 1 else { return false }
+        logger.notice("Catch-all on \(handle.deviceUID, privacy: .public) (aggregate \(aggregate)) runs at \(aggregateRate, format: .fixed(precision: 0)) Hz, device \(device) at \(deviceRate, format: .fixed(precision: 0)) Hz")
+        return true
     }
 
     private func now() -> Double { seconds(hostTime()) }

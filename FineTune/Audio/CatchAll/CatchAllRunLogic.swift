@@ -30,7 +30,8 @@ nonisolated struct ProcessDeviceReport: Sendable, Equatable {
 /// last such need or the last audible input. A process needs audio while it runs output, and
 /// while it runs IO at all: without limit when FineTune lists it as an app, for `ioOnlyCap`
 /// otherwise. While stopped, the muted tap holds covered audio back: a late start loses the
-/// beginning of a sound, never plays it unprocessed.
+/// beginning of a sound, never plays it unprocessed. While it runs, each liveness tick also
+/// checks that its aggregate still runs at its device's nominal rate (§16.12 item 3).
 ///
 /// The unit is the handle, keyed by aggregate ID: a rebuild attaches the new catch-all for a
 /// device before it detaches the old one, so two handles can share a device UID.
@@ -38,6 +39,9 @@ nonisolated struct CatchAllRunLogic: Sendable {
     enum RebuildReason: String, Sendable, Equatable {
         case startFailed
         case ioDead
+        /// The aggregate's nominal rate differed from its device's on two liveness ticks in a
+        /// row (§16.12 item 3). Not an IO failure.
+        case rateMismatch
     }
 
     enum Effect: Sendable, Equatable {
@@ -72,6 +76,10 @@ nonisolated struct CatchAllRunLogic: Sendable {
         /// Last time the catch-all was needed (a covered process needing audio, or audible input).
         var lastNeeded: Double = 0
         var missedLiveness = 0
+        /// Liveness ticks in a row, since it last started, that found its rate differing.
+        var rateMismatches = 0
+        /// It asked for a rebuild for its rate; an aggregate asks once.
+        var rateReported = false
 
         func covers(_ process: AudioObjectID) -> Bool {
             !excluded.contains(process) || prepared.contains(process)
@@ -111,6 +119,8 @@ nonisolated struct CatchAllRunLogic: Sendable {
     private var lastReread: Double = 0
     /// Last tick that checked the running catch-alls; the poll for a stopped one runs in between.
     private var lastRunTick: Double = 0
+    /// The liveness tick whose rate check has not run yet (§16.12 item 3).
+    private var rateCheckDue: Double?
 
     // MARK: - Events
 
@@ -213,12 +223,14 @@ nonisolated struct CatchAllRunLogic: Sendable {
     /// end without an edge; while another one is stopped, its poll runs in between. While all
     /// are stopped: the poll of capped processes and the safety re-read. `lastAudible` and
     /// `lastCallback` are the times (same clock as `now`) each IO thread last saw audible
-    /// input and last ran; 0 if never.
+    /// input and last ran; 0 if never. A liveness tick is followed by the rate check
+    /// (`rateCheckTargets`, `rateChecked`).
     mutating func tick(now: Double, lastAudible: [AudioDeviceID: Double], lastCallback: [AudioDeviceID: Double]) -> [Effect] {
         guard anyRunning else { return idleTick(now: now) }
         let targets = anyStopped ? pollTargets(now: now) : []
         if !targets.isEmpty, now - lastRunTick < tickInterval { return [.poll(targets)] }
         lastRunTick = now
+        rateCheckDue = now
         var effects: [Effect] = []
         var stopped = false
         for aggregate in handles.keys.sorted() {
@@ -288,6 +300,43 @@ nonisolated struct CatchAllRunLogic: Sendable {
     /// catch-all is stopped, their IsRunningOutput is polled.
     func pollTargets(now: Double) -> [AudioObjectID] {
         capped(now: now).filter { !runningOutput.contains($0) }
+    }
+
+    /// §16.12 item 3, after `tick` at the same `now` and after its effects: the catch-alls whose
+    /// nominal rate the run control reads now. Only at a liveness tick (none at a poll in
+    /// between or while all are stopped), and only running ones whose IO called back within
+    /// `livenessTimeout` (`lastCallback` as for `tick`): a rate check on dead IO is moot, and
+    /// its device may be the one that blocks the queue. One that asked already is not read
+    /// again.
+    func rateCheckTargets(now: Double, lastCallback: [AudioDeviceID: Double]) -> [AudioDeviceID] {
+        guard rateCheckDue == now else { return [] }
+        return handles.keys.sorted().filter { aggregate in
+            guard let handle = handles[aggregate], handle.running, !handle.rateReported,
+                  let called = lastCallback[aggregate] else { return false }
+            return called > 0 && now - called <= livenessTimeout
+        }
+    }
+
+    /// §16.12 item 3, after `rateCheckTargets`: `mismatched` names the aggregates whose nominal
+    /// rate the run control read as differing from their device's. A format change that rebuilt
+    /// nothing leaves the aggregate at the old rate. Two liveness ticks in a row ask for one
+    /// rebuild, so a read during the change itself does not count; any other liveness tick (a
+    /// match, a failed read, a check that did not run) starts over, and so does a start.
+    mutating func rateChecked(_ mismatched: Set<AudioDeviceID>, now: Double) -> [Effect] {
+        guard rateCheckDue == now else { return [] }
+        rateCheckDue = nil
+        var effects: [Effect] = []
+        for aggregate in handles.keys.sorted() where handles[aggregate]?.running == true {
+            guard mismatched.contains(aggregate) else {
+                handles[aggregate]?.rateMismatches = 0
+                continue
+            }
+            handles[aggregate]?.rateMismatches += 1
+            guard let handle = handles[aggregate], handle.rateMismatches >= 2, !handle.rateReported else { continue }
+            handles[aggregate]?.rateReported = true
+            effects.append(.rebuild(aggregate, .rateMismatch))
+        }
+        return effects
     }
 
     /// Seconds between the run control's timer events: the poll while a catch-all is stopped
@@ -375,6 +424,7 @@ nonisolated struct CatchAllRunLogic: Sendable {
             handles[aggregate]?.startedAt = now
             handles[aggregate]?.lastNeeded = now
             handles[aggregate]?.missedLiveness = 0
+            handles[aggregate]?.rateMismatches = 0
             effects.append(.start(aggregate))
         }
         return effects

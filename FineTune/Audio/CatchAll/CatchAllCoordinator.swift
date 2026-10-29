@@ -43,6 +43,31 @@ nonisolated enum CatchAllEvent: Sendable, Equatable {
     /// Three failures toward the breaker within 10 min (failed builds, blocked run queues,
     /// give-ups) opened it (also logged at `.fault`): no catch-all for the rest of the session.
     case breakerOpened
+    /// A format hook (E15) or the run control's rate check (§16.12 item 3) acted on the device's
+    /// catch-all; the output changes that follow are `output` events.
+    case format(uid: String, CatchAllFormatStep)
+}
+
+/// What a format hook or the rate check did (E15, §16.12 item 3).
+nonisolated enum CatchAllFormatStep: String, Sendable, Equatable {
+    /// `formatChanging` held the catch-all, or held it again and re-armed the format watchdog.
+    case held
+    /// `formatUnchanged` ended the format hold.
+    case released
+    /// `formatUnchanged` came while the coordinator's own rebuild of the device runs: ignored,
+    /// since building and attaching an aggregate can make the engine's guard cancel; that
+    /// rebuild's takeover ends the hold.
+    case unchangedIgnored
+    /// `formatChanged` asked for a rebuild, or for one after the rebuild that runs.
+    case rebuilding
+    /// `formatChanged` came while a failure on the device settles: its end decides. The format
+    /// watchdog bounds the hold while it runs; after an earlier `formatChanged` whose rebuild
+    /// failed into that settle it does not run, and the settle's end bounds the hold (R,
+    /// dormancy, G or the takeover of the rebuild it asks for).
+    case leftToSettle
+    /// The run control found the aggregate at another nominal rate than its device on two
+    /// ticks in a row: rebuilt like a format change, nothing counted.
+    case rateMismatch
 }
 
 /// Why coverage of a device ends with promotion (R, design §16.3 E13).
@@ -64,11 +89,12 @@ nonisolated enum CatchAllRetireReason: String, Sendable, Equatable {
     case injected
 }
 
-/// Why a catch-all is rebuilt make before break (E, design §5 E). The format hooks (E15) add
-/// the callers of `formatChanged` later.
+/// Why a catch-all is rebuilt make before break (E, design §5 E).
 nonisolated enum CatchAllRebuildReason: String, Sendable, Equatable {
     /// A push failed after its retry, or a list was still missing at its watchdog (§4.6).
     case pushFailed
+    /// The device's stream format changed (`formatChanged`, E15), or the run control found the
+    /// aggregate at another nominal rate than the device (§16.12 item 3).
     case formatChanged
     /// The run control reported dead IO or a failed start on an alive device (§16.6).
     case ioFailed
@@ -108,6 +134,14 @@ nonisolated enum CatchAllWatchdog: String, Sendable, Equatable {
     /// A rebuilt catch-all that has not taken over 2 s after its attach, or a rebuild that could
     /// not read the process list for 2 s.
     case rebuild
+    /// A format hold that neither `formatUnchanged` nor `formatChanged` followed within 2 s of
+    /// the last `formatChanging` (E15). A `formatChanged` left to a failure that settles on the
+    /// device does not stop it; one that asks for a rebuild does, and a later `formatChanging`
+    /// arms it again only once that rebuild no longer runs.
+    case format
+    /// No catch-all built after the change took over within `formatChangeBound` of
+    /// `formatChanged` (E15): the call returns, and the rebuild goes on.
+    case formatChange
 }
 
 // MARK: - Coordinator
@@ -141,6 +175,14 @@ nonisolated enum CatchAllWatchdog: String, Sendable, Equatable {
 /// some retirements back off 5/30/120 s, and three failed builds, blocked run queues or
 /// give-ups within 10 min open the breaker, which retires every catch-all for the rest of the
 /// session.
+///
+/// A format change (E15) holds a building or live catch-all from `formatChanging` on (silent,
+/// never loud). `formatUnchanged` ends the hold, except while the coordinator's own rebuild of
+/// the device runs, whose takeover then ends it instead; `formatChanged` rebuilds through E,
+/// and the hold ends at the takeover of a catch-all built after the change. Dormancy, R and G
+/// end it too, and a 2 s watchdog ends a hold nothing followed. The run control's rate check
+/// (§16.12 item 3) rebuilds a catch-all whose aggregate no longer runs at its device's rate,
+/// uncounted.
 @MainActor
 final class CatchAllCoordinator: CatchAllCoordinating {
     /// C9: seconds after the last Devices or IsRunningOutput change before processes that
@@ -169,6 +211,16 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     static let shrinkWatchdog: Double = 2
     static let retirementWatchdog: Double = 2
     static let rebuildWatchdog: Double = 2
+    /// E15: a format hold that neither `formatUnchanged` nor `formatChanged` followed ends this
+    /// long after the last `formatChanging`.
+    static let formatWatchdog: Double = 2
+    /// E15: `formatChanged` returns at the latest this long after its call, so the engine's
+    /// format handler is never blocked without bound: the rebuild watchdog's time after the new
+    /// catch-all's attach plus up to 2 s for its build (the aggregate's ready wait in
+    /// `CatchAllTapController.build`). The rebuild itself goes on; the format hold stays until
+    /// its takeover, R or G. Main runs no timer during a build's wait, so a build that runs
+    /// when the bound passes ends first.
+    static let formatChangeBound: Double = rebuildWatchdog + 2
     /// E12: while a catch-all is dormant, its listed ID and alive state are read this often.
     static let dormantCheckInterval: Double = 2
     /// E14: the next build waits this long after successive failures; one more gives up.
@@ -237,6 +289,12 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// Aggregates whose IO failure was reported (reports repeat), each a candidate for one
     /// count; forgotten when destroyed, since aggregate IDs are reused.
     private var countedAggregates: Set<AudioDeviceID> = []
+    /// Aggregates whose rate mismatch was acted on (§16.12 item 3), each once; forgotten when
+    /// destroyed, like `countedAggregates`.
+    private var rateReports: Set<AudioDeviceID> = []
+    /// `formatChanged` calls waiting for their rebuild (E15).
+    private var formatWaits: [FormatWait] = []
+    private var nextFormatWait = 0
     /// Reported IO failures that count toward give-up only once they settled.
     private var ioFailureSettles: [Int: IOFailureSettle] = [:]
     private var nextIOFailureCheck = 0
@@ -379,6 +437,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// Handovers waiting for an applied list.
     var pendingWaitCount: Int { waiters.count }
 
+    /// `formatChanged` calls waiting for their rebuild.
+    var pendingFormatChangeCount: Int { formatWaits.count }
+
     /// Tests only: puts the device's catch-all into `phase` without what a transition does
     /// (no hold, detach or alive listener). Failure handling enters dormant and retiring
     /// through its own transitions (design §16.3 E12, E13), never through this. What a phase
@@ -412,12 +473,13 @@ final class CatchAllCoordinator: CatchAllCoordinating {
 
     /// E19: ends every catch-all's coverage without promotion (G), building ones included (a
     /// build whose wait is running is destroyed when it ends), destroys catch-alls kept aside
-    /// once their queued detach has run, completes every wait, cancels the timers and stops
-    /// the run control within its 1 s bound. The gate is not called back after this. Never
-    /// called from a run-control callback, which runs on its queue. A later `start()` starts
-    /// the run control again. Counted failures, backoff steps, given-up IDs and the breaker
-    /// stay for the session; a running backoff ends here, and a failure that has not settled
-    /// is not counted and backs nothing off.
+    /// once their queued detach has run, completes every wait (and returns every waiting
+    /// `formatChanged` call), cancels the timers and stops the run control within its 1 s
+    /// bound. The gate is not called back after this. Never called from a run-control
+    /// callback, which runs on its queue. A later `start()` starts the run control again.
+    /// Counted failures, backoff steps, given-up IDs and the breaker stay for the session; a
+    /// running backoff ends here, and a failure that has not settled is not counted and backs
+    /// nothing off.
     func stop() {
         isStarted = false
         pendingReconcile = false
@@ -438,6 +500,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         // any left over, whose handover would otherwise hang
         let open = waiters
         waiters.removeAll()
+        let formatOpen = formatWaits
+        formatWaits.removeAll()
+        for wait in formatOpen { wait.bound.cancel() }
         for action in [turn, flushAction, checkAction, settleAction, watchdogAction, dormantCheckAction] { action?.cancel() }
         turn = nil
         flushAction = nil
@@ -456,6 +521,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         cancelFailureSettles()
         endUnreadableBuildStreak()
         for waiter in open { waiter.continuation.resume() }
+        for wait in formatOpen { wait.continuation.resume() }
         guard runControlStarted else { return }
         runControlStarted = false
         if !env.runControl.stop() {
@@ -481,11 +547,6 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         _ = listedOutputs()
         reconcile()
     }
-
-    // Format changes (E15) come in a later commit; until then they leave the catch-all as is.
-    func formatChanging(uid: String) {}
-    func formatUnchanged(uid: String) {}
-    func formatChanged(uid: String) async {}
 
     private func scheduleTurn() {
         // Inside a build's wait or a turn: scheduled when that ends
@@ -667,7 +728,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// observation. A build that fails on an alive device counts and backs off (E14) once that
     /// settled; one on a device that is not alive counts nothing, and the device is built once
     /// IsAlive reports it alive. A device that died during the wait goes dormant once its
-    /// catch-all is attached (E12).
+    /// catch-all is attached (E12). A format hold taken during the wait keeps the new catch-all
+    /// held after its list applied, and a format change during the wait rebuilds it once
+    /// attached (E15).
     private func build(_ output: CatchAllOutput) -> Bool {
         let uid = output.uid
         guard let processes = readProcesses() else {
@@ -741,7 +804,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         device.controller = controller
         // The tap was created with this list, so it applies without latency
         device.settledGeneration = generation
-        device.holds = [.initialList]
+        // A format hold taken during the wait stays: the release waits for both
+        device.holds.insert(.initialList)
         // Gain follows the listed ID, the one the device monitor keeps the level under and
         // reports changes for (E20); the run control matches process Devices against the ID
         // Core Audio resolved for the UID. The level may have changed during the wait.
@@ -759,6 +823,11 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         env.runControl.attach(controller.ioHandle, deviceID: controller.deviceID, excluded: Set(exclusions))
         // No listener reports a device that died or changed its ID during the wait: E12 now
         checkDevice(device)
+        // E15: the format changed during the wait, so the tap and aggregate may predate it
+        if let reason = device.rebuildAfterBuild {
+            device.rebuildAfterBuild = nil
+            if device.phase == .live { rebuild(uid, reason: reason) }
+        }
         // Claims that changed during the wait are pushed now; the release follows when applied
         scheduleFlush()
         releaseIfApplied()
@@ -1198,9 +1267,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     }
 
     /// Settles pushes, lets rebuilt catch-alls take over, resumes the waits that applied,
-    /// releases new catch-alls whose list applied and schedules the next check. A takeover or
-    /// release that could not read the process list is checked again shortly, since no later
-    /// push deadline or callback may come to check it before its watchdog.
+    /// releases new catch-alls whose list applied, returns the `formatChanged` calls whose
+    /// rebuild ended and schedules the next check. A takeover or release that could not read
+    /// the process list is checked again shortly, since no later push deadline or callback may
+    /// come to check it before its watchdog.
     private func checkWaiters() {
         checkAction?.cancel()
         checkAction = nil
@@ -1221,6 +1291,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         }
         if !releaseIfApplied() { unreadable = true }
         for waiter in done { waiter.continuation.resume() }
+        checkFormatWaits()
         scheduleCheck(now: now, retryRead: unreadable)
         scheduleWatchdog()
     }
@@ -1272,11 +1343,16 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// Opens a new catch-all's output once it excludes FineTune and every live process a
     /// claim holds on its device, and every push since the build has applied (E1). Other
     /// exclusions double nothing (dead or foreign processes, or ones the I1 check removes),
-    /// so they never keep it held. False when one waits for its release and the process list
-    /// could not be read.
+    /// so they never keep it held. While a rebuild waits to take over, the initial hold still
+    /// stands for the catch-all it replaces, whose own list never applied, and is put back in
+    /// service if the new one fails: the takeover ends it (`completeRebuildIfReady`), never the
+    /// new one's list. False when one waits for its release and the process list could not be
+    /// read.
     @discardableResult
     private func releaseIfApplied() -> Bool {
-        let pending = devices.values.filter { $0.holds.contains(.initialList) && $0.phase == .live && $0.controller != nil }
+        let pending = devices.values.filter {
+            $0.holds.contains(.initialList) && $0.phase == .live && $0.controller != nil && $0.rebuild?.isWaiting != true
+        }
         guard !pending.isEmpty else { return true }
         guard let list = env.processList() else { return false }
         let live = Set(list)
@@ -1365,11 +1441,17 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         // death for that settle
         stopObservingAlive(uid)
         stopDormantCheckIfIdle()
+        // E15: a format hold stays until R3 holds the catch-all for good; its watchdog ends, and
+        // so does a formatChanged call waiting for a rebuild
+        device.formatWatchdogDue = nil
+        device.formatRebuildSerial = nil
+        device.formatUnchangedIgnored = false
         logger.notice("Catch-all on \(uid, privacy: .public) retiring: \(reason.rawValue, privacy: .public)")
         emit(.retiring(uid: uid, reason))
         emit(.phase(uid: uid, .retiring(caHeld: false)))
         evaluateSettle()
         scheduleWatchdog()
+        checkFormatWaits()
         // R2: the engine taps every app the catch-all played; a tap it creates on the device
         // takes a retirement hold and gets a retirement ticket
         let absentRouted = spinning { onCoverageWillEnd?(uid) ?? false }
@@ -1589,7 +1671,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             await controller.destroy()
             self.ending.removeAll { $0 === entry }
             // Aggregate IDs are reused: a later aggregate with this ID counts its own IO failure
+            // and reports its own rate
             self.countedAggregates.remove(controller.ioHandle.aggregateID)
+            self.rateReports.remove(controller.ioHandle.aggregateID)
         }
     }
 
@@ -1713,7 +1797,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         }
         cancelRebuildDeferral(device)
         logger.notice("Catch-all on \(uid, privacy: .public): rebuilding (\(reason.rawValue, privacy: .public))")
-        device.rebuild = RebuildState(reason: reason)
+        // Its build reads the device's stream and format from here, so a format change before
+        // this point is in it (E15)
+        device.rebuildSerial += 1
+        device.rebuild = RebuildState(reason: reason, serial: device.rebuildSerial)
         // A settle after a failed build takes this observation over, as after a first build
         observeDevice(uid, output.id)
         let exclusions = desiredList(for: uid, processes)
@@ -1796,19 +1883,22 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// The new catch-all could not be built. A device that went away meanwhile (the build found
     /// no device for the UID) ends with G (E11). One that is listed but not alive keeps the old
     /// catch-all as a dormant one (E12): nothing counted, no R and no backoff; it is rebuilt
-    /// once alive. On a device that reads alive the old one serves on as it was, live or
-    /// dormant, since a device that is leaving may fail the build before IsAlive turns false,
-    /// and R2 on a dying device would tap every app there for nothing: the failure settles
-    /// first (`failureSettled`), with nothing built or rebuilt on the device meanwhile. Still
-    /// listed under the same ID and usable then, and not found otherwise meanwhile, it counts
-    /// (E14), the old one retires (R) and the next build backs off; otherwise the E12 check
-    /// decides, uncounted. A device that stays dormant ends the shrink waits that waited only
-    /// for this rebuild (`isApplied`).
+    /// once alive, and a rebuild or format change asked for during the failed one is dropped,
+    /// since that rebuild reads the current facts. On a device that reads alive the old one
+    /// serves on as it was, live or dormant, since a device that is leaving may fail the build
+    /// before IsAlive turns false, and R2 on a dying device would tap every app there for
+    /// nothing: the failure settles first (`failureSettled`), with nothing built or rebuilt on
+    /// the device meanwhile. Still listed under the same ID and usable then, and not found
+    /// otherwise meanwhile, it counts (E14), the old one retires (R) and the next build backs
+    /// off; otherwise the E12 check decides, uncounted. A device that stays dormant ends the
+    /// shrink waits that waited only for this rebuild (`isApplied`).
     private func rebuildFailed(_ device: CatchAllDevice, _ message: String) {
         let reason = device.rebuild?.reason ?? .pushFailed
         device.rebuild = nil
         logger.error("Catch-all on \(device.uid, privacy: .public) could not be rebuilt: \(message, privacy: .public)")
         emit(.buildFailed(uid: device.uid, reason: message))
+        // A formatChanged call waiting for this rebuild returns, whichever way it ends
+        defer { checkFormatWaits() }
         guard !isAbsent(device.uid) else {
             endAbsent(device)
             return
@@ -1819,6 +1909,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
                 enterDormant(device, listedID: id, why: "device \(id) is not alive after a failed rebuild")
             } else {
                 logger.notice("Catch-all on \(device.uid, privacy: .public): device \(id) is not alive after a failed rebuild; it stays dormant")
+                // As on entering dormant: the rebuild once it is alive reads the current claims and
+                // format, so a rebuild or format change asked for during this one is served by it
+                device.rebuildAgain = nil
+                dropFormatHold(device)
                 observeAlive(device.uid, id)
                 // A shrink of a tap on the device keeps waiting for the rebuild once it is alive,
                 // R or G; one of a tap that plays elsewhere ends
@@ -1872,7 +1966,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// then detached and destroyed. Waits on the device resolve against the new one from here.
     /// The old one may be the only tap still holding a process whose claim ended while the new
     /// one was built, so the new one must also exclude no live process without a claim, and
-    /// each push that removed exclusions must be past margin S.
+    /// each push that removed exclusions must be past margin S. The new one opens only once no
+    /// other reason holds it; the format hold ends here unless the rebuild `formatChanged`
+    /// asked for is still to come (E15).
     private func completeRebuildIfReady(_ device: CatchAllDevice, now: Double, live: Set<AudioObjectID>?) {
         guard device.phase == .live, let rebuild = device.rebuild, !rebuild.failed,
               case .waiting(let since, let callbacks) = rebuild.stage,
@@ -1886,11 +1982,13 @@ final class CatchAllCoordinator: CatchAllCoordinating {
                                   foreign: env.foreign(live), claims: claims) else { return }
         if let old = rebuild.outgoing { setHeld(old, true, uid: device.uid) }
         device.rebuild = nil
+        device.takenOverSerial = rebuild.serial
         device.shrinksForRebuild.removeAll()
         if device.holds.remove(.initialList) != nil {
             logger.notice("Catch-all on \(device.uid, privacy: .public) released: its exclusion list applied")
             emit(.released(uid: device.uid))
         }
+        endFormatHoldAtTakeover(device, rebuild)
         release(device, from: .rebuild)
         logger.notice("Catch-all on \(device.uid, privacy: .public): the rebuilt catch-all took over (\(rebuild.reason.rawValue, privacy: .public))")
         emit(.rebuilt(uid: device.uid))
@@ -1906,10 +2004,263 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         }
     }
 
+    // MARK: Format changes (E15) and the rate check (§16.12 item 3)
+
+    /// The engine's format guard saw the device's format start to change. A building or live
+    /// catch-all is held at once (one atomic store each, the one a waiting rebuild replaces
+    /// included), so covered audio is silent, never loud, until `formatUnchanged`, a takeover
+    /// that stands in for it (`endFormatHoldAtTakeover`), dormancy, R or G; a building one is
+    /// released only once its initial list applied and the hold ended. The format watchdog ends
+    /// the hold 2 s after the last call if nothing followed; while a rebuild that
+    /// `formatChanged` asked for runs, that rebuild owns the hold and its own bounds end it, so
+    /// a later call does not arm the watchdog again. A dormant catch-all plays nothing and its
+    /// rebuild reads the current format; a retiring one is held by R. Neither is held, nor
+    /// anything while stopped or after the breaker (§16.12 item 7). Observe holds as it does for
+    /// the other reasons.
+    func formatChanging(uid: String) {
+        guard isStarted, !breakerOpen, let device = devices[uid],
+              device.phase == .building || device.phase == .live else {
+            let state = devices[uid].map { String(describing: $0.phase) } ?? "no catch-all"
+            logger.notice("Catch-all on \(uid, privacy: .public): format changing, not held (\(state, privacy: .public))")
+            return
+        }
+        let again = !device.holds.insert(.format).inserted
+        // A new change: a formatUnchanged ignored before says nothing about it
+        device.formatUnchangedIgnored = false
+        let owned = device.formatRebuildSerial != nil && (isRebuilding(device) || device.rebuildAfterBuild != nil)
+        if !owned { device.formatWatchdogDue = env.clock.now + Self.formatWatchdog }
+        let until = owned
+            ? "until the rebuild after the change takes over"
+            : "until it is unchanged or rebuilt, at most \(Int(Self.formatWatchdog)) s without either"
+        logger.notice("Catch-all on \(uid, privacy: .public): format changing; \(again ? "held still" : "held", privacy: .public) \(until, privacy: .public)")
+        emit(.format(uid: uid, .held))
+        for controller in device.controllers where !controller.renderState.held.load(ordering: .relaxed) {
+            setHeld(controller, true, uid: uid)
+        }
+        scheduleWatchdog()
+    }
+
+    /// The format guard found the format unchanged: the format hold ends, unless the
+    /// coordinator's own rebuild of the device runs (requested, postponed, building or waiting
+    /// to take over, or asked for once the device's build ends). Building and attaching a new
+    /// aggregate can make the guard cancel, and that rebuild's takeover then ends the hold in
+    /// place of this call.
+    func formatUnchanged(uid: String) {
+        guard isStarted, let device = devices[uid], device.phase == .building || device.phase == .live,
+              device.holds.contains(.format) else {
+            logger.notice("Catch-all on \(uid, privacy: .public): format unchanged, no format hold")
+            return
+        }
+        if isRebuilding(device) || device.rebuildAfterBuild != nil {
+            device.formatUnchangedIgnored = true
+            logger.notice("Catch-all on \(uid, privacy: .public): format unchanged ignored, its own rebuild runs; its takeover ends the format hold")
+            emit(.format(uid: uid, .unchangedIgnored))
+            return
+        }
+        logger.notice("Catch-all on \(uid, privacy: .public): format unchanged; format hold released")
+        emit(.format(uid: uid, .released))
+        endFormatHold(device)
+        scheduleWatchdog()
+    }
+
+    /// The device's format changed: its live catch-all is rebuilt through E (`rebuild`, in the
+    /// coordinator's next turn), so the new tap and aggregate follow the new stream format; the
+    /// build reads the stream index and the rate anew. A rebuild that runs already is followed
+    /// by another, so the device ends on a catch-all built after the change. The format hold
+    /// stays on the catch-all in service until such a one takes over, or until dormancy, R or
+    /// G; the rebuild's own bounds (postponement, build, its watchdog) replace the format
+    /// watchdog. While a failure on the device settles, the rebuild is left to its end, as
+    /// `rebuild` does: the format watchdog bounds the hold if it runs, otherwise (after an
+    /// earlier call whose rebuild failed into that settle) the settle's end. A building
+    /// catch-all is rebuilt once attached, and so is a dormant one's rebuild whose build runs
+    /// (both only reachable from a run-loop spin, V4); otherwise a dormant one needs nothing
+    /// now, its rebuild reads the format once the device is alive; a retiring one, or one whose
+    /// retirement is queued, ends anyway.
+    ///
+    /// Returns once a catch-all built after the change took over, the rebuild failed (R, a
+    /// failure that settles, dormant, G, `stop()`) or `formatChangeBound` passed, so the
+    /// engine's format handler is never blocked without bound. Returns at once before
+    /// `start()`, after the breaker, without a catch-all on the device, for a retiring one or one
+    /// whose retirement is queued, for a dormant one (unless its rebuild builds) and while a
+    /// failure on the device settles. It never builds itself: a build in a spin or turn waits
+    /// for the turn after it.
+    func formatChanged(uid: String) async {
+        guard isStarted, !breakerOpen, let device = devices[uid], pendingRetirements[uid] == nil else {
+            logger.notice("Catch-all on \(uid, privacy: .public): format changed, no catch-all to rebuild")
+            return
+        }
+        switch device.phase {
+        case .retiring:
+            logger.notice("Catch-all on \(uid, privacy: .public): format changed while retiring, not rebuilt")
+            return
+        case .dormant:
+            // Its rebuild from dormant reads the format when it starts; only one whose build runs
+            // now may predate the change, as a first build may
+            guard device.rebuild != nil else {
+                logger.notice("Catch-all on \(uid, privacy: .public): format changed while dormant; its rebuild reads the format once the device is alive")
+                return
+            }
+            rebuild(uid, reason: .formatChanged)
+        case .building:
+            device.rebuildAfterBuild = .formatChanged
+        case .live:
+            guard failureSettles[uid] == nil else {
+                let bound = device.formatWatchdogDue != nil ? "the format watchdog" : "the end of that settle"
+                logger.notice("Catch-all on \(uid, privacy: .public): format changed; the rebuild is left to the failure that has not settled, \(bound, privacy: .public) bounds the hold")
+                emit(.format(uid: uid, .leftToSettle))
+                return
+            }
+            rebuild(uid, reason: .formatChanged)
+        }
+        // The next rebuild to start is built after the change: one that runs has its serial
+        let serial = device.rebuildSerial + 1
+        device.formatRebuildSerial = max(device.formatRebuildSerial ?? 0, serial)
+        device.formatWatchdogDue = nil
+        device.formatUnchangedIgnored = false
+        scheduleWatchdog()
+        logger.notice("Catch-all on \(uid, privacy: .public): format changed; rebuilding")
+        emit(.format(uid: uid, .rebuilding))
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            nextFormatWait += 1
+            let id = nextFormatWait
+            let bound = env.clock.schedule(after: Self.formatChangeBound) { [weak self] in self?.formatChangeBounded(id) }
+            formatWaits.append(FormatWait(id: id, uid: uid, device: device, serial: serial, bound: bound,
+                                          continuation: continuation))
+            checkFormatWaits()
+        }
+    }
+
+    /// Returns each `formatChanged` call whose rebuild ended (`formatWaitEnd`).
+    private func checkFormatWaits() {
+        guard !formatWaits.isEmpty else { return }
+        var done: [(FormatWait, String)] = []
+        formatWaits.removeAll { wait in
+            guard let why = formatWaitEnd(wait) else { return false }
+            done.append((wait, why))
+            return true
+        }
+        for (wait, why) in done {
+            wait.bound.cancel()
+            logger.notice("Catch-all on \(wait.uid, privacy: .public): format change handled (\(why, privacy: .public))")
+            wait.continuation.resume()
+        }
+    }
+
+    /// Why a `formatChanged` call returns now, or nil while the rebuild it waits for may still
+    /// take over: one that runs or is queued, postponed, asked for after the build or after the
+    /// rebuild that runs (a dormant one's included).
+    private func formatWaitEnd(_ wait: FormatWait) -> String? {
+        guard isStarted, let device = wait.device, devices[wait.uid] === device else { return "coverage ended" }
+        if device.takenOverSerial >= wait.serial { return "rebuilt" }
+        switch device.phase {
+        case .retiring: return "retiring"
+        case .dormant: if device.rebuild == nil { return "dormant" }
+        case .building: return device.rebuildAfterBuild == nil ? "no rebuild left" : nil
+        case .live: break
+        }
+        if let rebuild = device.rebuild {
+            return rebuild.serial >= wait.serial || device.rebuildAgain != nil ? nil : "no rebuild left"
+        }
+        if pendingRebuilds[wait.uid] != nil || device.rebuildDeferral != nil { return nil }
+        return failureSettles[wait.uid] != nil ? "the rebuild failed; the failure settles" : "no rebuild left"
+    }
+
+    private func formatChangeBounded(_ id: Int) {
+        guard let index = formatWaits.firstIndex(where: { $0.id == id }) else { return }
+        let wait = formatWaits.remove(at: index)
+        fire(.formatChange, wait.uid, "no catch-all built after the change took over within \(Int(Self.formatChangeBound)) s; returning, the rebuild goes on")
+        wait.continuation.resume()
+    }
+
+    /// Ends the format hold and its watchdog. The catch-all in service opens unless another
+    /// reason holds it: while a rebuild waits to take over, that is the attached one it
+    /// replaces (the new one stays held for the rebuild; the initial hold of one whose own list
+    /// never applied stays with it), otherwise the device's.
+    private func endFormatHold(_ device: CatchAllDevice) {
+        device.formatWatchdogDue = nil
+        device.formatUnchangedIgnored = false
+        guard device.holds.remove(.format) != nil else { return }
+        if let rebuild = device.rebuild, rebuild.isWaiting, rebuild.outgoingAttached, let old = rebuild.outgoing {
+            if device.holds.subtracting([.rebuild]).isEmpty { setHeld(old, false, uid: device.uid) }
+            return
+        }
+        guard device.holds.isEmpty, let controller = device.controller else { return }
+        setHeld(controller, false, uid: device.uid)
+    }
+
+    /// The takeover of `rebuild` ends the format hold where it stands in for the call that would
+    /// have: the takeover of a rebuild `formatChanged` asked for (one that started after the
+    /// call, so built after the change), or of any rebuild once `formatUnchanged` was ignored
+    /// during the hold. Otherwise the hold stays, and `formatUnchanged` (no longer ignored),
+    /// `formatChanged` or the format watchdog ends it: a change that began during the rebuild
+    /// may postdate the new catch-all. `release(from: .rebuild)` then opens the new one unless
+    /// the hold stays.
+    private func endFormatHoldAtTakeover(_ device: CatchAllDevice, _ rebuild: RebuildState) {
+        if let serial = device.formatRebuildSerial {
+            guard rebuild.serial >= serial else {
+                if device.holds.contains(.format) {
+                    logger.notice("Catch-all on \(device.uid, privacy: .public): format hold kept until the rebuild after the change takes over")
+                }
+                return
+            }
+            device.formatRebuildSerial = nil
+        } else if !device.formatUnchangedIgnored {
+            if device.holds.contains(.format) {
+                logger.notice("Catch-all on \(device.uid, privacy: .public): format hold kept at the takeover until the format is found unchanged or changed")
+            }
+            return
+        }
+        device.formatUnchangedIgnored = false
+        device.formatWatchdogDue = nil
+        guard device.holds.remove(.format) != nil else { return }
+        logger.notice("Catch-all on \(device.uid, privacy: .public): format hold ended at the takeover")
+    }
+
+    /// A catch-all that goes dormant needs no format hold: it plays nothing (the dormant hold
+    /// keeps it held), and its rebuild reads the current format.
+    private func dropFormatHold(_ device: CatchAllDevice) {
+        device.formatWatchdogDue = nil
+        device.formatRebuildSerial = nil
+        device.formatUnchangedIgnored = false
+        device.holds.remove(.format)
+    }
+
+    /// §16.12 item 3: the run control found the catch-all's aggregate at another nominal rate
+    /// than its device on two liveness ticks in a row, so a format change rebuilt nothing (the
+    /// engine's guard dropped `formatChanged`, say). Not an IO failure: nothing settles, counts
+    /// toward give-up or the breaker, or backs off. Dropped like an IO report while stopped,
+    /// after the breaker, for a building or retiring device, one whose retirement is queued, and
+    /// for an aggregate that is not the catch-all in service or is being replaced. A dormant
+    /// catch-all is detached, so a report about it is late, and its rebuild reads the current
+    /// rate: as for an IO report only the E12 check runs. Each aggregate is acted on once. Then
+    /// the E12 check, and a rebuild with reason `formatChanged` (E), which joins one that runs
+    /// or is left to a failure that settles (`rebuild`).
+    private func reportRateMismatch(_ uid: String, aggregate: AudioDeviceID) {
+        guard isStarted, !breakerOpen, let device = devices[uid], pendingRetirements[uid] == nil else { return }
+        switch device.phase {
+        case .building, .retiring:
+            return
+        case .dormant:
+            checkDevice(device)
+            return
+        case .live:
+            break
+        }
+        let replacing = device.rebuild.map { !$0.isWaiting } ?? false
+        guard aggregate == device.controller?.ioHandle.aggregateID, !replacing,
+              !rateReports.contains(aggregate) else { return }
+        rateReports.insert(aggregate)
+        guard checkDevice(device) == .unchanged else { return }
+        logger.notice("Catch-all on \(uid, privacy: .public) (aggregate \(aggregate)): its rate differs from the device's; rebuilding, nothing counted")
+        emit(.format(uid: uid, .rateMismatch))
+        rebuild(uid, reason: .formatChanged, aggregate: aggregate)
+    }
+
     // MARK: IO failures (§16.6)
 
     /// A report from the run control (`onRebuild`, hopped to main): the catch-all's IO died or
-    /// would not start; both are handled alike. Dropped while stopped, after the breaker, for an
+    /// would not start; both are handled alike (a rate mismatch is not an IO failure and goes to
+    /// `reportRateMismatch`). Dropped while stopped, after the breaker, for an
     /// unknown UID, a building or retiring device, one whose retirement is queued, and for an
     /// aggregate that is not the catch-all in service or is being replaced (reports repeat,
     /// §16.12 item 10). A dormant catch-all is detached, so a report about it is late: only
@@ -1924,6 +2275,11 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// rebuild's does (`failureSettled`): R and the backoff if the device is then still listed
     /// under the same ID and usable and was not found otherwise meanwhile, else the E12 check.
     func reportIOFailure(_ uid: String, aggregate: AudioDeviceID, _ reason: CatchAllRunLogic.RebuildReason) {
+        // The same callback reports a rate that no longer matches, which is no IO failure
+        guard reason != .rateMismatch else {
+            reportRateMismatch(uid, aggregate: aggregate)
+            return
+        }
         guard isStarted, !breakerOpen, let device = devices[uid], pendingRetirements[uid] == nil else { return }
         switch device.phase {
         case .building, .retiring:
@@ -1990,6 +2346,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         } else {
             // It was dormant when the rebuild began
             device.holds.insert(.dormant)
+            dropFormatHold(device)
             device.phase = .dormant
             cancelBackoffReset(device)
             logger.notice("Catch-all on \(uid, privacy: .public) dormant again: its rebuilt catch-all failed before it took over")
@@ -2210,7 +2567,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// or G (`alters`, `isApplied`). A rebuild waiting to take over ends: the catch-all it would
     /// replace goes, and the new one turns dormant. A failure on the device that settles no
     /// longer counts. IsAlive stays observed, moved to the listed ID if that changed, and the 2 s
-    /// check runs.
+    /// check runs. A format hold ends without opening anything (E15): a dormant catch-all plays
+    /// nothing, and its rebuild reads the current format.
     private func enterDormant(_ device: CatchAllDevice, listedID: AudioDeviceID, why: String) {
         guard device.phase == .live else { return }
         let uid = device.uid
@@ -2229,6 +2587,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         if let controller = device.controller, !controller.renderState.held.load(ordering: .relaxed) {
             setHeld(controller, true, uid: uid)
         }
+        dropFormatHold(device)
         device.phase = .dormant
         cancelBackoffReset(device)
         logger.notice("Catch-all on \(uid, privacy: .public) dormant: \(why, privacy: .public); held and detached, resources kept")
@@ -2542,7 +2901,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     }
 
     /// Schedules the coordinator tick at the next watchdog deadline; it runs only while a
-    /// wait, a retirement before R3, an initial hold or a rebuild is pending.
+    /// wait, a retirement before R3, an initial hold, a rebuild or a format hold is pending.
     private func scheduleWatchdog() {
         watchdogAction?.cancel()
         watchdogAction = nil
@@ -2557,6 +2916,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             if device.phase == .live, !isRebuilding(device), device.holds.contains(.initialList), !device.initialEscalated {
                 deadlines.append(device.attachedAt + growWatchdog)
             }
+            if let due = device.formatWatchdogDue { deadlines.append(due) }
         }
         guard let next = deadlines.min() else { return }
         watchdogAction = env.clock.schedule(after: max(0, next - env.clock.now)) { [weak self] in
@@ -2573,9 +2933,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     }
 
     /// Ends what is stuck (§16.6 "Hold stuck"): R3 for a retirement, R for a rebuild that did
-    /// not take over, the push-failure path for a new catch-all still held, and each wait. A
-    /// flush already queued runs first, so no wait is judged on a list about to be pushed, and
-    /// then the regular check, so a takeover, release or wait that is ready now wins.
+    /// not take over, the push-failure path for a new catch-all still held, the format hold
+    /// that nothing followed (E15), and each wait. A flush already queued runs first, so no
+    /// wait is judged on a list about to be pushed, and then the regular check, so a takeover,
+    /// release or wait that is ready now wins.
     private func runWatchdogs() {
         watchdogAction = nil
         if let pending = flushAction {
@@ -2603,6 +2964,11 @@ final class CatchAllCoordinator: CatchAllCoordinating {
                 fire(.initialList, device.uid, "a new catch-all is still held for its list; rebuilding")
                 device.initialEscalated = true
                 pushStillFails(device)
+            }
+            // Fires once: ending the hold clears its time
+            if let formatDue = device.formatWatchdogDue, due(formatDue) {
+                fire(.format, device.uid, "neither formatUnchanged nor formatChanged ended the format hold; releasing it")
+                endFormatHold(device)
             }
         }
         checkStuckWaits(now: now)
@@ -2908,6 +3274,20 @@ private final class CatchAllDevice {
     /// shrink waits end once neither is left and the device is still dormant (`isApplied`).
     /// Cleared at a takeover, after which they resolve against the new catch-all.
     var shrinksForRebuild: Set<UInt64> = []
+    /// The serial of the last rebuild that started its build, and of the last that took over.
+    var rebuildSerial = 0
+    var takenOverSerial = 0
+    /// E15: the format watchdog ends the format hold at this time; nil while it does not run.
+    var formatWatchdogDue: Double?
+    /// E15: the serial of the first rebuild built after the last `formatChanged`. The takeover
+    /// of an earlier one keeps the format hold.
+    var formatRebuildSerial: Int?
+    /// E15: `formatUnchanged` came during the current format hold while the coordinator's own
+    /// rebuild ran, and was ignored: a takeover stands in for it.
+    var formatUnchangedIgnored = false
+    /// A rebuild asked for while the device's first catch-all builds (a format change during
+    /// its wait); requested once it is attached.
+    var rebuildAfterBuild: CatchAllRebuildReason?
 
     init(uid: String, deviceID: AudioDeviceID) {
         self.uid = uid
@@ -2921,9 +3301,10 @@ private final class CatchAllDevice {
 }
 
 /// Why a catch-all's output is held, so ending one reason never opens an output another still
-/// holds. The format hold (E15) comes later.
+/// holds.
 nonisolated private enum CatchAllHoldReason: Hashable {
-    /// A new catch-all until its list covers every claim and has applied (E1).
+    /// A new catch-all until its list covers every claim and has applied (E1). While a rebuild
+    /// of it waits to take over, until the takeover.
     case initialList
     /// A rebuilt catch-all until it takes over from the one it replaces (E).
     case rebuild
@@ -2931,6 +3312,11 @@ nonisolated private enum CatchAllHoldReason: Hashable {
     case retirement
     /// The device is listed but not alive (E12); ends when a rebuild's new catch-all attaches.
     case dormant
+    /// The device's format is changing (E15), from `formatChanging` until `formatUnchanged`, a
+    /// takeover that stands in for it (`endFormatHoldAtTakeover`), dormancy, R, G or the format
+    /// watchdog. During a rebuild that waits to take over it also holds the attached one it
+    /// replaces.
+    case format
 }
 
 /// E14: how many backoff steps the device has taken, and the wait that runs.
@@ -2991,6 +3377,8 @@ private struct RebuildState {
     }
 
     let reason: CatchAllRebuildReason
+    /// Counts the device's rebuilds in the order their builds started (E15).
+    let serial: Int
     var stage: Stage = .building
     var outgoing: CatchAllTapController?
     var outgoingAttached = false
@@ -3015,6 +3403,19 @@ private struct OutgoingState {
     let pushes: [PushRecord]
     let listUnconfirmed: Bool
     let initialEscalated: Bool
+}
+
+/// A `formatChanged` call waiting for a catch-all built after the change to take over (E15).
+private struct FormatWait {
+    let id: Int
+    let uid: String
+    /// The device's entry at the call; a new one under the same UID ends the wait.
+    weak var device: CatchAllDevice?
+    /// The rebuild serial that is built after the change.
+    let serial: Int
+    /// Returns the call after `formatChangeBound`.
+    let bound: CatchAllScheduledAction
+    let continuation: CheckedContinuation<Void, Never>
 }
 
 /// A rebuild postponed because the process list could not be read.
