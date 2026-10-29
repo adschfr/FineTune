@@ -215,6 +215,13 @@ nonisolated final class FakeAliveObservers: @unchecked Sendable {
         for handler in handlers { handler() }
     }
 
+    /// IsAlive of `device` changed while the main queue was held (a build's wait, R2): the HAL
+    /// queued a block for each registration of it now. Returns those blocks, which the test runs
+    /// once main is free; one whose registration was released meanwhile still runs.
+    func queue(_ device: AudioDeviceID) -> [@MainActor @Sendable () -> Void] {
+        lock.withLock { _handlers.sorted { $0.key < $1.key }.filter { $0.value.device == device }.map(\.value.handler) }
+    }
+
     /// A listener block that the HAL queued on main before its registration was released runs
     /// after the release: runs the handlers of the released registrations of `device`.
     @MainActor
