@@ -35,6 +35,17 @@ struct AboutTab: View {
                 Text("Version \(versionShort) (\(buildNumber))")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(.secondary)
+
+                Button {
+                    NSWorkspace.shared.open(DesignTokens.Links.upstream)
+                } label: {
+                    Text("Based on FineTune by Ronit Singh")
+                        .underline()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .help("Open the original FineTune on GitHub")
             }
 
             Spacer()
@@ -53,7 +64,7 @@ struct AboutTab: View {
                     icon: "star",
                     hoverIcon: "star.fill",
                     hoverColor: .yellow,
-                    url: URL(string: "https://github.com/ronitsingh10/FineTune")!
+                    url: DesignTokens.Links.repository
                 )
             }
 
@@ -75,6 +86,8 @@ struct AboutTab: View {
 
             Text("·")
             Text("© \(yearText) Ronit Singh")
+            Text("·")
+            Text("Fork © \(yearText) adschfr")
         }
         .font(.system(size: 10))
         .foregroundStyle(.tertiary)
