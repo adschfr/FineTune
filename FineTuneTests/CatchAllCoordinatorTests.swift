@@ -62,6 +62,7 @@ nonisolated final class FakeRunControl: CatchAllRunControlling, @unchecked Senda
     private var _blocked = false
     private var _stuckDetaches: [String] = []
     private var _queuedWork: [@Sendable () -> Void] = []
+    private var _queuedWorkRequests = 0
 
     var onRebuild: (@Sendable (String, AudioDeviceID, CatchAllRunLogic.RebuildReason) -> Void)?
     var onServiceRestarted: (@Sendable () -> Void)?
@@ -78,6 +79,9 @@ nonisolated final class FakeRunControl: CatchAllRunControlling, @unchecked Senda
         get { lock.withLock { _blocked } }
         set { lock.withLock { _blocked = newValue } }
     }
+    /// How often `afterQueuedWork` was called, run at once or queued: the coordinator has
+    /// handled that many detach timeouts.
+    var queuedWorkRequests: Int { lock.withLock { _queuedWorkRequests } }
 
     private func record(_ line: String) {
         let observer = lock.withLock {
@@ -110,6 +114,7 @@ nonisolated final class FakeRunControl: CatchAllRunControlling, @unchecked Senda
 
     func afterQueuedWork(_ action: @escaping @Sendable () -> Void) {
         let runNow = lock.withLock {
+            _queuedWorkRequests += 1
             if _blocked { _queuedWork.append(action) }
             return !_blocked
         }
@@ -141,6 +146,70 @@ nonisolated final class FakeRunControl: CatchAllRunControlling, @unchecked Senda
 
     func setListed(_ processes: Set<AudioObjectID>) {
         record("listed \(processes.sorted())")
+    }
+}
+
+/// The coordinator's IsAlive observations (E12): records each registration and release, e.g.
+/// "observe 42" and "unobserve 42", and lets a test fire the handlers of a device as the HAL
+/// listener does on main.
+nonisolated final class FakeAliveObservers: @unchecked Sendable {
+    /// Releases its registration when the coordinator drops it.
+    nonisolated private final class Token {
+        let release: @Sendable () -> Void
+        init(release: @escaping @Sendable () -> Void) { self.release = release }
+        deinit { release() }
+    }
+
+    private let lock = NSLock()
+    private var _log: [String] = []
+    private var _handlers: [Int: (device: AudioDeviceID, handler: @MainActor @Sendable () -> Void)] = [:]
+    private var _nextID = 0
+    private var _onRecord: (@Sendable (String) -> Void)?
+    private var _onObserve: (@Sendable (AudioDeviceID) -> Void)?
+
+    var log: [String] { lock.withLock { _log } }
+    /// The devices observed now, sorted.
+    var observed: [AudioDeviceID] { lock.withLock { _handlers.values.map(\.device).sorted() } }
+    /// Also gets every recorded line, for one ordered log across the fakes.
+    var onRecord: (@Sendable (String) -> Void)? {
+        get { lock.withLock { _onRecord } }
+        set { lock.withLock { _onRecord = newValue } }
+    }
+    /// Runs inside each registration, before the coordinator reads IsAlive (a device that
+    /// comes back meanwhile).
+    var onObserve: (@Sendable (AudioDeviceID) -> Void)? {
+        get { lock.withLock { _onObserve } }
+        set { lock.withLock { _onObserve = newValue } }
+    }
+
+    private func record(_ line: String) {
+        let observer = lock.withLock {
+            _log.append(line)
+            return _onRecord
+        }
+        observer?(line)
+    }
+
+    func observe(_ device: AudioDeviceID, _ handler: @escaping @MainActor @Sendable () -> Void) -> AnyObject {
+        let id = lock.withLock {
+            _nextID += 1
+            _handlers[_nextID] = (device, handler)
+            return _nextID
+        }
+        record("observe \(device)")
+        onObserve?(device)
+        return Token { [weak self] in
+            guard let self else { return }
+            self.lock.withLock { self._handlers[id] = nil }
+            self.record("unobserve \(device)")
+        }
+    }
+
+    /// IsAlive of `device` changed: runs the handlers still registered for it.
+    @MainActor
+    func fire(_ device: AudioDeviceID) {
+        let handlers = lock.withLock { _handlers.sorted { $0.key < $1.key }.filter { $0.value.device == device }.map(\.value.handler) }
+        for handler in handlers { handler() }
     }
 }
 
@@ -191,6 +260,7 @@ struct CatchAllCoordinatorRig {
     let runControl: FakeRunControl
     let clock: ManualCatchAllClock
     let events: CatchAllEventLog
+    let aliveObservers: FakeAliveObservers
 
     var tv: CatchAllTapController? { coordinator.catchAll(for: "uid-tv") }
 
@@ -210,6 +280,7 @@ func makeCatchAllRig(mode: CatchAllMode = .on, configure: (CatchAllTestSystem) -
     backend.deviceIDs = Dictionary(uniqueKeysWithValues: system.outputs.map { ($0.uid, $0.id) })
     let runControl = FakeRunControl()
     let clock = ManualCatchAllClock()
+    let aliveObservers = FakeAliveObservers()
     let coordinator = CatchAllCoordinator(environment: CatchAllEnvironment(
         mode: mode,
         excludedDeviceUIDs: system.excluded,
@@ -228,13 +299,14 @@ func makeCatchAllRig(mode: CatchAllMode = .on, configure: (CatchAllTestSystem) -
         outputStreamCount: { system.streamCounts[$0] ?? 1 },
         gain: { system.gains[$0] ?? 1 },
         permissionAuthorized: { system.permission },
-        observeAlive: { _, _ in NSObject() },
+        observeAlive: { aliveObservers.observe($0, $1) },
         tapExists: { _ in true }
     ))
     let events = CatchAllEventLog()
     coordinator.onEvent = { events.events.append($0) }
     return CatchAllCoordinatorRig(coordinator: coordinator, system: system, backend: backend,
-                                  runControl: runControl, clock: clock, events: events)
+                                  runControl: runControl, clock: clock, events: events,
+                                  aliveObservers: aliveObservers)
 }
 
 /// Whether the catch-all's output is held (an atomic cannot go into `#expect` directly).
