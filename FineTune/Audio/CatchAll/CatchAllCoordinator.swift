@@ -31,8 +31,8 @@ nonisolated enum CatchAllEvent: Sendable, Equatable {
     case watchdog(uid: String, CatchAllWatchdog)
     /// A counted failure (§16.6): an IO failure counts toward give-up for its device ID, a build
     /// failure and a blocked run queue toward the breaker. Not reported for G, for a device
-    /// that is not alive (also 1 s after an IO or build failure), or for an unreadable process
-    /// list.
+    /// that is not alive (also 1 s after an IO or build failure, or found so during the 1 s
+    /// after a build failure), or for an unreadable process list.
     case failure(uid: String, CatchAllFailure)
     /// The next build on the device waits this many seconds (E14).
     case backoff(uid: String, seconds: Double)
@@ -56,7 +56,8 @@ nonisolated enum CatchAllRetireReason: String, Sendable, Equatable {
     case runQueueTimeout
     /// A reconcile found that the device no longer has software volume.
     case tierChanged
-    /// A rebuild for another reason (E12, E15, an IO failure) failed.
+    /// A rebuild for another reason (E12, E15, an IO failure) failed, and the device was still
+    /// listed under the same ID and usable 1 s later, without being found otherwise meanwhile.
     case rebuildFailed
     /// The listening session's injected retirement.
     case injected
@@ -78,14 +79,16 @@ nonisolated enum CatchAllRebuildReason: String, Sendable, Equatable {
 /// breaker.
 nonisolated enum CatchAllFailure: String, Sendable, Equatable {
     /// A first build or a rebuild could not build its catch-all on an alive device; 1 s after
-    /// the failure and only if the device is then still listed under the same ID and alive.
+    /// the failure and only if the device is then still listed under the same ID and alive,
+    /// and was not found otherwise meanwhile.
     case buildFailed
     /// The run control reported dead IO or a failed start on an alive device; once per
     /// aggregate, 1 s after the report and only if the device is then still listed under the
     /// same ID and alive. Counts toward give-up only.
     case ioFailed
     /// The run queue did not answer a detach within its bound; once until it has run the
-    /// detaches that timed out. Not for G, nor for a device that went dormant.
+    /// detaches that timed out. Not for G, a device that went dormant, nor a rebuilt catch-all
+    /// that failed before it took over.
     case runQueueTimeout
 }
 
@@ -120,18 +123,19 @@ nonisolated enum CatchAllWatchdog: String, Sendable, Equatable {
 /// Coverage ends in one of two ways. With promotion (R, `retire`, always in the coordinator's
 /// own turn): the engine taps every app the catch-all played, then the catch-all is held,
 /// detached and destroyed. Without (G): for an absent device and at `stop()`. A push that
-/// fails after its retry rebuilds make before break (E, `rebuild`), and a failed rebuild
-/// retires. Watchdogs bound every wait, hold and rebuild; a catch-all is destroyed only after
-/// the run queue has detached it.
+/// fails after its retry rebuilds make before break (E, `rebuild`). A failed rebuild leaves the
+/// old catch-all serving for 1 s and then retires it if the device is still alive under its
+/// ID; otherwise the E12 check decides. Watchdogs bound every wait, hold and rebuild; a
+/// catch-all is destroyed only after the run queue has detached it.
 ///
 /// A device that is listed but not alive keeps its catch-all dormant (E12): held, detached and
 /// still covering, until IsAlive or a 2 s check finds it alive again and it is rebuilt; a new
 /// listed ID that is alive rebuilds at once. Dead IO reported by the run control rebuilds.
 /// Failures on alive devices count (§16.6), an IO or build failure only if the device is still
-/// alive under its ID 1 s later: three IO failures within 10 min give the device ID up, failed
-/// builds and some retirements back off 5/30/120 s, and three failed builds, blocked run
-/// queues or give-ups within 10 min open the breaker, which retires every catch-all for the
-/// rest of the session.
+/// alive under its ID 1 s later (a build failure only if it stayed so): three IO failures
+/// within 10 min give the device ID up, failed builds and some retirements back off
+/// 5/30/120 s, and three failed builds, blocked run queues or give-ups within 10 min open the
+/// breaker, which retires every catch-all for the rest of the session.
 @MainActor
 final class CatchAllCoordinator: CatchAllCoordinating {
     /// C9: seconds after the last Devices or IsRunningOutput change before processes that
@@ -172,9 +176,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// counting toward it.
     static let giveUpCount = 3
     static let giveUpWindow: Double = 600
-    /// A failure on a device that reads alive counts, and a failed build backs off, only if the
-    /// device is still listed under the same ID and alive this long after it: on an HDMI link
-    /// drop the IO may stop, and a build fail, before IsAlive turns false.
+    /// A failure on a device that reads alive counts, a failed build backs off, and a failed
+    /// rebuild retires, only if the device is still listed under the same ID and alive this long
+    /// after it (and, for a build, was not found otherwise meanwhile): on an HDMI link drop or a
+    /// display sleep the IO may stop, and a build fail, before IsAlive turns false.
     static let failureSettle: Double = 1
     /// Breaker: this many failed builds, blocked run queues and give-ups within the window. IO
     /// failures count toward give-up only.
@@ -217,8 +222,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// The checks that count a reported IO failure once it settled.
     private var ioFailureChecks: [Int: CatchAllScheduledAction] = [:]
     private var nextIOFailureCheck = 0
-    /// Per UID, a failed build or rebuilt catch-all whose count and backoff wait until it
-    /// settled (`failureSettle`); nothing is built there meanwhile.
+    /// Per UID, a failed build, rebuild or rebuilt catch-all whose count, backoff and R wait
+    /// until it settled (`failureSettle`); nothing is built or rebuilt there meanwhile.
     private var failureSettles: [String: FailureSettle] = [:]
     private var backoffs: [String: Backoff] = [:]
     /// A first build found the process list unreadable: the reconcile runs again.
@@ -872,6 +877,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             let generation = generations[device.uid, default: 0] + 1
             generations[device.uid] = generation
             changed[device.uid] = generation
+            // Only its rebuild or a settling failure gave it this ticket: the wait ends with them
+            if device.phase == .dormant, !targets.contains(device.uid) {
+                device.shrinksForRebuild.insert(generation)
+            }
         }
         scheduleFlush()
         return changed.isEmpty ? nil : ApplyTicket(generations: changed)
@@ -884,18 +893,24 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// joining one need no wait: a building one stays held until its list covers them (E1),
     /// and a dormant one plays nothing and is rebuilt from the current claims (§16.4).
     ///
-    /// A dormant one counts when processes leave its list only for a tap that plays to it, in
-    /// mode on: its tap still excludes them until the takeover of its rebuild, R or G, which
-    /// may be hours away. Such a tap is held by the hold rule and plays to a dead device while
-    /// it waits; a tap that plays elsewhere (a mixdown claim covers every catch-all device,
-    /// P5) would keep processing its app there instead, and the dormant tap captures only
-    /// what plays to its device. In observe a dormant tap holds nothing back.
+    /// A dormant one counts when processes leave its list, in mode on, for a tap that plays to
+    /// it, and for any tap once its rebuild is requested, postponed or building, or a failure
+    /// on it settles: its tap still excludes them until the takeover of its rebuild, R or G,
+    /// which may be hours away. A tap that plays to it is held by the hold rule and plays to a
+    /// dead device while it waits. A tap that plays elsewhere (a mixdown claim covers every
+    /// catch-all device, P5) keeps processing its app there instead while the device is dead,
+    /// since the dormant tap captures only what plays to its device; once the device is alive
+    /// again (a rebuild or a settling failure says so), the dormant tap or the catch-all being
+    /// built may still exclude the process, which would then play unprocessed on the device
+    /// until a new list applies, so that tap waits for the rebuild, R or G, or until the device
+    /// stays dormant after all (`isApplied`). In observe a dormant tap holds nothing back.
     private func alters(_ device: CatchAllDevice, from old: Set<AudioObjectID>, to new: Set<AudioObjectID>,
                         targets: Set<String>) -> Bool {
         switch device.phase {
         case .live: old != new
         case .building: !old.isSubset(of: new)
-        case .dormant: env.mode == .on && targets.contains(device.uid) && !old.isSubset(of: new)
+        case .dormant:
+            env.mode == .on && (targets.contains(device.uid) || awaitsRebuild(device)) && !old.isSubset(of: new)
         case .retiring: false
         }
     }
@@ -985,9 +1000,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     }
 
     /// A push failed after its retry (§4.6, §16.6 push row): the catch-all is rebuilt with the
-    /// desired list (E) and retired (R) if that fails; its waits complete through either. The
-    /// I1 check that ends the flush still removes any exclusion left without a claim. While a
-    /// rebuilt catch-all waits to take over, pushes go to it, so a failure fails the rebuild: R.
+    /// desired list (E) and retired (R) if that fails and the failure stands; its waits complete
+    /// through either. While a failure on the device settles, its end decides instead (`rebuild`).
+    /// The I1 check that ends the flush still removes any exclusion left without a claim. While
+    /// a rebuilt catch-all waits to take over, pushes go to it, so a failure fails the rebuild: R.
     private func pushStillFails(_ device: CatchAllDevice) {
         if let rebuild = device.rebuild, case .waiting = rebuild.stage {
             guard !rebuild.failed else { return }
@@ -1096,11 +1112,18 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             // would play unprocessed until a rebuilt catch-all's tap exists. So in mode on a
             // shrink wait ends only at the takeover of the rebuild from dormant, R3 or G (one
             // pushed before the device died ends S after that push); a claim change gives a
-            // dormant device a ticket only for a tap that plays to it (`alters`), which the hold
-            // rule holds, so it plays to a dead device meanwhile. The device bounds it: G once it
-            // is no longer listed, stop(), and once it is alive the rebuild and its watchdog, or
-            // R. In observe its tap holds nothing back, so no wait on it protects anything.
+            // dormant device a ticket only for a tap that plays to it, which the hold rule holds,
+            // so it plays to a dead device meanwhile, or once its rebuild is requested or a
+            // failure on it settles (`alters`). The device bounds it: G once it is no longer
+            // listed, stop(), and once it is alive the rebuild and its watchdog, or R. In observe
+            // its tap holds nothing back, so no wait on it protects anything.
             guard direction == .shrink, env.mode == .on else { return true }
+            // A tap that plays elsewhere waited only because the device was about to be alive
+            // again. Once no rebuild, settling failure or R is left and the device is still
+            // dormant, nothing plays to it, and the tap would protect nothing until it wakes.
+            if device.shrinksForRebuild.contains(generation), !awaitsRebuild(device), pendingRetirements[uid] == nil {
+                return true
+            }
         case .retiring(let caHeld):
             // Every wait on it is a retirement hold: it ends at R3, when the output is zeroed
             return caHeld
@@ -1343,8 +1366,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     }
 
     /// After R4, or after the G that a retirement is in observe. A push failure, a failed
-    /// rebuild and a blocked run queue back off (E14), a failed build or rebuilt catch-all only
-    /// once its failure settled (`failureSettled`); tierChanged (ineligible anyway), injected
+    /// rebuild and a blocked run queue back off (E14), apart from one that a settled failure
+    /// backed off already (`failureSettled`); tierChanged (ineligible anyway), injected
     /// (the next reconcile may build again), give-up and the breaker do not. The E12
     /// entry points ignored the device while it retired, so it is checked again: one that is
     /// not alive is observed until it is. Nothing is built here; that waits for the backoff's
@@ -1473,15 +1496,19 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     }
 
     /// A detach of a catch-all on `uid` did not run within the run control's bound (§16.6). A
-    /// blocked run queue counts once (never for G, a device that went dormant or after
-    /// `stop()`) until it has run every detach that timed out: the old and the new catch-all of
-    /// a rebuild wait on the same one. It is one serial queue, so every live catch-all depends
-    /// on it, a stopped one cannot start, and its covered audio would stay silent: each one
-    /// retires (R), also one built after G while that G's detach still waited, or the new one
-    /// of a rebuild. A dormant one stays dormant, since it plays nothing; a rebuild of it once
-    /// the device is alive retires it instead (`performRebuild`). A build whose wait runs now
-    /// finds the queued detach once it returns (`build`, `performRebuild`). Until the queue has
-    /// run every such detach, no catch-all is built or rebuilt on any device.
+    /// blocked run queue counts once (never for G, a device that went dormant, a rebuilt
+    /// catch-all that failed before it took over, or after `stop()`) until it has run every
+    /// detach that timed out: the old and the new catch-all of a rebuild wait on the same one.
+    /// It is one serial queue, so every live catch-all depends on it, a stopped one cannot
+    /// start, and its covered audio would stay silent: each one retires (R), also one built
+    /// after G while that G's detach still waited, or the new one of a rebuild. A dormant one
+    /// stays dormant, since it plays nothing; a rebuild of it once the device is alive retires
+    /// it instead (`performRebuild`). A live one whose device has a failure that has not
+    /// settled is left to that end, since the device may be dying and R2 would tap every app
+    /// there for nothing: it retires if the device is still usable then and goes dormant
+    /// otherwise (`failureSettled`). A build whose wait runs now finds the queued detach once it
+    /// returns (`build`, `performRebuild`). Until the queue has run every such detach, no
+    /// catch-all is built or rebuilt on any device.
     private func queueBlocked(_ uid: String, aggregate: AudioDeviceID, counts: Bool, then action: String) {
         logger.fault("Catch-all on \(uid, privacy: .public) (aggregate \(aggregate)): the run queue did not detach it within its bound; \(action, privacy: .public)")
         stuckDetaches += 1
@@ -1489,7 +1516,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             queueTimeoutCounted = true
             noteFailure(uid, .runQueueTimeout)
         }
-        for device in devices.values.sorted(by: { $0.uid < $1.uid }) where device.phase == .live {
+        for device in devices.values.sorted(by: { $0.uid < $1.uid })
+        where device.phase == .live && failureSettles[device.uid] == nil {
             queueRetirement(device.uid, .runQueueTimeout)
         }
     }
@@ -1559,13 +1587,18 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// `aggregate` names the catch-all a report is about; reports repeat for one aggregate
     /// (§16.12 item 10), so one about an aggregate that is replaced or being replaced is served
     /// already and dropped. A dormant device is rebuilt only once it is alive (E12); after the
-    /// breaker nothing is rebuilt.
+    /// breaker nothing is rebuilt. While a failed rebuild on the device settles, the request is
+    /// left to its end, which retires the catch-all or runs the E12 check (`failureSettled`).
     func rebuild(_ uid: String, reason: CatchAllRebuildReason, aggregate: AudioDeviceID? = nil) {
         guard !breakerOpen, let device = devices[uid], device.phase == .live || device.phase == .dormant else { return }
         if let aggregate {
             // While the new catch-all builds, the one in service is the one being replaced
             let replacing = device.rebuild.map { !$0.isWaiting } ?? false
             guard aggregate == device.controller?.ioHandle.aggregateID, !replacing else { return }
+        }
+        if failureSettles[uid] != nil {
+            logger.notice("Catch-all on \(uid, privacy: .public): rebuild (\(reason.rawValue, privacy: .public)) left to the failure that has not settled")
+            return
         }
         if device.rebuild != nil {
             if reason != .pushFailed, device.rebuildAgain == nil { device.rebuildAgain = reason }
@@ -1580,12 +1613,13 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// E steps 1-2: builds the new catch-all held with the list desired from the current
     /// claims and attaches it. The device's generation counter stays, so every older ticket
     /// resolves against the new catch-all; its waits end once it has taken over. If the build
-    /// fails: R on the old one; if the device went away: G; if it is not alive: dormant. A
-    /// live device that is not alive goes dormant without a build (E12). While a detach on any
-    /// device waits behind the blocked run queue, the new catch-all would attach behind it and
-    /// stay silent: R instead (§16.6), since per-app taps need no run queue, also when that
-    /// detach timed out during the build's wait. A device that died or changed its ID during
-    /// the wait is checked again once the new catch-all is attached (E12).
+    /// fails, the old one serves on and `rebuildFailed` decides: R once the failure stood, G if
+    /// the device went away, dormant if it is not alive. A live device that is not alive goes
+    /// dormant without a build (E12). While a detach on any device waits behind the blocked
+    /// run queue, the new catch-all would attach behind it and stay silent: R instead (§16.6),
+    /// since per-app taps need no run queue, also when that detach timed out during the
+    /// build's wait. A device that died or changed its ID during the wait is checked again once
+    /// the new catch-all is attached (E12).
     ///
     /// From dormant (E12 step 4) the device stays dormant while the new catch-all builds: no
     /// push involves it, so nothing reaches the dormant one, and claims that end wait as on a
@@ -1603,8 +1637,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             // postponed attempt ends here, so the next one can start once the device is alive.
             logger.notice("Catch-all on \(uid, privacy: .public): not rebuilt, device \(output.id) is not alive; it stays dormant")
             cancelRebuildDeferral(device)
-            // Shrink waits keep waiting for the rebuild once it is alive, R or G
             observeAlive(uid, output.id)
+            // A shrink of a tap on the device keeps waiting for the rebuild once it is alive, R
+            // or G; one of a tap that plays elsewhere ends
+            checkWaiters()
             return
         }
         guard !isAbsent(uid), let output = listedOutputs().first(where: { $0.uid == uid }) else {
@@ -1670,6 +1706,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         let now = env.clock.now
         device.rebuild?.outgoing = device.controller
         device.rebuild?.outgoingAttached = device.attached
+        device.rebuild?.outgoingState = OutgoingState(
+            attachedAt: device.attachedAt, deviceID: device.deviceID, settledGeneration: device.settledGeneration,
+            pushes: device.pushes, listUnconfirmed: device.listUnconfirmed, initialEscalated: device.initialEscalated)
         device.rebuild?.stage = .waiting(since: now, callbacks: controller.callbackCount)
         device.controller = controller
         device.listUnconfirmed = false
@@ -1703,12 +1742,17 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         checkWaiters()
     }
 
-    /// The new catch-all could not be built. On an alive device the old one retires at once (R,
-    /// fail open), dormant or not; the failure counts (E14) and backs off once it settled, since
-    /// a device that is leaving may fail the build before IsAlive turns false. A device that
-    /// went away meanwhile (the build found no device for the UID) ends with G (E11). One that
-    /// is listed but not alive keeps the old catch-all as a dormant one (E12): nothing counted,
-    /// no R and no backoff; it is rebuilt once alive.
+    /// The new catch-all could not be built. A device that went away meanwhile (the build found
+    /// no device for the UID) ends with G (E11). One that is listed but not alive keeps the old
+    /// catch-all as a dormant one (E12): nothing counted, no R and no backoff; it is rebuilt
+    /// once alive. On a device that reads alive the old one serves on as it was, live or
+    /// dormant, since a device that is leaving may fail the build before IsAlive turns false,
+    /// and R2 on a dying device would tap every app there for nothing: the failure settles
+    /// first (`failureSettled`), with nothing built or rebuilt on the device meanwhile. Still
+    /// listed under the same ID and usable then, and not found otherwise meanwhile, it counts
+    /// (E14), the old one retires (R) and the next build backs off; otherwise the E12 check
+    /// decides, uncounted. A device that stays dormant ends the shrink waits that waited only
+    /// for this rebuild (`isApplied`).
     private func rebuildFailed(_ device: CatchAllDevice, _ message: String) {
         let reason = device.rebuild?.reason ?? .pushFailed
         device.rebuild = nil
@@ -1723,15 +1767,18 @@ final class CatchAllCoordinator: CatchAllCoordinating {
             if device.phase == .live {
                 enterDormant(device, listedID: id, why: "device \(id) is not alive after a failed rebuild")
             } else {
-                // Shrink waits keep waiting for the rebuild once it is alive, R or G
                 logger.notice("Catch-all on \(device.uid, privacy: .public): device \(id) is not alive after a failed rebuild; it stays dormant")
                 observeAlive(device.uid, id)
+                // A shrink of a tap on the device keeps waiting for the rebuild once it is alive,
+                // R or G; one of a tap that plays elsewhere ends
+                checkWaiters()
             }
             return
         }
-        device.backoffSettles = true
-        settleFailure(device.uid, deviceID: id, countsBuild: true, cause: "its rebuild failed")
-        performRetirement(device.uid, Self.retireReason(after: reason))
+        logger.notice("Catch-all on \(device.uid, privacy: .public): the old catch-all serves until the failed rebuild settled")
+        // A rebuild asked for during this one is decided with it
+        device.rebuildAgain = nil
+        settleFailure(device.uid, deviceID: id, countsBuild: true, cause: "its rebuild failed", failedRebuild: reason)
     }
 
     /// Without a process list the new catch-all's exclusions are unknown. That is no build
@@ -1788,6 +1835,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
                                   foreign: env.foreign(live), claims: claims) else { return }
         if let old = rebuild.outgoing { setHeld(old, true, uid: device.uid) }
         device.rebuild = nil
+        device.shrinksForRebuild.removeAll()
         if device.holds.remove(.initialList) != nil {
             logger.notice("Catch-all on \(device.uid, privacy: .public) released: its exclusion list applied")
             emit(.released(uid: device.uid))
@@ -1818,8 +1866,10 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// goes dormant, and a new alive ID is rebuilt, both uncounted. Otherwise the catch-all is
     /// rebuilt at once (E), and the failure counts toward give-up once per aggregate if the
     /// device is still listed under the same ID and alive 1 s later. A report about a rebuilt
-    /// catch-all that waits to take over fails its rebuild: R at once, and the backoff once
-    /// that settled too.
+    /// catch-all that waits to take over fails its rebuild: that catch-all goes, the one it
+    /// replaces serves on as before the rebuild, and the failure settles as a failed rebuild's
+    /// does (`failureSettled`): R and the backoff if the device is then still listed under the
+    /// same ID and usable and was not found otherwise meanwhile, else the E12 check.
     func reportIOFailure(_ uid: String, aggregate: AudioDeviceID, _ reason: CatchAllRunLogic.RebuildReason) {
         guard isStarted, !breakerOpen, let device = devices[uid], pendingRetirements[uid] == nil else { return }
         switch device.phase {
@@ -1840,18 +1890,61 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         }
         if let rebuild = device.rebuild, rebuild.isWaiting {
             // The new catch-all's IO failed before it took over. The run control never retries a
-            // failed start, so it would take over silent: the rebuild failed, R, as for a push
-            // failure to it. The one it replaces plays until R3.
+            // failed start, so it would take over silent: the rebuild failed. Its device may be
+            // leaving, as for a failed build, so the one it replaces serves on until that settled.
+            // A push failure or watchdog that failed the rebuild already queued R.
             guard !rebuild.failed else { return }
-            logger.error("Catch-all on \(uid, privacy: .public): the rebuilt catch-all failed before it took over; retiring")
-            device.rebuild?.failed = true
-            device.backoffSettles = true
+            logger.error("Catch-all on \(uid, privacy: .public): the rebuilt catch-all failed before it took over; the one it replaces serves until the failure settled")
+            // First: the dormant one put back observes IsAlive, whose read may ask for a rebuild
             settleFailure(uid, deviceID: device.deviceID, countsBuild: false,
-                          cause: "its rebuilt catch-all failed before it took over")
-            queueRetirement(uid, Self.retireReason(after: rebuild.reason))
+                          cause: "its rebuilt catch-all failed before it took over", failedRebuild: rebuild.reason)
+            dropFailedRebuild(device)
             return
         }
         rebuild(uid, reason: .ioFailed, aggregate: aggregate)
+    }
+
+    /// A rebuilt catch-all that waits to take over failed: it is detached within the bound and
+    /// destroyed once its queued detach has run, like any catch-all that ends. The one it
+    /// replaces is back in service as before the rebuild, with the device's record of it (ID,
+    /// pushes, the confirmed list), so a wait resolves against what that tap applied; claims
+    /// that changed meanwhile went only to the failed one and are pushed now. One replaced from
+    /// dormant is dormant again: held, detached and observed.
+    private func dropFailedRebuild(_ device: CatchAllDevice) {
+        guard let rebuild = device.rebuild, rebuild.isWaiting, let failed = device.controller,
+              let old = rebuild.outgoing, let saved = rebuild.outgoingState else { return }
+        let uid = device.uid
+        // Its detach timeout counts nothing, as one on a device that went dormant: the device may
+        // be dying, and a HAL call on it may be what blocks the run queue. If the failure stands,
+        // R4's detach of the one it replaced waits behind the same queue and counts then.
+        let entry = EndingCatchAll(uid: uid, controller: failed, attached: device.attached)
+        ending.append(entry)
+        device.rebuild = nil
+        device.rebuildAgain = nil
+        device.holds.remove(.rebuild)
+        device.controller = old
+        device.attached = rebuild.outgoingAttached
+        device.attachedAt = saved.attachedAt
+        device.deviceID = saved.deviceID
+        device.settledGeneration = saved.settledGeneration
+        device.pushes = saved.pushes
+        device.listUnconfirmed = saved.listUnconfirmed
+        device.initialEscalated = saved.initialEscalated
+        if device.attached {
+            logger.notice("Catch-all on \(uid, privacy: .public): the catch-all the failed one would have replaced serves again")
+            scheduleFlush()
+        } else {
+            // It was dormant when the rebuild began
+            device.holds.insert(.dormant)
+            device.phase = .dormant
+            cancelBackoffReset(device)
+            logger.notice("Catch-all on \(uid, privacy: .public) dormant again: its rebuilt catch-all failed before it took over")
+            emit(.phase(uid: uid, .dormant))
+            scheduleDormantCheck()
+            observeAlive(uid, listedOutputs().first { $0.uid == uid }?.id ?? device.deviceID)
+        }
+        Task { await self.detachAndDestroy([entry]) }
+        checkWaiters()
     }
 
     /// An IO failure counts only once it settled: on an HDMI link drop the IO may stop before
@@ -1876,34 +1969,68 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         noteFailure(uid, .ioFailed, deviceID: id)
     }
 
-    /// A failed build, or a rebuilt catch-all whose IO failed before it took over, on a device
-    /// that reads alive: R runs at once where there is a catch-all, but the failure counts
-    /// toward the breaker (`countsBuild`) and backs off only once it settled, as an IO failure
-    /// does. Until then nothing is built on the device, so one failure is not followed by
-    /// another that would count for it.
-    private func settleFailure(_ uid: String, deviceID id: AudioDeviceID, countsBuild: Bool, cause: String) {
+    /// A failed build, a failed rebuild, or a rebuilt catch-all whose IO failed before it took
+    /// over, on a device that reads alive: the failure counts toward the breaker (`countsBuild`),
+    /// backs off and, after a failed rebuild (`failedRebuild`), retires the catch-all that serves
+    /// meanwhile only once it settled, as an IO failure counts. Until then nothing is built or
+    /// rebuilt on the device, so one failure is not followed by another that would count for
+    /// it, and a push failure or IO report meanwhile is decided with it (`rebuild`).
+    private func settleFailure(_ uid: String, deviceID id: AudioDeviceID, countsBuild: Bool, cause: String,
+                               failedRebuild: CatchAllRebuildReason? = nil) {
         if let pending = failureSettles[uid] {
             failureSettles[uid]?.countsBuild = pending.countsBuild || countsBuild
+            failureSettles[uid]?.failedRebuild = pending.failedRebuild ?? failedRebuild
             return
         }
         let check = env.clock.schedule(after: Self.failureSettle) { [weak self] in self?.failureSettled(uid) }
-        failureSettles[uid] = FailureSettle(deviceID: id, countsBuild: countsBuild, cause: cause, check: check)
+        failureSettles[uid] = FailureSettle(deviceID: id, countsBuild: countsBuild, cause: cause,
+                                            failedRebuild: failedRebuild, check: check)
     }
 
-    /// Counts and backs off as at once, the backoff counted from the failure, if the device is
-    /// still listed under the same ID and usable, as the build required at the failure.
-    /// Otherwise nothing counts (a UID Core Audio no longer resolves is going away, E11), and a
-    /// reconcile builds on a new alive ID or observes a device that is not alive (E14).
+    /// If the device is still listed under the same ID and usable, as the build required at the
+    /// failure, and was not found otherwise meanwhile, the failure stood: the catch-all that
+    /// served meanwhile retires with the failed rebuild's reason (queued first, so the breaker
+    /// this count may open keeps that reason), the failure counts, and the next build backs off,
+    /// counted from the failure; R4 backs off no further. Otherwise nothing counts and nothing
+    /// retires (a UID Core Audio no longer resolves is going away, E11; a device that died and
+    /// came back failed for its link): the E12 check decides for a catch-all (dormant, a rebuild
+    /// on a new alive ID or once alive again, G for a UID no longer listed), and a reconcile
+    /// without one builds on an alive ID or observes a device that is not alive (E14). If the
+    /// check finds the catch-all unchanged (listed again under its own ID), the failed rebuild
+    /// is asked for again, so no request left to the settle is lost. A shrink wait that waited
+    /// only for this end, and finds the device dormant, ends (`isApplied`).
     private func failureSettled(_ uid: String) {
         guard let settle = failureSettles.removeValue(forKey: uid), isStarted, !breakerOpen else { return }
         let id = settle.deviceID
-        guard listedOutputs().contains(CatchAllOutput(uid: uid, id: id)), deviceUsable(uid, id) else {
-            logger.notice("Catch-all on \(uid, privacy: .public): \(settle.cause, privacy: .public), not counted: device \(id) is no longer listed under this ID, alive and resolved")
-            reconcile()
+        guard !settle.diedMeanwhile, listedOutputs().contains(CatchAllOutput(uid: uid, id: id)), deviceUsable(uid, id) else {
+            let why = settle.diedMeanwhile
+                ? "the device was not alive meanwhile"
+                : "device \(id) is no longer listed under this ID, alive and resolved"
+            logger.notice("Catch-all on \(uid, privacy: .public): \(settle.cause, privacy: .public), not counted: \(why, privacy: .public)")
+            guard let device = devices[uid] else {
+                reconcile()
+                return
+            }
+            if checkDevice(device) == .unchanged, let reason = settle.failedRebuild {
+                rebuild(uid, reason: reason)
+            }
+            checkWaiters()
             return
+        }
+        if let reason = settle.failedRebuild, let device = devices[uid] {
+            device.backoffSettles = true
+            queueRetirement(uid, Self.retireReason(after: reason))
         }
         if settle.countsBuild, noteFailure(uid, .buildFailed) { return }
         backOff(uid, deviceID: id, after: settle.cause, elapsed: Self.failureSettle)
+    }
+
+    /// The device was found not usable while a failure on it settles: the failure did not stand,
+    /// even if the device reads alive at the end (`failureSettled`).
+    private func noteNotUsableWhileSettling(_ uid: String) {
+        guard failureSettles[uid]?.diedMeanwhile == false else { return }
+        failureSettles[uid]?.diedMeanwhile = true
+        logger.notice("Catch-all on \(uid, privacy: .public): the device is not usable while its last failure settles; that failure will not count")
     }
 
     private func cancelFailureSettles() {
@@ -1921,7 +2048,8 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         case gone
         /// Not alive, or Core Audio does not resolve the UID while it is listed.
         case dormant
-        /// A new alive ID, or alive again after it was dormant: a rebuild is requested.
+        /// A new alive ID, or alive again after it was dormant: a rebuild is requested, or left to
+        /// a failure on the device that has not settled.
         case rebuilding
     }
 
@@ -1946,6 +2074,7 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         let usable = deviceUsable(uid, output.id)
         if device.phase == .dormant {
             guard usable else {
+                noteNotUsableWhileSettling(uid)
                 // Moves the observation when the listed ID changed
                 observeAlive(uid, output.id)
                 return .dormant
@@ -1974,13 +2103,15 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// the aggregate whose device just died may be what blocks the run queue. `covers` stays
     /// true, so no `activate` waits on a dead device; grow waits on it end at once and claims
     /// that add processes give it no ticket, since it plays nothing and its rebuild starts
-    /// from the current claims, while in mode on a shrink of a tap that plays to it waits for
-    /// that rebuild, R or G (`alters`, `isApplied`). A rebuild waiting to take over ends: the
-    /// catch-all it would replace goes, and the new one turns dormant. From here IsAlive of the
-    /// listed ID is observed, and the 2 s check runs.
+    /// from the current claims, while in mode on a shrink of a tap that plays to it, or of any
+    /// tap once that rebuild is requested or a failure on it settles, waits for the rebuild, R
+    /// or G (`alters`, `isApplied`). A rebuild waiting to take over ends: the catch-all it would
+    /// replace goes, and the new one turns dormant. A failure on the device that settles no
+    /// longer counts. From here IsAlive of the listed ID is observed, and the 2 s check runs.
     private func enterDormant(_ device: CatchAllDevice, listedID: AudioDeviceID, why: String) {
         guard device.phase == .live else { return }
         let uid = device.uid
+        noteNotUsableWhileSettling(uid)
         if let rebuild = device.rebuild, let old = rebuild.outgoing {
             if !old.renderState.held.load(ordering: .relaxed) { setHeld(old, true, uid: uid) }
             let entry = EndingCatchAll(uid: uid, controller: old, attached: rebuild.outgoingAttached)
@@ -2064,7 +2195,9 @@ final class CatchAllCoordinator: CatchAllCoordinating {
     /// `.notAlive` passed; opted out, given up). A dead device's own facts (tier, kind, stream
     /// count) are not judged: they may read differently until it is alive again, and the
     /// reconcile its return triggers judges them. Any other device without one is not observed.
+    /// A failed build that settles did not fail for good when the device is not alive now.
     private func updateAliveWatch(_ output: CatchAllOutput, _ reason: CatchAllPlan.Ineligibility?) {
+        if reason == .notAlive { noteNotUsableWhileSettling(output.uid) }
         if reason == .notAlive, !env.excludedDeviceUIDs.contains(output.uid), !givenUp.contains(output.id) {
             observeAlive(output.uid, output.id)
         } else {
@@ -2391,6 +2524,12 @@ final class CatchAllCoordinator: CatchAllCoordinating {
         device.rebuild != nil || device.rebuildDeferral != nil || pendingRebuilds[device.uid] != nil
     }
 
+    /// A rebuild of the device is in progress, queued or deferred, or a failure on it settles,
+    /// whose end may rebuild it (`failureSettled`).
+    private func awaitsRebuild(_ device: CatchAllDevice) -> Bool {
+        isRebuilding(device) || failureSettles[device.uid] != nil
+    }
+
     /// Whether the device's applied list already holds what a wait in `direction` needs.
     private func listInForce(_ device: CatchAllDevice, _ controller: CatchAllTapController, _ direction: ApplyDirection,
                              live: Set<AudioObjectID>?, foreign: Set<AudioObjectID>, claims: [Claim]) -> Bool {
@@ -2588,9 +2727,14 @@ private final class CatchAllDevice {
     var retiringSince: Double?
     /// Starts the device's backoff over once the catch-all has stayed live 10 min.
     var backoffReset: CatchAllScheduledAction?
-    /// It retires for a failure whose backoff waits until the failure settled
-    /// (`failureSettles`), not for R4.
+    /// It retires for a failure that settled and backed off already (`failureSettled`), so R4
+    /// backs off no further.
     var backoffSettles = false
+    /// Generations a claim change gave the dormant catch-all only because its rebuild was
+    /// underway or a failure on it settled, for a tap that plays elsewhere (`alters`): their
+    /// shrink waits end once neither is left and the device is still dormant (`isApplied`).
+    /// Cleared at a takeover, after which they resolve against the new catch-all.
+    var shrinksForRebuild: Set<UInt64> = []
 
     init(uid: String, deviceID: AudioDeviceID) {
         self.uid = uid
@@ -2623,13 +2767,19 @@ private struct Backoff {
     var timer: CatchAllScheduledAction?
 }
 
-/// A failed build or rebuilt catch-all whose count and backoff wait until it settled.
+/// A failed build, rebuild or rebuilt catch-all whose count, backoff and R wait until it settled.
 private struct FailureSettle {
     /// The listed ID at the failure; nothing counts if the device is not alive under it then.
     let deviceID: AudioDeviceID
     /// It also counts toward the breaker (a failed build), not only backs off.
     var countsBuild: Bool
     let cause: String
+    /// The reason of a failed rebuild whose old catch-all serves meanwhile: it retires once the
+    /// failure stood.
+    var failedRebuild: CatchAllRebuildReason?
+    /// The device was found not usable meanwhile (an HDMI link that renegotiates at wake): the
+    /// failure did not stand, whatever the device reads at the end.
+    var diedMeanwhile = false
     let check: CatchAllScheduledAction
 }
 
@@ -2653,6 +2803,9 @@ private struct RebuildState {
     var stage: Stage = .building
     var outgoing: CatchAllTapController?
     var outgoingAttached = false
+    /// The device's record of `outgoing` at the new one's attach, put back if the new one fails
+    /// before it takes over.
+    var outgoingState: OutgoingState?
     /// The new catch-all cannot take over (a push to it failed, or its watchdog fired): R follows.
     var failed = false
 
@@ -2660,6 +2813,17 @@ private struct RebuildState {
         if case .waiting = stage { return true }
         return false
     }
+}
+
+/// What a device records about the catch-all in service (`CatchAllDevice`), kept for the one a
+/// rebuild replaces while the new one waits to take over.
+private struct OutgoingState {
+    let attachedAt: Double
+    let deviceID: AudioDeviceID
+    let settledGeneration: UInt64
+    let pushes: [PushRecord]
+    let listUnconfirmed: Bool
+    let initialEscalated: Bool
 }
 
 /// A rebuild postponed because the process list could not be read.
@@ -2679,7 +2843,7 @@ private final class EndingCatchAll {
     /// Attached when its coverage ended, so the run control must detach it first.
     let attached: Bool
     /// A detach timeout counts toward the breaker (R, E and a retirement in observe; not other
-    /// G, nor a device that went dormant).
+    /// G, a device that went dormant, nor a rebuilt catch-all that failed before it took over).
     var timeoutCounts = false
     /// The run queue has detached it (or it was never attached).
     var detached = false
