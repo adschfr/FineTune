@@ -163,6 +163,7 @@ nonisolated final class FakeAliveObservers: @unchecked Sendable {
     private let lock = NSLock()
     private var _log: [String] = []
     private var _handlers: [Int: (device: AudioDeviceID, handler: @MainActor @Sendable () -> Void)] = [:]
+    private var _released: [(device: AudioDeviceID, handler: @MainActor @Sendable () -> Void)] = []
     private var _nextID = 0
     private var _onRecord: (@Sendable (String) -> Void)?
     private var _onObserve: (@Sendable (AudioDeviceID) -> Void)?
@@ -200,7 +201,9 @@ nonisolated final class FakeAliveObservers: @unchecked Sendable {
         onObserve?(device)
         return Token { [weak self] in
             guard let self else { return }
-            self.lock.withLock { self._handlers[id] = nil }
+            self.lock.withLock {
+                if let entry = self._handlers.removeValue(forKey: id) { self._released.append(entry) }
+            }
             self.record("unobserve \(device)")
         }
     }
@@ -209,6 +212,14 @@ nonisolated final class FakeAliveObservers: @unchecked Sendable {
     @MainActor
     func fire(_ device: AudioDeviceID) {
         let handlers = lock.withLock { _handlers.sorted { $0.key < $1.key }.filter { $0.value.device == device }.map(\.value.handler) }
+        for handler in handlers { handler() }
+    }
+
+    /// A listener block that the HAL queued on main before its registration was released runs
+    /// after the release: runs the handlers of the released registrations of `device`.
+    @MainActor
+    func fireReleased(_ device: AudioDeviceID) {
+        let handlers = lock.withLock { _released.filter { $0.device == device }.map(\.handler) }
         for handler in handlers { handler() }
     }
 }
