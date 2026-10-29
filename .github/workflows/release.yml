@@ -1,9 +1,10 @@
 name: Build and Release
 
+# Upstream's signed and notarized release pipeline. It needs upstream's signing and
+# Sparkle secrets, which the fork does not have, so it no longer runs on tag pushes.
+# The fork packs its releases with scripts/package-fork.sh.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
