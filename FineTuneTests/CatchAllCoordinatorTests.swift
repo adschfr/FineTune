@@ -1035,7 +1035,10 @@ struct CatchAllCoordinatorTests {
         coordinator.setPhaseForTesting(phase, for: "uid-tv")
         let pushes = rig.pushes
 
-        #expect(coordinator.removeClaim(ObjectIdentifier(owner)) == nil)
+        // A dormant catch-all's tap still excludes 11: the shrink gets a ticket that waits for
+        // its rebuild, R or G. A retiring one gives none
+        let ticket = coordinator.removeClaim(ObjectIdentifier(owner))
+        #expect(ticket?.devices == (phase == .dormant ? Set(["uid-tv"]) : nil))
         rig.clock.runDue()
 
         #expect(rig.pushes == pushes)

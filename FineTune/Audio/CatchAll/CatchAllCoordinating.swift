@@ -94,8 +94,9 @@ protocol CatchAllCoordinating: AnyObject {
     // Decorator only
 
     /// The devices whose ticket would carry the change if `owner`'s claim became `proposed`: a
-    /// live catch-all whose list changes, and a building one, or a dormant one whose rebuild is
-    /// requested, whose list loses processes.
+    /// live catch-all whose list changes, a building one whose list loses processes, and in
+    /// mode on a dormant one among the owner's targets whose list loses processes (a shrink on
+    /// it waits for its rebuild, R or G).
     func changedDevices(owner: ObjectIdentifier, proposed: Claim) -> Set<String>
     /// nil: no list changed and no target is retiring.
     func setClaim(_ owner: any CatchAllClaimOwner, _ claim: Claim) -> ApplyTicket?
