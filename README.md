@@ -1,22 +1,18 @@
-> **This is a fork** of [FineTune by Ronit Singh](https://github.com/ronitsingh10/FineTune), maintained by [adschfr](https://github.com/adschfr). See [FORK.md](FORK.md) for what it fixes and how to install it.
-
 <img src="assets/icon.png" width="170" height="170" alt="FineTune app icon" align="left"/>
 
-<h3>FineTune</h3>
+<h3>FineTune Fork</h3>
 
-Control the volume of every app independently, boost quiet ones up to 4x, route audio to different speakers, and shape your sound with EQ and headphone correction. Lives in your menu bar. Free and open-source.
+A maintained fork of [FineTune by Ronit Singh](https://github.com/ronitsingh10/FineTune): per-app volume, audio routing and EQ in your menu bar. This fork focuses on outputs without a volume control of their own, such as TVs and monitors connected over HDMI. On those, FineTune is the only volume control, so any sound that slips past it plays at full scale.
 
-<a href="https://github.com/ronitsingh10/FineTune/releases/latest/download/FineTune.dmg"><img src="assets/download-badge.svg" alt="Download for macOS" height="48"/></a>
+<a href="https://github.com/adschfr/FineTune/releases/latest/download/FineTune-Fork.dmg"><img src="assets/download-badge.svg" alt="Download for macOS" height="48"/></a>
 
 <br clear="all"/>
 
 <p align="center">
-  <a href="https://github.com/ronitsingh10/FineTune/releases/latest"><img src="https://img.shields.io/github/v/release/ronitsingh10/FineTune?style=for-the-badge&labelColor=1c1c1e&color=0A84FF&logo=github&logoColor=white" alt="Latest Release"></a>
-  <a href="https://github.com/ronitsingh10/FineTune/releases"><img src="https://img.shields.io/github/downloads/ronitsingh10/FineTune/total?style=for-the-badge&labelColor=1c1c1e&color=3a3a3c" alt="Downloads"></a>
+  <a href="https://github.com/adschfr/FineTune/releases/latest"><img src="https://img.shields.io/github/v/release/adschfr/FineTune?style=for-the-badge&labelColor=1c1c1e&color=0A84FF&logo=github&logoColor=white" alt="Latest Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-3a3a3c?style=for-the-badge&labelColor=1c1c1e" alt="License: GPL v3"></a>
-  <a href="https://ko-fi.com/adschfr"><img src="https://img.shields.io/badge/Tip_on_Ko--fi-FF5E5B?style=for-the-badge&labelColor=1c1c1e&logo=ko-fi&logoColor=white" alt="Tip on
-  Ko-fi"></a>
-  <a href="https://www.apple.com/macos/"><img src="https://img.shields.io/badge/macOS-15%2B-3a3a3c?style=for-the-badge&labelColor=1c1c1e&logo=apple&logoColor=white" alt="macOS 15+"></a>
+  <a href="https://ko-fi.com/adschfr"><img src="https://img.shields.io/badge/Tip_on_Ko--fi-FF5E5B?style=for-the-badge&labelColor=1c1c1e&logo=ko-fi&logoColor=white" alt="Tip on Ko-fi"></a>
+  <a href="https://www.apple.com/macos/"><img src="https://img.shields.io/badge/macOS-15.4%2B-3a3a3c?style=for-the-badge&labelColor=1c1c1e&logo=apple&logoColor=white" alt="macOS 15.4+"></a>
 </p>
 
 <p align="center">
@@ -30,23 +26,50 @@ Control the volume of every app independently, boost quiet ones up to 4x, route 
   <img src="assets/screenshot-eq.png" alt="FineTune showing the Brave Browser app row expanded with the EQ panel open and a Vocal Clarity preset selected" width="700">
 </p>
 
+## Why this fork
+
+The fork started with one problem: on a TV with software volume, a video that started after a pause played at full volume for a moment. The cause was audio that reached the output before FineTune processed it. The fork fixes that and the issues around it, and it merges upstream pull requests that were still open. It is based on FineTune v1.9.0 and keeps all of its features.
+
+## What's different
+
+- **No full-volume blast when playback starts.** Audio that starts before FineTune processes it is held back instead of playing unprocessed.
+- **Your Mac can sleep while nothing plays.** Silent apps keep their tap, but it stops running after 10 seconds and starts again within milliseconds when the app plays.
+- **New helper processes are covered.** A new browser tab or a sound played from Terminal joins the app's existing tap.
+- **Safer on software-volume outputs.** No full volume after a display powers back on, and call passthrough stays off where an untapped call would play at full scale.
+- **Over 20 upstream pull requests merged**, among them AirPlay selection, Bluetooth fixes, output format changes and the HUD over full-screen apps.
+- **Tests for the audio lifecycle.** They run without touching your settings, permissions or the installed app.
+
+The full list with issue numbers is in [FORK.md](FORK.md).
+
+## Plans
+
+- **Catch-all for TVs and monitors** (in development, off by default). It puts every app on a software-volume output under FineTune's volume, including apps that have no tap of their own yet, so no sound reaches the output unprocessed.
+- **Own name and icon** once the catch-all ships, so the fork can no longer be mistaken for the original.
+- **Keeping up with macOS.** The fork is developed and tested on macOS 27.2.
+- **Ideas:** mute FineTune's outputs while you dictate, for example with MacWhisper.
+
 ## Install
 
-**Homebrew** (recommended)
+1. Download [FineTune-Fork.dmg](https://github.com/adschfr/FineTune/releases/latest/download/FineTune-Fork.dmg), open it and drag **FineTune Fork** to Applications.
+2. The app is not notarized by Apple, so macOS blocks the first launch. Open it once and click **Done**. Then open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. In Terminal, this does the same: `xattr -dr com.apple.quarantine "/Applications/FineTune Fork.app"`
+3. Grant **Screen & System Audio Recording** when asked. The app is signed ad hoc, so macOS asks again after each update.
+4. Click the FineTune icon in your menu bar. Apps playing audio appear automatically.
+
+Good to know:
+
+- FineTune Fork installs next to the original FineTune and shares its settings. **Run only one of the two at a time.**
+- There are no automatic updates. To hear about new versions, watch the repository for releases (**Watch → Custom → Releases**).
+- The Homebrew cask `finetune` installs the original, not this fork.
+
+### Build from source
 
 ```bash
-brew install --cask finetune
+git clone https://github.com/adschfr/FineTune.git
+cd FineTune
+./scripts/install-fork.sh
 ```
 
-**Manual** — [Download latest release](https://github.com/ronitsingh10/FineTune/releases/latest)
-
-## Quick Start
-
-1. Install FineTune and launch it from your Applications folder
-2. Grant **Screen & System Audio Recording** permission when prompted
-3. Click the FineTune icon in your menu bar. Apps playing audio appear automatically.
-
-That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
+This needs Xcode. It builds a Release, installs it as `/Applications/FineTune Fork.app` and launches it. [FORK.md](FORK.md) explains signing and the test script.
 
 > **Tip:** Want FineTune to auto-switch to a specific device when you connect it? Open edit mode (pencil icon) and drag it above the built-in speakers. This is a one-time setup. Your preferred order is saved permanently.
 
@@ -103,22 +126,13 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 
 ## Contributing
 
-- **Star this repo** — Help others discover FineTune
-- **Report bugs** — [Open an issue](https://github.com/ronitsingh10/FineTune/issues)
-- **Contribute code** — See [CONTRIBUTING.md](CONTRIBUTING.md)
-
-### Build from Source
-
-```bash
-git clone https://github.com/ronitsingh10/FineTune.git
-cd FineTune
-open FineTune.xcodeproj
-```
+- **Report a bug:** [open an issue](https://github.com/adschfr/FineTune/issues). For audio problems, include your macOS version, the output device (for example "TV over HDMI") and which apps were playing.
+- **Contribute code:** see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Requirements
 
-- macOS 15.0 (Sequoia) or later
-- Audio capture permission (prompted on first launch)
+- macOS 15.4 (Sequoia) or later, Apple silicon or Intel
+- Screen & System Audio Recording permission (asked on first launch)
 
 ## Support
 
@@ -129,4 +143,4 @@ FineTune was created by [Ronit Singh](https://github.com/ronitsingh10/FineTune).
 
 ## License
 
-[GPL v3](LICENSE)
+[GPL v3](LICENSE). FineTune © 2026 Ronit Singh. Changes in this fork © 2026 adschfr.

@@ -1,4 +1,4 @@
-# Contributing to FineTune
+# Contributing to FineTune Fork
 
 Thank you for your interest in contributing to FineTune!
 
@@ -6,7 +6,7 @@ Thank you for your interest in contributing to FineTune!
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/ronitsingh10/FineTune.git
+   git clone https://github.com/adschfr/FineTune.git
    cd FineTune
    ```
 
