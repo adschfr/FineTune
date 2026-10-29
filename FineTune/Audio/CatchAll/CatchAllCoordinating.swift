@@ -87,8 +87,24 @@ protocol CatchAllCoordinating: AnyObject {
     func appsChanged(_ apps: [AudioApp])
     func deviceListRefreshed()
     func deviceGainChanged(_ deviceID: AudioDeviceID)
+    /// E15, from the engine's format guard: the device's building or live catch-all is held at
+    /// once (covered audio silent, never loud) until `formatUnchanged`; until the takeover of a
+    /// catch-all built after `formatChanged`; until any takeover of the coordinator's own
+    /// rebuild once it ignored `formatUnchanged`; or until dormancy, R or G. A 2 s watchdog ends
+    /// a hold that neither of the other two calls followed, and does not run while a rebuild
+    /// `formatChanged` asked for runs. A dormant or retiring catch-all is not held.
     func formatChanging(uid: String)
+    /// Ends the format hold, unless the coordinator's own rebuild of the device runs: building
+    /// and attaching an aggregate can make the engine's guard cancel, and that rebuild's
+    /// takeover then ends the hold.
     func formatUnchanged(uid: String)
+    /// Rebuilds the device's catch-all make before break, so its tap and aggregate follow the
+    /// new stream format; a rebuild that runs already is followed by another. Returns once a
+    /// catch-all built after the change took over, the rebuild failed (R, a failure that
+    /// settles, dormant, G, `stop()`) or a bound passed. Returns at once before `start()`, after
+    /// the breaker, without a catch-all, for a retiring one or one whose retirement is queued,
+    /// for a dormant one (unless its rebuild builds) and while a failure on the device settles.
+    /// Never builds inside the call.
     func formatChanged(uid: String) async
 
     // Decorator only

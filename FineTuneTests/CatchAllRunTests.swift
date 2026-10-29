@@ -307,6 +307,104 @@ struct CatchAllRunLogicTests {
         #expect(logic.tick(now: 6, lastAudible: [:], lastCallback: [tv: 5.9]).isEmpty)
     }
 
+    /// One timer event as the run control runs it: `tick`, then the rate check of the targets
+    /// it names, with `mismatched` read as differing. Returns both effect lists and the targets.
+    private func timerEvent(_ logic: inout CatchAllRunLogic, at now: Double, callbacks: [AudioDeviceID: Double],
+                            mismatched: Set<AudioDeviceID> = []) -> (tick: [CatchAllRunLogic.Effect], targets: [AudioDeviceID], rate: [CatchAllRunLogic.Effect]) {
+        let tick = logic.tick(now: now, lastAudible: [:], lastCallback: callbacks)
+        let targets = logic.rateCheckTargets(now: now, lastCallback: callbacks)
+        let rate = logic.rateChecked(mismatched.intersection(targets), now: now)
+        return (tick, targets, rate)
+    }
+
+    @Test("A rate that differs on two liveness ticks in a row asks for one rebuild: one tick does not, a match in between starts over, and the aggregate is never read or asks again")
+    func rateMismatch() {
+        var logic = attached()
+        _ = logic.setRunningOutput(11, true, now: 0)
+
+        var event = timerEvent(&logic, at: 2, callbacks: [tv: 2], mismatched: [tv])
+        #expect(event.targets == [tv])
+        #expect(event.tick.isEmpty && event.rate.isEmpty)
+        // A match (or a failed read, which the run control passes as one) starts over
+        #expect(timerEvent(&logic, at: 4, callbacks: [tv: 4]).rate.isEmpty)
+        #expect(timerEvent(&logic, at: 6, callbacks: [tv: 6], mismatched: [tv]).rate.isEmpty)
+        event = timerEvent(&logic, at: 8, callbacks: [tv: 8], mismatched: [tv])
+        #expect(event.tick.isEmpty)
+        #expect(event.rate == [.rebuild(tv, .rateMismatch)])
+        // Asked once: not read again, and never asks again even when named
+        event = timerEvent(&logic, at: 10, callbacks: [tv: 10], mismatched: [tv])
+        #expect(event.targets.isEmpty && event.rate.isEmpty)
+        for now in [12.0, 14.0] {
+            _ = logic.tick(now: now, lastAudible: [:], lastCallback: [tv: now])
+            #expect(logic.rateChecked([tv], now: now).isEmpty)
+        }
+        #expect(logic.isRunning(tv))
+    }
+
+    @Test("The rate is checked only after a liveness tick, once, and only for running catch-alls whose IO called back within the liveness timeout: a stale one is not read and starts over, a stopped one is no target, a stop starts the count over, a detached one is gone")
+    func rateCheckRunningOnly() {
+        // The TV covers 11; the rebuilt one excludes it and stays stopped
+        var logic = attached()
+        let rebuilt: AudioDeviceID = 201
+        _ = logic.attach(rebuilt, uid: "uid-tv", deviceID: 42, excluded: [5, 11], now: 0)
+        #expect(logic.rateCheckTargets(now: 1, lastCallback: [tv: 1, rebuilt: 1]).isEmpty)
+        #expect(logic.setRunningOutput(11, true, now: 1) == [.start(tv)])
+        // No tick at this time yet
+        #expect(logic.rateCheckTargets(now: 2, lastCallback: [tv: 2]).isEmpty)
+        #expect(logic.rateChecked([tv], now: 2).isEmpty)
+
+        var event = timerEvent(&logic, at: 3, callbacks: [tv: 3, rebuilt: 0], mismatched: [tv, rebuilt])
+        #expect(event.targets == [tv])
+        // Each tick is checked once
+        #expect(logic.rateChecked([tv], now: 3).isEmpty)
+        // A callback older than the liveness timeout: not read, and the count starts over
+        event = timerEvent(&logic, at: 5, callbacks: [tv: 3.9], mismatched: [tv])
+        #expect(event.targets.isEmpty)
+        #expect(timerEvent(&logic, at: 7, callbacks: [tv: 6], mismatched: [tv]).rate.isEmpty)
+        #expect(timerEvent(&logic, at: 9, callbacks: [tv: 8], mismatched: [tv]).rate == [.rebuild(tv, .rateMismatch)])
+    }
+
+    @Test("A stop starts the count over: the tick that suspends the catch-all checks no rate, and a mismatch before the stop does not add to one after the restart")
+    func rateCheckStopRestarts() {
+        var logic = attached()
+        _ = logic.setRunningOutput(11, true, now: 1)
+        #expect(timerEvent(&logic, at: 3, callbacks: [tv: 3], mismatched: [tv]).rate.isEmpty)
+        _ = logic.setRunningOutput(11, false, now: 4)
+        let suspended = timerEvent(&logic, at: 14, callbacks: [tv: 14], mismatched: [tv])
+        #expect(suspended.tick == [.stop(tv), .recheck])
+        #expect(suspended.targets.isEmpty)
+        #expect(logic.setRunningOutput(11, true, now: 15) == [.start(tv)])
+        #expect(timerEvent(&logic, at: 17, callbacks: [tv: 17], mismatched: [tv]).rate.isEmpty)
+        #expect(timerEvent(&logic, at: 19, callbacks: [tv: 19], mismatched: [tv]).rate == [.rebuild(tv, .rateMismatch)])
+
+        logic.detach(tv)
+        #expect(timerEvent(&logic, at: 21, callbacks: [tv: 21], mismatched: [tv]).targets.isEmpty)
+    }
+
+    @Test("The poll of a stopped catch-all between liveness ticks checks no rate: only the ticks 2 s apart count")
+    func rateCheckSkipsPolls() {
+        // As in pollWhileAnotherRuns: the TV covers 11 (capped, stopped), a second output covers 12
+        var logic = attached(excluded: [5, 12])
+        let hdmi: AudioDeviceID = 201
+        _ = logic.attach(hdmi, uid: "uid-hdmi2", deviceID: 43, excluded: [5, 11], now: 0)
+        _ = logic.setRunState(11, running: true, output: false, now: 0)
+        #expect(logic.tick(now: 130, lastAudible: [:], lastCallback: [tv: 130]) == [.stop(tv), .recheck])
+        #expect(logic.setRunningOutput(12, true, now: 131) == [.start(hdmi)])
+
+        var event = timerEvent(&logic, at: 131.1, callbacks: [hdmi: 131.1], mismatched: [hdmi])
+        #expect(event.tick == [.poll([11])])
+        #expect(event.targets.isEmpty)
+        #expect(timerEvent(&logic, at: 131.2, callbacks: [hdmi: 131.2], mismatched: [hdmi]).targets.isEmpty)
+        event = timerEvent(&logic, at: 132, callbacks: [hdmi: 132], mismatched: [hdmi])
+        #expect(event.tick == [.poll([11])])
+        #expect(event.targets == [hdmi])
+        #expect(event.rate.isEmpty)
+        #expect(timerEvent(&logic, at: 132.1, callbacks: [hdmi: 132.1], mismatched: [hdmi]).rate.isEmpty)
+        event = timerEvent(&logic, at: 134, callbacks: [hdmi: 134], mismatched: [hdmi])
+        #expect(event.tick == [.poll([11])])
+        #expect(event.rate == [.rebuild(hdmi, .rateMismatch)])
+    }
+
     @Test("A process that disappears no longer keeps the catch-all needed")
     func vanishedProcess() {
         var logic = attached()
@@ -490,6 +588,14 @@ nonisolated final class HostClock: @unchecked Sendable {
         let ticks = UInt64(seconds * 1_000_000_000 * Double(timebase.denom) / Double(timebase.numer))
         value.withLock { $0 += ticks }
     }
+}
+
+/// Nominal rates by device for the run control's rate reader; a missing one fails to read.
+nonisolated final class FakeRates: Sendable {
+    private let table: Mutex<[AudioDeviceID: Double]>
+    init(_ rates: [AudioDeviceID: Double]) { table = Mutex(rates) }
+    func set(_ device: AudioDeviceID, _ rate: Double?) { table.withLock { $0[device] = rate } }
+    func rate(_ device: AudioDeviceID) -> Double? { table.withLock { $0[device] } }
 }
 
 nonisolated final class LineLog: @unchecked Sendable {
@@ -1116,5 +1222,107 @@ struct CatchAllRunControlTests {
         rig.flush()
 
         #expect(rig.rebuilds.all == ["uid-tv 200 ioDead"])
+    }
+
+    @Test("At each liveness tick of a running catch-all, the rate check reads the aggregate's and the device's nominal rate through its reader on the run queue; two mismatches in a row ask for one rebuild, a failed read counts as a match, and a stopped or detached catch-all, or one that asked already, is not read")
+    func rateCheck() async {
+        let source = FakeActivitySource()
+        source.set(processes: [5, 11], running: [])
+        let clock = HostClock()
+        let rates = FakeRates([200: 48_000, 42: 48_000])
+        let reads = LineLog()
+        let control = CatchAllRunControl(
+            source: source, backend: FakeCatchAllBackend(), queue: DispatchQueue(label: "test.catchall.rate"),
+            hostTime: { clock.now() },
+            nominalRate: { device in
+                reads.add("\(device) on \(String(cString: __dispatch_queue_get_label(nil)))")
+                return rates.rate(device)
+            })
+        let rebuilds = LineLog()
+        control.onRebuild = { uid, aggregate, reason in rebuilds.add("\(uid) \(aggregate) \(reason.rawValue)") }
+        let handle = makeHandle(aggregate: 200)
+        control.attach(handle, deviceID: 42, excluded: [5])
+        control.start()
+        control.queue.sync {}
+        /// One liveness tick 2 s later, with a fresh callback.
+        func tick() {
+            clock.advance(seconds: 2)
+            handle.state.lastCallbackHostTime.store(clock.now(), ordering: .relaxed)
+            control.tickOnQueueForTesting()
+        }
+
+        // Stopped: nothing is read
+        tick()
+        #expect(reads.all.isEmpty)
+
+        source.set(processes: [5, 11], running: [11])
+        source.send(.processChanged(11))
+        control.queue.sync {}
+        tick()
+        #expect(reads.all == ["200 on test.catchall.rate", "42 on test.catchall.rate"])
+
+        // The device changed its rate, the aggregate kept the old one: one mismatch
+        rates.set(42, 44_100)
+        tick()
+        // A failed read of the aggregate counts as a match and starts over
+        rates.set(200, nil)
+        tick()
+        rates.set(200, 48_000)
+        tick()
+        #expect(rebuilds.all.isEmpty)
+        tick()
+        #expect(rebuilds.all == ["uid-tv 200 rateMismatch"])
+        #expect(reads.all.count == 9)
+        // Asked once: no further reads
+        tick()
+        tick()
+        #expect(rebuilds.all == ["uid-tv 200 rateMismatch"])
+        #expect(reads.all.count == 9)
+
+        let detached = await control.detach(handle)
+        #expect(detached)
+        tick()
+        #expect(reads.all.count == 9)
+    }
+
+    @Test("A liveness tick reports dead IO before it reads any rate, and never reads the rate of a catch-all whose IO has not called back within the liveness timeout")
+    func rateReadsAfterLiveness() async {
+        let source = FakeActivitySource()
+        source.set(processes: [5, 11], running: [11])
+        let clock = HostClock()
+        let rates = FakeRates([200: 48_000, 42: 48_000, 201: 48_000, 43: 48_000])
+        // One ordered log for the reads and the reports, both on the queue
+        let log = LineLog()
+        let control = CatchAllRunControl(
+            source: source, backend: FakeCatchAllBackend(), queue: DispatchQueue(label: "test.catchall.order"),
+            hostTime: { clock.now() },
+            nominalRate: { device in
+                log.add("read \(device)")
+                return rates.rate(device)
+            })
+        control.onRebuild = { uid, aggregate, reason in log.add("rebuild \(aggregate) \(reason.rawValue)") }
+        // Two catch-alls run for process 11: the TV's IO dies, the other's keeps calling back
+        let dying = makeHandle(aggregate: 200)
+        let other = makeHandle(aggregate: 201)
+        control.attach(dying, deviceID: 42, excluded: [5])
+        control.attach(other, deviceID: 43, excluded: [5])
+        control.start()
+        control.queue.sync {}
+
+        clock.advance(seconds: 2)
+        dying.state.lastCallbackHostTime.store(clock.now(), ordering: .relaxed)
+        other.state.lastCallbackHostTime.store(clock.now(), ordering: .relaxed)
+        control.tickOnQueueForTesting()
+        #expect(log.all == ["read 200", "read 42", "read 201", "read 43"])
+
+        // From here only the other one calls back: two stale ticks report the TV's dead IO
+        for _ in 0..<2 {
+            clock.advance(seconds: 2)
+            other.state.lastCallbackHostTime.store(clock.now(), ordering: .relaxed)
+            control.tickOnQueueForTesting()
+        }
+        #expect(log.all == ["read 200", "read 42", "read 201", "read 43",
+                            "read 201", "read 43",
+                            "rebuild 200 ioDead", "read 201", "read 43"])
     }
 }
