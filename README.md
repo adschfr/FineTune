@@ -4,6 +4,8 @@
 
 A maintained fork of [FineTune by Ronit Singh](https://github.com/ronitsingh10/FineTune): per-app volume, audio routing and EQ in your menu bar. This fork focuses on outputs without a volume control of their own, such as TVs and monitors connected over HDMI. On those, FineTune is the only volume control, so any sound that slips past it plays at full scale.
 
+I'm grateful for Ronit's work. I needed my TV setup to keep working on macOS 27, so I'm maintaining this fork.
+
 <a href="https://github.com/adschfr/FineTune/releases/latest/download/FineTune-Fork.dmg"><img src="assets/download-badge.svg" alt="Download for macOS" height="48"/></a>
 
 <br clear="all"/>

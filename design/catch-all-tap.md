@@ -4,7 +4,7 @@ the app target is nonisolated by default, so main-actor types in FineTune/ are a
 
 # Catch-all tap for outputs without hardware volume: implementation design
 
-This design is ready to implement on branch `improve/phase-2-tv-path`. It starts from Design 3 (the risk-first design built around a decorator). It adds the judges' grafts and fixes every fatal flaw named in the reviews. Nothing described here has been built or run yet. All line numbers refer to the working tree at commit `828db61`.
+This design is ready to implement on branch `improve/phase-2-tv-path`. It starts from Design 3 (the risk-first design built around a decorator). It adds the judges' grafts and fixes every fatal flaw named in the reviews. Nothing described here has been built or run yet. All line numbers refer to the working tree at commit `b2439c2`.
 
 ---
 
@@ -69,11 +69,11 @@ Certainty levels: **H** = stated in the headers, **C** = confirmed by FineTune c
 |---|---|---|---|---|
 | F1 | `initExcludingProcesses:andDeviceUID:withStream:` mixes "all process audio streams destined for the selected device stream except the given processes". The tap format matches that stream. Swift: `init(excludingProcesses:deviceUID:stream:)`, macOS 14.0. | H | `CATapDescription.h:99-111`; `CoreAudio.swiftmodule/arm64e-apple-macos.swiftinterface:460` | H0 |
 | F2 | `exclusive == true` means `processes` is the exclusion list. The header does not say the initializer sets it. | H/I | `CATapDescription.h:125-129, 144-148` | Set explicitly; unit test; H0 read-back |
-| F3 | `CATapMuted`: "captured by the tap but no audio is sent from the process to the audio hardware". A device-stream tap holds back audio only on that device stream. | H/C | `CATapDescription.h:19-34`; commit `828db61` message | H1m |
+| F3 | `CATapMuted`: "captured by the tap but no audio is sent from the process to the audio hardware". A device-stream tap holds back audio only on that device stream. | H/C | `CATapDescription.h:19-34`; commit `b2439c2` message | H1m |
 | F4 | A process that starts after the exclusive tap exists is captured and muted from its first sample. | I | `CATapDescription.h:103-104` ("All other processes that output audio will be included") | **H1, H1m (gate)** |
 | F5 | `kAudioTapPropertyDescription` can be set on a live tap. Latency and atomicity of the change are not documented. | H/U | `AudioHardware.h:2010-2012`; overlay `AudioHardwareTap.setDescription` `swiftinterface:684` | **H2 (gate)** |
 | F6 | FineTune's process object comes from `kAudioHardwarePropertyTranslatePIDToProcessObject` with a `pid_t` qualifier, which returns `kAudioObjectUnknown` instead of an error. FineTune's aggregate IO is attributed to that object. | H/I | `AudioHardware.h:589-595, 634`; overlay `swiftinterface:82` | **H3 (gate)** |
-| F7 | A process in two `.muted` taps is captured by both and stays muted while any of them exists. Destroying such a tap unmutes the process. | C | Crossfade overlap `ProcessTapController.swift:1025-1110`; commit `086e896` | H12 |
+| F7 | A process in two `.muted` taps is captured by both and stays muted while any of them exists. Destroying such a tap unmutes the process. | C | Crossfade overlap `ProcessTapController.swift:1025-1110`; commit `47ee1c7` | H12 |
 | F8 | `IsRunningOutput` is 1 while the process runs IO with an active output stream. `Devices` (output scope) lists its output devices. Both are expected to hold for muted processes. | H/I | `AudioHardware.h:1953-1955, 1966-1969` | **H8** (gates the device filter) |
 | F9 | Listener blocks run on the queue that is passed in. | H | `AudioObjectAddPropertyListenerBlock` usage, `AudioProcessMonitor.swift:382` | - |
 | F10 | `AudioDeviceStart` on a stopped private aggregate takes about 25 ms. | C | `HANDOFF.md:40` | H7 |
@@ -139,7 +139,7 @@ Coordinator protocol (the shape the decorator and engine rely on):
 | File | Change |
 |---|---|
 | `ProcessTapControlling.swift` | Add requirement `var liveCapture: [TapCapture] { get }` to the protocol (lines 9-45). In the extension (47-87), add the default `[]`. An empty capture claims nothing and so excludes nothing, which is the safe default. |
-| `ProcessTapController.swift` | (a) `liveCapture`: the `TapCapture` of `primaryResources` and `secondaryResources` whose `tapID.isValid`, via `nonisolated static func capture(of: CATapDescription?) -> TapCapture?` (processes from `description.processes`; coverage `.device(uid)` when `description.deviceUID` is set, otherwise `.allDevices`, per `CATapDescription.h:175-179`). (b) In `updateProcesses` (919-947): store `let previous = description.processes` before line 928 and restore it in the `err != noErr` branch (938-941). This code exists only in the fork (`9c11bdf`). About 18 lines in total; the callback is not touched. |
+| `ProcessTapController.swift` | (a) `liveCapture`: the `TapCapture` of `primaryResources` and `secondaryResources` whose `tapID.isValid`, via `nonisolated static func capture(of: CATapDescription?) -> TapCapture?` (processes from `description.processes`; coverage `.device(uid)` when `description.deviceUID` is set, otherwise `.allDevices`, per `CATapDescription.h:175-179`). (b) In `updateProcesses` (919-947): store `let previous = description.processes` before line 928 and restore it in the `err != noErr` branch (938-941). This code exists only in the fork (`e6ecfc6`). About 18 lines in total; the callback is not touched. |
 | `AudioEngine.swift` | About 16 hook lines (§8.2 table) plus one new method `refreshTapSourcesForCatchAll()` and the P5 guard. `ignoreApp`, `releaseCallPassthroughTaps`, `cleanupStaleTaps`, `recreateTap`, `syncTapsWithProcessState` and all switch call sites stay unchanged. The decorator sees their calls. |
 | `DeviceVolumeProviding.swift` | Add requirement `var onOutputTierChanged: ((AudioDeviceID) -> Void)? { get set }`, with an extension default (`get { nil } set {}`) so the existing mocks keep compiling. |
 | `DeviceVolumeMonitor.swift` | Add a stored `onOutputTierChanged`, fired at the end of `applyTierOverrideChange` after `readOneState` (line 1055). Today a tier override notifies nobody (`MenuBarPopupView.swift:746-747`). |
@@ -277,7 +277,7 @@ E(D) = sortedUnique( {self}
 
 ### 4.7 Rule P5 (keep per-app capture neutral for CA devices)
 
-In `preferredTapSourceDeviceUID` (`AudioEngine.swift:2074-2078`, code added in the fork by `828db61`), add after line 2076:
+In `preferredTapSourceDeviceUID` (`AudioEngine.swift:2074-2078`, code added in the fork by `b2439c2`), add after line 2076:
 
 ```swift
 guard CatchAllPlan.allowsStreamTap(candidate: defaultUID, catchAllDevices: catchAll.catchAllDeviceUIDs) else { return nil }
@@ -800,7 +800,7 @@ Every commit builds, passes `./scripts/test.sh` with no TCC prompt, and leaves b
 14. **Live phase** (no commit): observe day, then `on`, then §12.4.
 15. **feat(catchall): enable by default; docs(fork).** Default `CatchAllMode` becomes `on` after the user's sign-off on the TV. `FORK.md` describes the feature, the R1 exceptions, the changed meaning of ignore on software outputs and the kill switch. `HANDOFF.md` gets the decisions and harness results. The `.mutedWhenTapped` comment in `OrphanedTapCleanup.swift:7-9` is fixed.
 
-Upstream friction (R11): new folder; one protocol requirement with a default; about 18 lines in `ProcessTapController` outside the callback; about 16 hook lines in `AudioEngine`, several in code that only the fork has (`preferredTapSourceDeviceUID` from `828db61`); one callback in `DeviceVolumeProviding` with a default. No project-file edits.
+Upstream friction (R11): new folder; one protocol requirement with a default; about 18 lines in `ProcessTapController` outside the callback; about 16 hook lines in `AudioEngine`, several in code that only the fork has (`preferredTapSourceDeviceUID` from `b2439c2`); one callback in `DeviceVolumeProviding` with a default. No project-file edits.
 
 ---
 
@@ -830,7 +830,7 @@ Upstream friction (R11): new folder; one protocol requirement with a default; ab
 
 ## 15. Harness results (2026-10-28, macOS 27.2, LG TV over USB-C/HDMI, build 750)
 
-Measured with the harness of commit `f34a737` and its revision in `382f43e`. The TV's UID is replaced by `<TV>`.
+Measured with the harness of commit `979ca41` and its revision in `22cb2db`. The TV's UID is replaced by `<TV>`.
 
 | Step | Result | Verdict |
 |---|---|---|
@@ -861,11 +861,11 @@ Run with the visible harness panel: each step announced with a countdown, the us
 | H1M | running muted catch-all, five plain tones at 10 % | nothing | nothing | pass |
 | H7M | stopped muted catch-all, five plain tones at 10 %, each after the catch-all suspended (log: five resumes) | nothing, no onset click | nothing | pass |
 
-Plain tones have no fade-in, so a leak at the onset would have been an audible click. The catch-all holds audio back from the first sample, also while it resumes from a stop. Earlier runs could not show this by ear: FineTune merged its own afplay test processes into a "FineTune Fork" app entry and tapped them, fixed in `e22a935`.
+Plain tones have no fade-in, so a leak at the onset would have been an audible click. The catch-all holds audio back from the first sample, also while it resumes from a stop. Earlier runs could not show this by ear: FineTune merged its own afplay test processes into a "FineTune Fork" app entry and tapped them, fixed in `2f87c90`.
 
 ## 16. Variant B: catch-all as the normal path on software outputs
 
-The user chose variant B ("catch-all first") on 2026-10-28. For software outputs this section replaces the statement in §1 that per-app taps stay as they are. Where it differs from §3-§14, this section applies, and §16.9 replaces the §13 commits 8-15. It is the lean v1: everything not needed for the user's case or for safety is listed in §16.10. Nothing here is built yet. `AudioEngine.swift` means `FineTune/Audio/Engine/AudioEngine.swift`; all line numbers refer to `bef2b82`.
+The user chose variant B ("catch-all first") on 2026-10-28. For software outputs this section replaces the statement in §1 that per-app taps stay as they are. Where it differs from §3-§14, this section applies, and §16.9 replaces the §13 commits 8-15. It is the lean v1: everything not needed for the user's case or for safety is listed in §16.10. Nothing here is built yet. `AudioEngine.swift` means `FineTune/Audio/Engine/AudioEngine.swift`; all line numbers refer to `ce7f2d1`.
 
 ### 16.1 Decision, scope, behavior changes
 
@@ -1283,7 +1283,7 @@ Every failure ends in one of three states: covered audio silent for a bounded ti
 - reentrancy: `FakeTapController.onActivate` fires `onAppsChanged`, `setVolume`, `setMute` and `setDevice` for the same pid; one tap is registered, carries the nested volume and mute, and is switched to the nested routing without `updateTapForCurrentMode`;
 - routing of a quit untapped app is pruned after the 30 s grace, not at the 350 ms pass; a pid that reappears keeps it;
 - wiring order: `catchAll.start()` before the first `applyPersistedSettings`; gain hooks; reset calls `refreshGains` and `reconcile`; reconcile requested on connect before the default action, no factory call inside the handler; the format closure passes `rebuildCatchAll: true`, the health monitor false; `stop()` before the tap loop;
-- **Noop golden log** (mode off): a scripted run (start, app plays, `setVolume`, `setEQSettings` without a tap, default switch, disconnect, stale cleanup, reset, a reentrant creation) produces the factory calls and tap events of `bef2b82`; `setEQSettings` without a tap persists nothing.
+- **Noop golden log** (mode off): a scripted run (start, app plays, `setVolume`, `setEQSettings` without a tap, default switch, disconnect, stale cleanup, reset, a reentrant creation) produces the factory calls and tap events of `ce7f2d1`; `setEQSettings` without a tap persists nothing.
 
 **9. Harness and listening, pure parts:** H9 is not part of `all`; the pending-H9 record round-trips; S-step parsing; injection is refused without a session token.
 
@@ -1311,7 +1311,7 @@ Pass: no "zu laut" or "doppelt/Echo"; dips only in S5, S8 and S9 within the stat
 
 ### 16.9 Commit plan
 
-Commits 1-7 and the harness are done (`d818f55` … `bef2b82`). Each commit builds, passes `./scripts/test.sh` without a TCC prompt, and leaves behavior unchanged while `CatchAllMode` is `off`.
+Commits 1-7 and the harness are done (`728eafc` … `ce7f2d1`). Each commit builds, passes `./scripts/test.sh` without a TCC prompt, and leaves behavior unchanged while `CatchAllMode` is `off`.
 
 8. **feat(catchall): H9 kill check.** H9 step and pending record in `CatchAllSettings` and `CatchAllHarness`, excluded from `all`; engine condition at `:369` extended (row 5); ms timestamps and the alert-device line in the panel. Test 9 (H9 parts). **Gate G1** after consent: continue only on "sofort".
 9. **feat(catchall): run control for covered IO.** IsRunning rule with listed set, cap and poll; `observeDevices` and `onDevicesChanged`; refresh order and classification cache, with `hasNonPlain` split into aggregate or virtual and unresolvable (`CatchAllRunControl.swift:280-282`); 3 s re-read with the leeway at `:221`; `timerInterval` in the logic; bounded `detach` and `stop`. Test 1. Not wired; the harness (`CatchAllHarness.swift:174, 305`) now uses this logic, so the §15 H7 and §15.1 H7M results predate it.
