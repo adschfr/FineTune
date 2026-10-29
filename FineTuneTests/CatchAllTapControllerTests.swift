@@ -68,6 +68,12 @@ nonisolated final class FakeCatchAllBackend: CatchAllBackend, @unchecked Sendabl
         get { lock.withLock { _onWaitUntilReady } }
         set { lock.withLock { _onWaitUntilReady = newValue } }
     }
+    /// The ID the next aggregate gets; set it to reuse the ID of a destroyed one, as Core
+    /// Audio does.
+    var nextAggregate: AudioDeviceID {
+        get { lock.withLock { _nextAggregate } }
+        set { lock.withLock { _nextAggregate = newValue } }
+    }
     /// The most recently created tap.
     var lastTap: AudioObjectID { lock.withLock { _nextTap - 1 } }
     /// Description sets made on `tap`, failed ones included.
