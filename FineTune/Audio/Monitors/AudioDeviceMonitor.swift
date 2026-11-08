@@ -539,14 +539,14 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
         let disconnectedOutputUIDs = previousOutputUIDs.subtracting(currentOutputUIDs)
         for uid in disconnectedOutputUIDs {
             let name = outputDeviceNames[uid] ?? uid
-            logger.info("Output device disconnected: \(name) (\(uid))")
+            logger.notice("Output device disconnected: \(name) (\(uid))")
             onDeviceDisconnected?(uid, name)
         }
         let connectedOutputUIDs = currentOutputUIDs.subtracting(previousOutputUIDs)
         let sortedConnectedOutput = sortByPriority(uids: connectedOutputUIDs, priorityOrder: outputPriorityOrder?() ?? [])
         for uid in sortedConnectedOutput {
             if let device = devicesByUID[uid] {
-                logger.info("Output device connected: \(device.name) (\(uid))")
+                logger.notice("Output device connected: \(device.name) (\(uid))")
                 onDeviceConnected?(uid, device.name)
             }
         }

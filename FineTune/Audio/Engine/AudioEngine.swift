@@ -1493,7 +1493,7 @@ final class AudioEngine {
             if deviceVolumeMonitor.defaultDeviceUID != restoreUID {
                 if deviceVolumeMonitor.setDefaultDevice(device.id) {
                     outputEchoTracker.increment(restoreUID)
-                    logger.info("Restored default → \(device.name)")
+                    logger.notice("Restored default → \(device.name)")
                 }
             }
             routeFollowsDefaultApps(to: restoreUID)
@@ -1518,7 +1518,7 @@ final class AudioEngine {
         if target.uid != currentDefault {
             if deviceVolumeMonitor.setDefaultDevice(target.id) {
                 outputEchoTracker.increment(target.uid)
-                logger.info("System default → \(target.name)")
+                logger.notice("System default → \(target.name)")
             }
         }
 
@@ -1716,7 +1716,7 @@ final class AudioEngine {
 
         if !affectedApps.isEmpty {
             let fallbackName = fallbackDevice?.name ?? "none"
-            logger.info("\(deviceName) disconnected, \(affectedApps.count) app(s) affected")
+            logger.notice("\(deviceName) disconnected, \(affectedApps.count) app(s) affected")
             if settingsManager.appSettings.showDeviceDisconnectAlerts {
                 showDisconnectNotification(deviceName: deviceName, fallbackName: fallbackName, affectedApps: affectedApps)
             }
@@ -1815,7 +1815,7 @@ final class AudioEngine {
         }
 
         if !affectedApps.isEmpty {
-            logger.info("\(deviceName) reconnected, switched \(affectedApps.count) app(s) back")
+            logger.notice("\(deviceName) reconnected, switched \(affectedApps.count) app(s) back")
             if settingsManager.appSettings.showDeviceDisconnectAlerts {
                 showReconnectNotification(deviceName: deviceName, affectedApps: affectedApps)
             }
@@ -2031,7 +2031,7 @@ final class AudioEngine {
                     lastAutoSwitchOverrideTime = nil
                     routeFollowsDefaultApps(to: newDefaultUID)
                     let deviceName = deviceMonitor.device(for: newDefaultUID)?.name ?? newDefaultUID
-                    logger.info("Accepted user change to \(deviceName) (settled >1s)")
+                    logger.notice("Accepted user change to \(deviceName) (settled >1s)")
                     return
                 }
 
@@ -2096,7 +2096,7 @@ final class AudioEngine {
             let affectedApps = apps.filter { followsDefault.contains($0.id) }
             if !affectedApps.isEmpty {
                 let deviceName = deviceMonitor.device(for: newDefaultUID)?.name ?? "Default Output"
-                logger.info("Default changed to \(deviceName), \(affectedApps.count) app(s) following")
+                logger.notice("Default changed to \(deviceName), \(affectedApps.count) app(s) following")
                 if settingsManager.appSettings.showDeviceDisconnectAlerts {
                     showDefaultChangedNotification(newDeviceName: deviceName, affectedApps: affectedApps)
                 }

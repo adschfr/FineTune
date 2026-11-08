@@ -605,7 +605,7 @@ final class ProcessTapController: ProcessTapControlling {
                 var tapID: AudioObjectID = .unknown
                 let err = AudioHardwareCreateProcessTap(streamTap, &tapID)
                 if err == noErr {
-                    logger.info("Created stream-specific tap for device \(deviceUID, privacy: .public) (stream \(outputStream))")
+                    logger.notice("Created stream-specific tap for device \(deviceUID, privacy: .public) (stream \(outputStream))")
                     maybeLogEQBypass(for: tapID)
                     return (streamTap, tapID)
                 }
@@ -763,7 +763,7 @@ final class ProcessTapController: ProcessTapControlling {
         currentDeviceUIDs = targetDeviceUIDs
 
         activated = true
-        logger.info("Tap activated for \(self.app.name) on \(self.targetDeviceUIDs.count) device(s)")
+        logger.notice("Tap activated for \(self.app.name) on \(self.targetDeviceUIDs, privacy: .public), volume \(self._volume), muted \(self._isMuted)")
     }
 
     /// Switch to a single device (convenience for backward compatibility).
@@ -789,7 +789,7 @@ final class ProcessTapController: ProcessTapControlling {
         guard newDeviceUIDs != currentDeviceUIDs else { return }
 
         let startTime = CFAbsoluteTimeGetCurrent()
-        logger.info("[UPDATE] Switching \(self.app.name) to \(newDeviceUIDs.count) device(s)\(sourceDeviceDead ? " (source dead)" : "")")
+        logger.notice("[UPDATE] Switching \(self.app.name) to \(newDeviceUIDs, privacy: .public)\(sourceDeviceDead ? " (source dead)" : "")")
 
         // For now, crossfade uses the first (primary) device
         // All devices in the aggregate will be included
@@ -826,7 +826,7 @@ final class ProcessTapController: ProcessTapControlling {
         currentDeviceUIDs = newDeviceUIDs
 
         let endTime = CFAbsoluteTimeGetCurrent()
-        logger.info("[UPDATE] === END === Total time: \((endTime - startTime) * 1000)ms")
+        logger.notice("[UPDATE] === END === Total time: \((endTime - startTime) * 1000)ms")
     }
 
     /// Refreshes the process tap source (stream-specific ↔ stereo mixdown) without changing
@@ -880,7 +880,7 @@ final class ProcessTapController: ProcessTapControlling {
             return
         }
         isSuspended = true
-        logger.info("Tap suspended for \(self.app.name) (app silent)")
+        logger.notice("Tap suspended for \(self.app.name) (app silent)")
     }
 
     /// Restarts a suspended IO proc. No-op when not suspended. Throws if CoreAudio refuses
@@ -907,7 +907,7 @@ final class ProcessTapController: ProcessTapControlling {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to resume device: \(err)"])
         }
         isSuspended = false
-        logger.info("Tap resumed for \(self.app.name)")
+        logger.notice("Tap resumed for \(self.app.name), volume \(self._volume), muted \(self._isMuted)")
     }
 
     // MARK: - Process Set Updates
