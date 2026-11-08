@@ -28,6 +28,8 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
     /// Whether system sounds should follow the macOS default output device
     private(set) var isSystemFollowingDefault: Bool = true
+    /// Pending check of a system-output change that looked like a user choice
+    @ObservationIgnored private var systemChangeCheckTask: Task<Void, Never>?
 
     /// System alert volume (0.0–1.0), matches System Settings > Sound > Alert volume.
     /// Read/written via AppleScript since no CoreAudio property exists for this.
@@ -643,20 +645,77 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         }
     }
 
+    /// How a change of the system output relates to "system sounds follow default".
+    enum SystemDeviceChange: Equatable {
+        /// The system output equals the live default (its change notification may be pending).
+        case stillFollowing
+        /// macOS moved system sounds because their device went away (a display dropping off
+        /// HDMI): not a user choice, so following stays on.
+        case deviceVanished
+        /// Someone picked another device for system sounds (e.g. in System Settings).
+        case userChoice
+    }
+
+    nonisolated static func classifySystemDeviceChange(
+        newSystemUID: String?,
+        liveDefaultUID: String?,
+        previousSystemDeviceAlive: Bool
+    ) -> SystemDeviceChange {
+        if newSystemUID == liveDefaultUID { return .stillFollowing }
+        if !previousSystemDeviceAlive { return .deviceVanished }
+        return .userChoice
+    }
+
     private func handleSystemDeviceChanged() {
         logger.debug("System output device changed")
+        let previousSystemDeviceID = systemDeviceID
         refreshSystemDevice()
 
         // Detect if external change broke "follow default" state
-        if isSystemFollowingDefault {
-            let stillFollowing = (systemDeviceUID == defaultDeviceUID)
-            if !stillFollowing {
+        guard isSystemFollowingDefault, systemDeviceUID != defaultDeviceUID else { return }
+
+        // When a device vanishes, macOS moves the default and the system output together and
+        // this notification can arrive before the default's, so the cached default may still
+        // name the vanished device. Compare with the live default instead, without touching
+        // the cache (handleDefaultDeviceChanged needs the old value to see the change).
+        let (liveDefaultID, liveDefaultUID) = Self.readLiveDefault()
+        let change = Self.classifySystemDeviceChange(
+            newSystemUID: systemDeviceUID,
+            liveDefaultUID: liveDefaultUID,
+            previousSystemDeviceAlive: previousSystemDeviceID.isValid && previousSystemDeviceID.isDeviceAlive()
+        )
+        switch change {
+        case .stillFollowing:
+            break
+        case .deviceVanished:
+            // Put system sounds on the live default now; a later default change may never
+            // show up as one if the default returns before its notification is handled
+            logger.info("System device moved by macOS after its device went away, still following default")
+            if liveDefaultID.isValid, liveDefaultID.isDeviceAlive() {
+                setSystemDevice(liveDefaultID)
+            }
+        case .userChoice:
+            // A connecting device can switch both outputs with the default posted a moment
+            // later, which reads like a user choice at first. Decide once both have settled.
+            systemChangeCheckTask?.cancel()
+            systemChangeCheckTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: Self.systemChangeSettleDelay)
+                guard let self, !Task.isCancelled, self.isSystemFollowingDefault else { return }
+                self.refreshSystemDevice()
+                guard self.systemDeviceUID != Self.readLiveDefault().uid else { return }
                 // External change broke "follow default" - update our state
-                isSystemFollowingDefault = false
-                settingsManager.setSystemSoundsFollowDefault(false)
-                logger.info("System device changed externally, no longer following default")
+                self.isSystemFollowingDefault = false
+                self.settingsManager.setSystemSoundsFollowDefault(false)
+                self.logger.info("System device changed externally, no longer following default")
             }
         }
+    }
+
+    private static let systemChangeSettleDelay: Duration = .milliseconds(500)
+
+    private static func readLiveDefault() -> (id: AudioDeviceID, uid: String?) {
+        let id = (try? AudioDeviceID.readDefaultOutputDevice()) ?? .unknown
+        return (id, id.isValid ? try? id.readDeviceUID() : nil)
     }
 
     /// Sets the system output device (for alerts, notifications, system sounds)
