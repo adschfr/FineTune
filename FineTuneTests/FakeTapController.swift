@@ -97,12 +97,20 @@ final class FakeTapController: ProcessTapControlling {
     func updateLoudnessCompensation(listeningVolume: Float, digitalGain: Float, enabled: Bool) {}
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {}
 
+    /// How long a device switch takes; lets tests overlap switches like a real crossfade.
+    var switchDuration: Duration?
+    private(set) var switchTargets: [[String]] = []
+
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool, autoEQProfile: AutoEQProfile?) async throws {
+        switchTargets.append([newDeviceUID])
+        if let switchDuration { try await Task.sleep(for: switchDuration) }
         currentDeviceUIDs = [newDeviceUID]
         tapSourceDeviceUID = preferredTapSourceDeviceUID
     }
 
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool, autoEQProfile: AutoEQProfile?) async throws {
+        switchTargets.append(newDeviceUIDs)
+        if let switchDuration { try await Task.sleep(for: switchDuration) }
         currentDeviceUIDs = newDeviceUIDs
         tapSourceDeviceUID = preferredTapSourceDeviceUID
     }

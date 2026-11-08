@@ -77,6 +77,14 @@ final class AudioEngine {
     private var tapRecoveryCooldownUntil: [pid_t: Date] = [:]  // Prevents tap recreation thrashing
     private var tapSilentSince: [pid_t: Date] = [:]  // When a tapped app stopped streaming
     private var tapsBeingRecreated: Set<pid_t> = []  // Dedupes recreates scheduled by syncTapsWithProcessState
+    @ObservationIgnored private var routingPassTail: Task<Void, Never>?  // Last queued device-switch pass
+    /// Completes once every device-switch pass queued so far has run (for tests).
+    func waitForRoutingPasses() async {
+        while let tail = routingPassTail {
+            await tail.value
+            if routingPassTail == tail { return }
+        }
+    }
     /// How long a tapped app must stay silent before its IO proc is suspended. Long enough
     /// to ride out gaps between tracks or videos without stop/start churn.
     private let tapSuspendDelay: TimeInterval = 10
@@ -1540,35 +1548,48 @@ final class AudioEngine {
         return target.uid
     }
 
+    /// Runs device-switch passes one at a time, in the order they were requested. A pass
+    /// decides per tap when it reaches it, from the routing at that moment. Without this, a
+    /// quick disconnect and reconnect (a TV dropping off HDMI for two seconds) ran two passes
+    /// at once: the reconnect pass skipped taps the disconnect pass had not moved yet, which
+    /// the disconnect pass then moved to the fallback. They played there while the routing
+    /// showed the reconnected device.
+    private func enqueueRoutingPass(_ pass: @escaping @MainActor () async -> Void) {
+        let previous = routingPassTail
+        routingPassTail = Task { @MainActor in
+            await previous?.value
+            await pass()
+        }
+    }
+
     /// Routes all followsDefault apps to the given device UID and switches their taps.
-    /// Skips taps already on the target, including retained taps absent from the app list.
     private func routeFollowsDefaultApps(to targetUID: String) {
         for pid in followsDefault {
             appDeviceRouting[pid] = targetUID
         }
-
-        var tapsToSwitch: [(app: AudioApp, tap: any ProcessTapControlling)] = []
-        // CoreAudio can temporarily remove an app from the process list during an
-        // output change. Its retained tap still needs routing, even while absent.
-        // Compare the actual tap destination rather than the optimistic routing map.
-        for (pid, tap) in taps {
-            guard followsDefault.contains(pid), tap.currentDeviceUIDs != [targetUID] else { continue }
-            tapsToSwitch.append((tap.app, tap))
+        enqueueRoutingPass { [weak self] in
+            await self?.switchFollowsDefaultTapsToCurrentRoute()
         }
-        guard !tapsToSwitch.isEmpty else { return }
+    }
 
-        Task { [weak self] in
-            guard let self else { return }
-            let profile = self.autoEQProfileForActivation(deviceUID: targetUID)
-            for (app, tap) in tapsToSwitch {
-                do {
-                    let preferredTapSourceUID = self.preferredTapSourceDeviceUID(for: app, outputUIDs: [targetUID], isFollowsDefault: true)
-                    try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
-                    self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
-                    if profile == nil { self.applyAutoEQToTap(tap) }
-                } catch {
-                    self.logger.error("Failed to switch \(app.name) to \(targetUID): \(error.localizedDescription)")
-                }
+    /// Moves every follows-default tap that is not on its app's current route. Skips taps
+    /// already there, including retained taps absent from the app list: CoreAudio can
+    /// temporarily remove an app from the process list during an output change, and its
+    /// tap still needs routing. Compares the actual tap destination, not the routing map.
+    private func switchFollowsDefaultTapsToCurrentRoute() async {
+        for pid in Array(taps.keys) {
+            guard followsDefault.contains(pid), let tap = taps[pid],
+                  let targetUID = appDeviceRouting[pid],
+                  tap.currentDeviceUIDs != [targetUID] else { continue }
+            let app = tap.app
+            do {
+                let profile = autoEQProfileForActivation(deviceUID: targetUID)
+                let preferredTapSourceUID = preferredTapSourceDeviceUID(for: app, outputUIDs: [targetUID], isFollowsDefault: true)
+                try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
+                applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
+                if profile == nil { applyAutoEQToTap(tap) }
+            } catch {
+                logger.error("Failed to switch \(app.name) to \(targetUID): \(error.localizedDescription)")
             }
         }
     }
@@ -1638,15 +1659,38 @@ final class AudioEngine {
 
         // Execute device switches
         if !singleModeTapsToSwitch.isEmpty || !multiModeTapsToUpdate.isEmpty {
-            Task { [weak self] in
+            enqueueRoutingPass { [weak self] in
                 guard let self else { return }
-                // Handle single-mode switches — source device is dead, skip crossfade
+                // Handle single-mode switches — source device is dead, skip crossfade.
+                // The route is read when the pass reaches the tap: the device may be back.
                 for (tap, fallbackUID) in singleModeTapsToSwitch {
+                    guard self.taps[tap.app.id] === tap else { continue }  // Replaced meanwhile
+                    let targetUID = self.appDeviceRouting[tap.app.id] ?? fallbackUID
+                    if tap.currentDeviceUIDs == [targetUID] {
+                        // Routed back to the device before this tap left it. The tap was built
+                        // on the instance that vanished, so rebuild it in place: the app may be
+                        // missing from the process list right now, and a tap recreated from
+                        // that list would be dropped and let its first sound through unprocessed.
+                        let pid = tap.app.id
+                        if targetUID == deviceUID, self.tapsBeingRecreated.insert(pid).inserted {
+                            do {
+                                try await tap.recreateForOutputRateChange()
+                            } catch {
+                                self.logger.warning("Rebuild of \(tap.app.name) on the reconnected device failed: \(error.localizedDescription), recreating")
+                                await self.recreateTap(for: pid)
+                            }
+                            self.tapsBeingRecreated.remove(pid)
+                        }
+                        continue
+                    }
                     do {
-                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(for: tap.app, outputUIDs: [fallbackUID], isFollowsDefault: true)
-                        let profile = self.autoEQProfileForActivation(deviceUID: fallbackUID)
-                        try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true, autoEQProfile: profile)
-                        self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [fallbackUID])
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(for: tap.app, outputUIDs: [targetUID], isFollowsDefault: self.followsDefault.contains(tap.app.id))
+                        let profile = self.autoEQProfileForActivation(deviceUID: targetUID)
+                        // Dead only while the tap is still on the vanished device; an earlier
+                        // pass may have moved it to a live one already
+                        let sourceDead = tap.currentDeviceUIDs.contains(deviceUID)
+                        try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: sourceDead, autoEQProfile: profile)
+                        self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [targetUID])
                         if profile == nil { self.applyAutoEQToTap(tap) }
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) to fallback: \(error.localizedDescription)")
@@ -1656,6 +1700,7 @@ final class AudioEngine {
                 // Handle multi-mode updates (remove disconnected device from aggregate)
                 // Source device is dead, skip crossfade
                 for (tap, remainingUIDs) in multiModeTapsToUpdate {
+                    guard self.taps[tap.app.id] === tap else { continue }
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(for: tap.app, outputUIDs: remainingUIDs, isFollowsDefault: self.followsDefault.contains(tap.app.id))
                         let profile = self.autoEQProfileForActivation(deviceUID: remainingUIDs.first ?? "")
@@ -1721,10 +1766,13 @@ final class AudioEngine {
         }
 
         if !tapsToSwitch.isEmpty {
-            Task { [weak self] in
+            enqueueRoutingPass { [weak self] in
                 guard let self else { return }
                 let profile = self.autoEQProfileForActivation(deviceUID: deviceUID)
                 for tap in tapsToSwitch {
+                    // A newer routing decision or an earlier pass may have settled this tap
+                    guard self.taps[tap.app.id] === tap, self.appDeviceRouting[tap.app.id] == deviceUID,
+                          tap.currentDeviceUIDs != [deviceUID] else { continue }
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(for: tap.app, outputUIDs: [deviceUID], isFollowsDefault: false)
                         try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
@@ -1755,9 +1803,12 @@ final class AudioEngine {
         }
 
         if !multiModeTapsToUpdate.isEmpty {
-            Task {
+            enqueueRoutingPass { [weak self] in
                 for tap in multiModeTapsToUpdate {
-                    await self.updateTapForCurrentMode(for: tap.app)
+                    // Skip apps whose tap was removed meanwhile (e.g. ignored); a replacement
+                    // tap still gets the restored selection
+                    guard self?.taps[tap.app.id] != nil else { continue }
+                    await self?.updateTapForCurrentMode(for: tap.app)
                 }
             }
             logger.info("\(deviceName) reconnected, restored to \(multiModeTapsToUpdate.count) multi-device app(s)")
