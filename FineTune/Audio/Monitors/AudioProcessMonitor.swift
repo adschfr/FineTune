@@ -91,17 +91,25 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
 
     // Property listeners
     private var processListListenerBlock: AudioObjectPropertyListenerBlock?
-    private var processListenerBlocks: [AudioObjectID: [(selector: AudioObjectPropertySelector, block: AudioObjectPropertyListenerBlock)]] = [:]
+    private var processListenerBlocks: [AudioObjectID: [(address: AudioObjectPropertyAddress, block: AudioObjectPropertyListenerBlock)]] = [:]
     private var monitoredProcesses: Set<AudioObjectID> = []
 
-    /// Per-process properties observed for changes. Both funnel into refresh():
+    /// Per-process properties observed for changes. All funnel into refresh():
     /// IsRunning drives app-list membership, IsRunningInput drives call
     /// passthrough (apps capturing input are left untapped; see AudioEngine).
-    private static let processListenerSelectors: [AudioObjectPropertySelector] = [
-        kAudioProcessPropertyIsRunning,
-        kAudioProcessPropertyIsRunningInput,
+    /// Output-scope Devices is the signal that playback started or stopped: on macOS 27.2
+    /// a process that is already running posts no IsRunning or IsRunningOutput change when
+    /// it starts output (measured with Firefox), but its output device list changes within
+    /// milliseconds. Without it a suspended tap resumed only on the 10 s periodic refresh.
+    nonisolated static let processListenerProperties: [(selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope)] = [
+        (kAudioProcessPropertyIsRunning, kAudioObjectPropertyScopeGlobal),
+        (kAudioProcessPropertyIsRunningInput, kAudioObjectPropertyScopeGlobal),
+        (kAudioProcessPropertyDevices, kAudioObjectPropertyScopeOutput),
     ]
+    nonisolated static let devicesFollowUpDelay: Duration = .milliseconds(150)
     private var periodicRefreshTask: Task<Void, Never>?
+    private var devicesRefreshTask: Task<Void, Never>?
+    private var devicesChangedAgain = false
 
     private var processListAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyProcessObjectList,
@@ -217,6 +225,9 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
 
         periodicRefreshTask?.cancel()
         periodicRefreshTask = nil
+        devicesRefreshTask?.cancel()
+        devicesRefreshTask = nil
+        devicesChangedAgain = false
 
         // Remove process list listener
         if let block = processListListenerBlock {
@@ -367,25 +378,30 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
     }
 
     private func addProcessListener(for objectID: AudioObjectID) {
-        var registered: [(selector: AudioObjectPropertySelector, block: AudioObjectPropertyListenerBlock)] = []
+        var registered: [(address: AudioObjectPropertyAddress, block: AudioObjectPropertyListenerBlock)] = []
 
-        for selector in Self.processListenerSelectors {
+        for (selector, scope) in Self.processListenerProperties {
             var address = AudioObjectPropertyAddress(
                 mSelector: selector,
-                mScope: kAudioObjectPropertyScopeGlobal,
+                mScope: scope,
                 mElement: kAudioObjectPropertyElementMain
             )
 
+            let isDevices = selector == kAudioProcessPropertyDevices
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 Task { @MainActor [weak self] in
-                    self?.refresh()
+                    if isDevices {
+                        self?.scheduleDevicesRefresh()
+                    } else {
+                        self?.refresh()
+                    }
                 }
             }
 
             let status = AudioObjectAddPropertyListenerBlock(objectID, &address, .main, block)
 
             if status == noErr {
-                registered.append((selector: selector, block: block))
+                registered.append((address: address, block: block))
             } else {
                 logger.warning("Failed to add \(selector) listener for \(objectID): \(status)")
             }
@@ -396,20 +412,39 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
         }
     }
 
+    /// Devices changes come in bursts (every process moves on a default-device switch), so
+    /// they are coalesced: one refresh now and one after `devicesFollowUpDelay`, which also
+    /// covers a Devices change that arrives before IsRunning reads true. A change during the
+    /// wait adds another delayed refresh, so every change gets one at least that long after
+    /// it. A refresh that finds nothing new fires no callback.
+    private func scheduleDevicesRefresh() {
+        guard devicesRefreshTask == nil else {
+            devicesChangedAgain = true
+            return
+        }
+        devicesRefreshTask = Task { @MainActor [weak self] in
+            self?.refresh()
+            var again = true
+            while again {
+                self?.devicesChangedAgain = false
+                try? await Task.sleep(for: Self.devicesFollowUpDelay)
+                guard !Task.isCancelled else { return }
+                self?.refresh()
+                again = self?.devicesChangedAgain ?? false
+            }
+            self?.devicesRefreshTask = nil
+        }
+    }
+
     private func removeProcessListener(for objectID: AudioObjectID) {
         guard let registered = processListenerBlocks.removeValue(forKey: objectID) else { return }
 
-        for (selector, block) in registered {
-            var address = AudioObjectPropertyAddress(
-                mSelector: selector,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-
+        for (registeredAddress, block) in registered {
+            var address = registeredAddress
             let status = AudioObjectRemovePropertyListenerBlock(objectID, &address, .main, block)
             // Tolerate kAudioHardwareBadObjectError (-66680): process object already destroyed
             if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
-                logger.warning("Failed to remove \(selector) listener for \(objectID): \(status)")
+                logger.warning("Failed to remove \(address.mSelector) listener for \(objectID): \(status)")
             }
         }
     }

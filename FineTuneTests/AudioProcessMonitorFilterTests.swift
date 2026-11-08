@@ -4,6 +4,7 @@
 // users (tapping them silences their session, #418), System Settings panes (#427) and
 // system daemons.
 
+import CoreAudio
 import Foundation
 import Testing
 @testable import FineTune
@@ -53,5 +54,20 @@ struct AudioProcessMonitorDaemonFilterTests {
         #expect(AudioProcessMonitor.isSystemDaemon(bundleID: "com.apple.systemsound.server", name: "x"))
         #expect(AudioProcessMonitor.isSystemDaemon(bundleID: nil, name: "systemsoundserverd"))
         #expect(AudioProcessMonitor.isSystemDaemon(bundleID: nil, name: "coreaudiod"))
+    }
+}
+
+@Suite("AudioProcessMonitor: playback start is noticed without the periodic refresh")
+struct AudioProcessMonitorListenerTests {
+
+    // On macOS 27.2 an already running process posts no IsRunning change when it starts
+    // output; only its output device list changes. Without this listener a suspended tap
+    // resumed on the 10 s safety refresh, so sounds started up to 10 s late.
+    @Test("Output-scope Devices is observed on every process")
+    func devicesOutputIsObserved() {
+        let properties = AudioProcessMonitor.processListenerProperties
+        #expect(properties.contains { $0.selector == kAudioProcessPropertyDevices && $0.scope == kAudioObjectPropertyScopeOutput })
+        #expect(properties.contains { $0.selector == kAudioProcessPropertyIsRunning })
+        #expect(properties.contains { $0.selector == kAudioProcessPropertyIsRunningInput })
     }
 }
