@@ -36,12 +36,13 @@ The fork started with one problem: on a TV with software volume, a video that st
 
 - **No full-volume blast when playback starts.** Audio that starts before FineTune processes it is held back instead of playing unprocessed.
 - **Your Mac can sleep while nothing plays.** Silent apps keep their tap, but it stops running after 10 seconds and starts again within milliseconds when the app plays.
+- **Short output dropouts are handled.** A TV that drops off HDMI for a moment no longer leaves apps or system sounds on the MacBook speakers.
 - **New helper processes are covered.** A new browser tab or a sound played from Terminal joins the app's existing tap.
 - **Safer on software-volume outputs.** No full volume after a display powers back on, and call passthrough stays off where an untapped call would play at full scale.
 - **Over 20 upstream pull requests merged**, among them AirPlay selection, Bluetooth fixes, output format changes and the HUD over full-screen apps.
 - **Tests for the audio lifecycle.** They run without touching your settings, permissions or the installed app.
 
-The full list with issue numbers is in [FORK.md](FORK.md).
+The full list with issue numbers is in [FORK.md](FORK.md), the changes per release in [CHANGELOG.md](CHANGELOG.md).
 
 ## Plans
 
@@ -125,6 +126,10 @@ This needs Xcode. It builds a Release, installs it as `/Applications/FineTune Fo
 - **[AutoEQ & Headphone Correction](guide/autoeq.md)** — Apply frequency correction from the [AutoEQ](https://github.com/jaakkopasanen/AutoEq) project, import [EqualizerAPO](https://sourceforge.net/projects/equalizerapo/) profiles, or browse [autoeq.app](https://www.autoeq.app/)
 - **[URL Schemes](guide/url-schemes.md)** — Automate FineTune from Terminal, [Shortcuts](https://support.apple.com/guide/shortcuts-mac), [Raycast](https://raycast.com), or scripts
 - **[Troubleshooting](guide/troubleshooting.md)** — Permission issues, missing apps, audio problems
+
+## Known issues
+
+- **Screen recordings with system audio contain the sound twice**, which makes it sound tinny or hollow. Recorders capture each app's audio before FineTune mutes it at the output, plus FineTune's processed copy. While recording, quit FineTune Fork or ignore the app you record (edit mode, eye icon). On a TV or monitor without its own volume control, an ignored app plays at full volume. Details in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 

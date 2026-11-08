@@ -2,17 +2,17 @@
 set -euo pipefail
 
 # Builds a universal Release of the fork and packs it into build/release/FineTune-Fork.dmg
-# for a GitHub release. Usage: ./scripts/package-fork.sh <version>, e.g. 1.9.0-fork.1
+# for a GitHub release. Usage: ./scripts/package-fork.sh [version]; the version defaults to
+# the VERSION file (YEAR.MONTH.N, e.g. 2026.11.0, see CHANGELOG.md).
 #
 # Signing: always ad hoc. A personal "Apple Development" certificate names its owner,
 # often by email address, and would publish that name with every download. The app is
 # not notarized either, so macOS asks the user to allow it once (see README.md).
 # Hardened runtime stays off for the same reason as in install-fork.sh.
 
-VERSION="${1:?usage: $0 <version>, e.g. 1.9.0-fork.1}"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+VERSION="${1:-$(tr -d '[:space:]' < "$PROJECT_DIR/VERSION")}"
 DERIVED_DIR="$PROJECT_DIR/build/release-derived"
 OUT_DIR="$PROJECT_DIR/build/release"
 APP_NAME="FineTune Fork"

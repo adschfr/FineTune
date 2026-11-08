@@ -35,6 +35,11 @@ FineTune, so a test run does not create taps, request permissions or touch the i
 - **New helper processes are covered** (#248, #373). When an app starts another audio process
   (a new browser tab, `afplay` in a terminal, Spotify video), the existing tap is updated in place.
 - **Promoted tap no longer stays silent after a device switch** (#461).
+- **Suspended taps resume within milliseconds.** On macOS 27.2 a running process posts no IsRunning
+  change when it starts output, so the monitor also listens to its output-scope Devices list.
+- **Short output dropouts no longer strand apps on the fallback.** Device-switch passes run one at a
+  time and read the routing per tap when they reach it.
+- **System sounds keep following the default across a dropout.**
 - **No full volume on a software-volume display after it powers back on** (#375).
 - **Other macOS users keep their sound** while FineTune runs in one session (#418).
 - **System Settings panes are not listed as apps** (#427).

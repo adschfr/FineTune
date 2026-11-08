@@ -18,6 +18,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/build"
 APP_NAME="FineTune Fork"
 DEST="/Applications/$APP_NAME.app"
+VERSION="$(tr -d '[:space:]' < "$PROJECT_DIR/VERSION")"
 
 # xcode-select may point at the Command Line Tools
 if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app ]; then
@@ -51,7 +52,7 @@ xcodebuild -project "$PROJECT_DIR/FineTune.xcodeproj" \
     -destination 'platform=macOS' \
     "${SIGNING[@]}" \
     ENABLE_HARDENED_RUNTIME=NO \
-    MARKETING_VERSION="1.9.0-fork" \
+    MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
     build > "$BUILD_DIR/install-fork.log" 2>&1 || {
         grep -E "error:" "$BUILD_DIR/install-fork.log" | head -20
@@ -72,4 +73,4 @@ ditto "$BUILD_DIR/Build/Products/Release/FineTune.app" "$DEST"
 
 echo "==> Launching..."
 open "$DEST"
-echo "Done: $APP_NAME 1.9.0-fork ($BUILD_NUMBER, $COMMIT)"
+echo "Done: $APP_NAME $VERSION ($BUILD_NUMBER, $COMMIT)"
