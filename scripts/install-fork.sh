@@ -52,6 +52,7 @@ xcodebuild -project "$PROJECT_DIR/FineTune.xcodeproj" \
     -destination 'platform=macOS' \
     "${SIGNING[@]}" \
     ENABLE_HARDENED_RUNTIME=NO \
+    CLANG_COVERAGE_MAPPING=NO ENABLE_CODE_COVERAGE=NO \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
     build > "$BUILD_DIR/install-fork.log" 2>&1 || {

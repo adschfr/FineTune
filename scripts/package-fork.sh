@@ -9,6 +9,11 @@ set -euo pipefail
 # often by email address, and would publish that name with every download. The app is
 # not notarized either, so macOS asks the user to allow it once (see README.md).
 # Hardened runtime stays off for the same reason as in install-fork.sh.
+#
+# Privacy: the scheme's test settings turn on code coverage for every build, which writes
+# the absolute source paths (and with them the local user name) into the binary, and an
+# unstripped binary carries its object file paths as well. Coverage is off and symbols are
+# stripped here, and the build fails if the app still contains the home path or user name.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -39,6 +44,8 @@ xcodebuild -project "$PROJECT_DIR/FineTune.xcodeproj" \
     -destination 'generic/platform=macOS' \
     CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
     ENABLE_HARDENED_RUNTIME=NO \
+    CLANG_COVERAGE_MAPPING=NO ENABLE_CODE_COVERAGE=NO \
+    DEPLOYMENT_POSTPROCESSING=YES STRIP_INSTALLED_PRODUCT=YES \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
     build > "$OUT_DIR.log" 2>&1 || {
@@ -51,6 +58,14 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 ditto "$DERIVED_DIR/Build/Products/Release/FineTune.app" "$STAGE/$APP_NAME.app"
 ln -s /Applications "$STAGE/Applications"
+
+echo "==> Checking for local paths and names..."
+LEAKS="$(LC_ALL=C grep -r -a -l -i -F -e "$HOME" -e "$(id -un)" -e "$(id -F)" "$STAGE/$APP_NAME.app" || true)"
+if [ -n "$LEAKS" ]; then
+    echo "These files contain the home path or the user name:" >&2
+    echo "${LEAKS//$STAGE\//}" >&2
+    exit 1
+fi
 
 echo "==> Checking the signature..."
 codesign --verify --deep --strict "$STAGE/$APP_NAME.app"
