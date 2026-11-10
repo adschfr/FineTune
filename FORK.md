@@ -53,6 +53,18 @@ FineTune, so a test run does not create taps, request permissions or touch the i
 - Call passthrough (#413) is not applied on outputs without hardware volume, where an untapped call
   would play at full scale.
 
+## Parked: catch-all tap
+
+FineTune taps each app on its own. Sound from anything without a tap (the first moment of a new app,
+ignored apps, a tap that failed) reaches an output without a volume control at full level. The catch-all
+was meant to close that gap with one extra tap per such output that holds back everything else.
+
+It reached about 7,000 lines of app code plus tests and ran only in tests, never in a release.
+Development was paused in November 2026: the remaining work was large, the benefit was limited to rare
+moments, and a tap that holds back other apps' audio can itself cause silence or doubled sound when
+something goes wrong. The code, its tests and the design notes are kept on the branch
+[`park/catch-all`](https://github.com/adschfr/FineTune/tree/park/catch-all).
+
 ## Upstream pull requests merged
 
 #409 prewarm/streaming detection, #339 AutoEQ for built-in audio, #344 DDC toggle, #347 and parts of

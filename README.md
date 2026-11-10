@@ -37,6 +37,7 @@ The fork started with one problem: on a TV with software volume, a video that st
 - **No full-volume blast when playback starts.** Audio that starts before FineTune processes it is held back instead of playing unprocessed.
 - **Your Mac can sleep while nothing plays.** Silent apps keep their tap, but it stops running after 10 seconds and starts again within milliseconds when the app plays.
 - **Short output dropouts are handled.** A TV that drops off HDMI for a moment no longer leaves apps or system sounds on the MacBook speakers.
+- **A switched-off screen gives up the sound.** A TV or monitor that is disabled in macOS while its cable stays plugged in counts as disconnected, so apps move to your next output and return when the screen is back.
 - **New helper processes are covered.** A new browser tab or a sound played from Terminal joins the app's existing tap.
 - **Safer on software-volume outputs.** No full volume after a display powers back on, and call passthrough stays off where an untapped call would play at full scale.
 - **Over 20 upstream pull requests merged**, among them AirPlay selection, Bluetooth fixes, output format changes and the HUD over full-screen apps.
@@ -47,6 +48,7 @@ The full list with issue numbers is in [FORK.md](FORK.md), the changes per relea
 ## Plans
 
 - **Own name and icon**, so the fork can no longer be mistaken for the original.
+- **Menu bar symbol.** Choose what it shows (speaker, microphone or both) and change the volume by scrolling on it.
 - **Keeping up with macOS.** The fork is developed and tested on macOS 27.2.
 - **Ideas:** mute FineTune's outputs while you dictate, for example with MacWhisper.
 

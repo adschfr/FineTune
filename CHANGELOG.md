@@ -15,7 +15,7 @@ FineTune Fork versions follow YEAR.MONTH.N: the year and month of the release, t
 
 ### Changed
 
-- The unfinished catch-all tap was removed from the code. It was never active in a release.
+- The unfinished catch-all tap was removed from the code and parked on a branch. It was never active in a release. [FORK.md](FORK.md#parked-catch-all-tap) says what it was for and why it is paused.
 
 ## 2026.11.0 (2026-11-08)
 
