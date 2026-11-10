@@ -46,8 +46,7 @@ The full list with issue numbers is in [FORK.md](FORK.md), the changes per relea
 
 ## Plans
 
-- **Catch-all for TVs and monitors** (in development, off by default). It puts every app on a software-volume output under FineTune's volume, including apps that have no tap of their own yet, so no sound reaches the output unprocessed.
-- **Own name and icon** once the catch-all ships, so the fork can no longer be mistaken for the original.
+- **Own name and icon**, so the fork can no longer be mistaken for the original.
 - **Keeping up with macOS.** The fork is developed and tested on macOS 27.2.
 - **Ideas:** mute FineTune's outputs while you dictate, for example with MacWhisper.
 
