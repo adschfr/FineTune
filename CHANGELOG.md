@@ -11,6 +11,7 @@ FineTune Fork versions follow YEAR.MONTH.N: the year and month of the release, t
 ### Fixed
 
 - **Paired Bluetooth headphones stay in the list after a restart.** macOS can forget what a disconnected device offers until it has connected once, and FineTune then left it out of **Paired**. FineTune now reads the device class that is stored with the pairing. Bluetooth speakers get a speaker icon instead of headphones.
+- The notes under **Headphones as output only** in Settings → Audio are laid out like the rest of the row, and the status line only shows while the option is on.
 
 ### Changed
 

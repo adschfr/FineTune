@@ -74,18 +74,10 @@ struct AudioTab: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
             }
-            Text(audioEngine.bluetoothProtectionStatus)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if let warning = audioEngine.bluetoothCallModeWarning {
-                Label(warning, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
-            Text("Call apps must also use the built-in mic. This guard never records audio and cannot stop an app from opening the Bluetooth mic, so it does not fully disable HFP/SCO. Turn it off to use FineTune's regular input-lock rules.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            BluetoothGuardNotes(
+                status: settings.appSettings.bluetoothInputProtection ? audioEngine.bluetoothProtectionStatus : nil,
+                warning: audioEngine.bluetoothCallModeWarning
+            )
         }
     }
 
@@ -219,5 +211,34 @@ struct AudioTab: View {
 
     private func updateSortedDevices() {
         sortedOutputDevices = audioEngine.prioritySortedOutputDevices
+    }
+}
+
+/// Status and limits of "Headphones as output only", shown under its row with the same inset
+/// and type as the row's description. `status` is nil while the guard is off, when it has
+/// nothing to report.
+struct BluetoothGuardNotes: View {
+    let status: String?
+    let warning: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let status {
+                Label(status, systemImage: "info.circle")
+                    .foregroundStyle(.secondary)
+            }
+            if let warning {
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+            Text("Call apps must also use the built-in mic. This guard never records audio and cannot stop an app from opening the Bluetooth mic, so it does not fully disable HFP/SCO. Turn it off to use FineTune's regular input-lock rules.")
+                .foregroundStyle(.secondary)
+        }
+        .font(.system(size: 11))
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, -4)
+        .padding(.bottom, 12)
     }
 }
