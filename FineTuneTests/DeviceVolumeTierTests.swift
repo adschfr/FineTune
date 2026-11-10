@@ -138,6 +138,10 @@ final class MockAudioDeviceMonitor: AudioDeviceProviding {
     func inputDevice(for uid: String) -> AudioDevice? { devicesByUID[uid] }
     func device(for id: AudioDeviceID) -> AudioDevice? { devicesByID[id] }
 
+    /// Display outputs that are left out of `outputDevices` because their screen is off.
+    var absentDisplayOutputUIDs: Set<String> = []
+    func isOutputOfAbsentDisplay(_ uid: String) -> Bool { absentDisplayOutputUIDs.contains(uid) }
+
     func start() {}
     func stop() {}
 }
@@ -190,8 +194,14 @@ final class MockDeviceVolumeProviding: DeviceVolumeProviding {
         self.deviceMonitor = deviceMonitor
     }
 
+    /// Records every default the engine sets.
+    private(set) var setDefaultDeviceCalls: [AudioDeviceID] = []
+
     @discardableResult
-    func setDefaultDevice(_ deviceID: AudioDeviceID) -> Bool { true }
+    func setDefaultDevice(_ deviceID: AudioDeviceID) -> Bool {
+        setDefaultDeviceCalls.append(deviceID)
+        return true
+    }
 
     @discardableResult
     func setDefaultInputDevice(_ deviceID: AudioDeviceID) -> Bool { true }

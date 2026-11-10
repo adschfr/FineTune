@@ -456,6 +456,9 @@ final class AudioEngine {
             realMonitor.inputPriorityOrder = { [weak self] in
                 self?.settingsManager.inputDevicePriorityOrder ?? []
             }
+            realMonitor.hidesOutputsOfAbsentDisplays = { [weak self] in
+                self?.settingsManager.appSettings.disconnectOutputsOfAbsentDisplays ?? false
+            }
             realMonitor.onOutputDeviceFormatChanging = { [weak self] uid in
                 self?.prepareTapsForOutputFormatChange(uid: uid)
             }
@@ -1020,6 +1023,12 @@ final class AudioEngine {
         }
     }
     #endif
+
+    /// Applies a change of "Disconnect Outputs of Switched-Off Displays": the monitor re-reads
+    /// the device list, so affected outputs leave or return through the usual callbacks.
+    func displayOutputSettingChanged() {
+        (deviceMonitor as? AudioDeviceMonitor)?.displayOutputSettingChanged()
+    }
 
     /// Apply AutoEQ profile to all taps currently routed to the given device.
     private func applyAutoEQToTaps(for deviceUID: String) {
@@ -2063,6 +2072,15 @@ final class AudioEngine {
 
         // Check if the new default device is known and alive.
         guard let newDevice = deviceMonitor.device(for: newDefaultUID) else {
+            if deviceMonitor.isOutputOfAbsentDisplay(newDefaultUID) {
+                // The output of a switched-off display became the default, e.g. macOS picked
+                // it when its cable was plugged in. It counts as disconnected, so go back to
+                // the priority choice instead of leaving the default on a device FineTune
+                // does not route to.
+                logger.notice("Default changed to the output of a switched-off display, restoring the priority choice")
+                reEvaluateOutputDefault()
+                return
+            }
             // Device not yet in monitor's list (e.g., BT device default-changed before device-list
             // notification). Defer — the upcoming handleDeviceConnected will enforce priority.
             logger.debug("Default changed to unknown device \(newDefaultUID), deferring to device list refresh")

@@ -87,6 +87,32 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
     /// HAL proxy objects are mid-transition. 50ms lets the HAL stabilize before we enumerate.
     private var deviceListDebounceTask: Task<Void, Never>?
 
+    // MARK: - Outputs of switched-off displays
+
+    /// Whether the output of a display that macOS no longer lists is left out of the device
+    /// list, so it counts as disconnected. Off for a bare monitor; AudioEngine wires the setting.
+    @ObservationIgnored var hidesOutputsOfAbsentDisplays: () -> Bool = { false }
+
+    /// Display outputs that are in Core Audio but left out of `outputDevices` right now.
+    @ObservationIgnored private(set) var absentDisplayOutputUIDs: Set<String> = []
+
+    @ObservationIgnored private var displayGate = DisplayOutputGate(
+        seenOnline: Set(UserDefaults.standard.stringArray(forKey: AudioDeviceMonitor.seenDisplayOutputsKey) ?? [])
+    )
+    @ObservationIgnored private var displayRecheckTask: Task<Void, Never>?
+    @ObservationIgnored private var displayObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
+    @ObservationIgnored private var screensAsleep = false
+    /// Uptime before which screens are not judged, because they come back one by one after a wake.
+    @ObservationIgnored private var displayJudgementResumesAt: TimeInterval = 0
+
+    nonisolated static let seenDisplayOutputsKey = "displayOutputsSeenOnline"
+    nonisolated static let displayOutputTransports: Set<TransportType> = [.hdmi, .displayPort]
+    /// A TV can take several seconds to renegotiate its link after a wake; judging earlier
+    /// would move audio off it for nothing.
+    nonisolated static let displayWakeGrace: TimeInterval = 10
+    /// How often the screen list is checked while an output is hidden.
+    nonisolated static let hiddenOutputPollInterval: TimeInterval = 2
+
     /// True when the output's nominal rate changed to a different valid rate, so each affected
     /// tap's aggregate must be recreated to match. Pure, for testability. `newRate <= 0` is a transient/failed read
     /// (never act, and the caller must not store it as the baseline or the next real read looks like
@@ -122,6 +148,8 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
         if status != noErr {
             logger.error("Failed to add device list listener: \(status)")
         }
+
+        startObservingDisplays()
     }
 
     func stop() {
@@ -129,6 +157,12 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
 
         deviceListDebounceTask?.cancel()
         deviceListDebounceTask = nil
+        displayRecheckTask?.cancel()
+        displayRecheckTask = nil
+        for observer in displayObservers {
+            observer.center.removeObserver(observer.token)
+        }
+        displayObservers.removeAll()
 
         if let block = deviceListListenerBlock {
             AudioObjectRemovePropertyListenerBlock(.system, &deviceListAddress, .main, block)
@@ -223,6 +257,12 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
                 }
             }
 
+            // The output of a switched-off display counts as disconnected
+            let absentUIDs = absentDisplayOutputs(among: outputDeviceList)
+            if !absentUIDs.isEmpty {
+                outputDeviceList.removeAll { absentUIDs.contains($0.uid) }
+            }
+
             // Update output devices
             outputDevices = outputDeviceList.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             knownDeviceUIDs = Set(outputDeviceList.map(\.uid))
@@ -243,6 +283,128 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
         } catch {
             logger.error("Failed to refresh device list: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Outputs of switched-off displays
+
+    func isOutputOfAbsentDisplay(_ uid: String) -> Bool {
+        absentDisplayOutputUIDs.contains(uid)
+    }
+
+    /// Re-reads the device list after the setting changed, so hidden outputs return (or
+    /// leave) through the normal connect and disconnect callbacks.
+    func displayOutputSettingChanged() {
+        handleDeviceListChanged()
+    }
+
+    /// Which of the given outputs to leave out because macOS no longer lists their screen.
+    /// Schedules a re-read when a screen is missing but its delay has not run out yet.
+    private func absentDisplayOutputs(among devices: [AudioDevice]) -> Set<String> {
+        displayRecheckTask?.cancel()
+        displayRecheckTask = nil
+
+        guard hidesOutputsOfAbsentDisplays() else {
+            displayGate.reset()
+            absentDisplayOutputUIDs = []
+            return []
+        }
+
+        let candidates = devices.filter { Self.displayOutputTransports.contains($0.id.readTransportType()) }
+        let now = ProcessInfo.processInfo.systemUptime
+        let wakeGraceRunning = !screensAsleep && now < displayJudgementResumesAt
+
+        let seenBefore = displayGate.seenOnline
+        let hiddenBefore = displayGate.hidden
+        let nextCheck = displayGate.update(
+            candidateUIDs: candidates.map(\.uid),
+            online: DisplayOutputGate.readOnlineDisplays(),
+            mayHide: !screensAsleep && !wakeGraceRunning,
+            now: now
+        )
+
+        if displayGate.seenOnline != seenBefore {
+            UserDefaults.standard.set(displayGate.seenOnline.sorted(), forKey: Self.seenDisplayOutputsKey)
+        }
+        for device in candidates where displayGate.hidden.contains(device.uid) != hiddenBefore.contains(device.uid) {
+            if displayGate.hidden.contains(device.uid) {
+                logger.notice("Display of \(device.name) is off, treating its output as disconnected")
+            } else {
+                logger.notice("Display of \(device.name) is back, output available again")
+            }
+        }
+
+        absentDisplayOutputUIDs = displayGate.hidden
+        // Re-read when a delay runs out or, after a wake, once the screens have settled
+        scheduleDisplayRecheck(due: nextCheck ?? (wakeGraceRunning ? displayJudgementResumesAt : nil))
+        return displayGate.hidden
+    }
+
+    /// Re-reads the device list once `due` (uptime) is reached. While an output is hidden it
+    /// also polls the screen list, which is cheap, and re-reads as soon as that screen is
+    /// online again, in case no notification reaches us. Ends when neither applies.
+    private func scheduleDisplayRecheck(due: TimeInterval?) {
+        displayRecheckTask?.cancel()
+        displayRecheckTask = nil
+        guard due != nil || !absentDisplayOutputUIDs.isEmpty else { return }
+
+        displayRecheckTask = Task { @MainActor [weak self] in
+            while true {
+                let untilDue = due.map { max(0, $0 - ProcessInfo.processInfo.systemUptime) + 0.1 }
+                try? await Task.sleep(for: .seconds(min(Self.hiddenOutputPollInterval, untilDue ?? .infinity)))
+                guard !Task.isCancelled, let self else { return }
+                let dueReached = due.map { ProcessInfo.processInfo.systemUptime >= $0 } ?? false
+                if dueReached || self.hiddenScreenIsBack() {
+                    self.displayRecheckTask = nil
+                    self.handleDeviceListChanged()
+                    return
+                }
+            }
+        }
+    }
+
+    private func hiddenScreenIsBack() -> Bool {
+        guard !absentDisplayOutputUIDs.isEmpty,
+              let online = DisplayOutputGate.readOnlineDisplays() else { return false }
+        return absentDisplayOutputUIDs.contains { uid in
+            guard let key = DisplayOutputGate.displayKey(fromUID: uid) else { return true }
+            return online.contains { DisplayOutputGate.matches($0, key: key, uid: uid) }
+        }
+    }
+
+    /// Screens come and go without a Core Audio notification, so the device list is re-read
+    /// on display changes too. While the screens sleep, and shortly after, nothing is hidden.
+    private func startObservingDisplays() {
+        guard displayObservers.isEmpty else { return }
+        let app = NotificationCenter.default
+        let workspace = NSWorkspace.shared.notificationCenter
+
+        let changed = app.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.hidesOutputsOfAbsentDisplays() else { return }
+                self.scheduleDeviceListRefresh()
+            }
+        }
+        let slept = workspace.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.screensAsleep = true
+            }
+        }
+        let woke = workspace.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.screensAsleep = false
+                self.displayJudgementResumesAt = ProcessInfo.processInfo.systemUptime + Self.displayWakeGrace
+                guard self.hidesOutputsOfAbsentDisplays() else { return }
+                self.scheduleDisplayRecheck(due: self.displayJudgementResumesAt)
+            }
+        }
+        displayObservers = [(app, changed), (workspace, slept), (workspace, woke)]
     }
 
     /// Installs/removes kAudioDevicePropertyDataSource listeners on built-in output devices

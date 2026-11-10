@@ -2,6 +2,16 @@
 
 FineTune Fork versions follow YEAR.MONTH.N: the year and month of the release, then a running number within that month starting at 0. The current version is in [VERSION](VERSION). The first fork release was 1.9.0-fork.1, based on FineTune 1.9.0 by Ronit Singh.
 
+## Unreleased
+
+### Added
+
+- **A TV or monitor whose screen is switched off no longer keeps the sound.** When a display is disabled in macOS while its cable stays plugged in, macOS still offers it as an audio output and keeps it as the default. FineTune now treats that output as disconnected after 3 seconds: apps move to the next device in your priority list, and they move back when the screen returns. Nothing is hidden while the screens sleep. Turn it off under Settings → Audio → **Disconnect Outputs of Switched-Off Displays** if you use a display for sound only. A display that is merely set to another input is still seen as on.
+
+### Changed
+
+- The unfinished catch-all tap was removed from the code. It was never active in a release.
+
 ## 2026.11.0 (2026-11-08)
 
 ### Fixed

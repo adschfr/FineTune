@@ -55,6 +55,9 @@ struct AudioTab: View {
         .onChange(of: settings.appSettings.callPassthroughEnabled) { _, _ in
             audioEngine.reconcileCallPassthrough()
         }
+        .onChange(of: settings.appSettings.disconnectOutputsOfAbsentDisplays) { _, _ in
+            audioEngine.displayOutputSettingChanged()
+        }
     }
 
     private var bluetoothProtectionSection: some View {
@@ -155,6 +158,16 @@ struct AudioTab: View {
                 description: "Make a newly connected output device the default"
             ) {
                 Toggle("", isOn: $settings.appSettings.autoSwitchToNewOutputDevices)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "Disconnect Outputs of Switched-Off Displays",
+                description: "Treat a TV or monitor as disconnected while its screen is disabled in macOS, even if the cable stays plugged in"
+            ) {
+                Toggle("", isOn: $settings.appSettings.disconnectOutputsOfAbsentDisplays)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()

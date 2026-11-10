@@ -14,6 +14,15 @@ protocol AudioDeviceProviding: AnyObject {
     func device(for id: AudioDeviceID) -> AudioDevice?
     func inputDevice(for uid: String) -> AudioDevice?
 
+    /// True for a display output that is in Core Audio but left out of `outputDevices`
+    /// because macOS no longer lists its screen.
+    func isOutputOfAbsentDisplay(_ uid: String) -> Bool
+
     func start()
     func stop()
+}
+
+extension AudioDeviceProviding {
+    // Default for providers that do not hide display outputs
+    func isOutputOfAbsentDisplay(_ uid: String) -> Bool { false }
 }

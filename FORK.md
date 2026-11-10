@@ -39,6 +39,10 @@ FineTune, so a test run does not create taps, request permissions or touch the i
   change when it starts output, so the monitor also listens to its output-scope Devices list.
 - **Short output dropouts no longer strand apps on the fallback.** Device-switch passes run one at a
   time and read the routing per tap when they reach it.
+- **An output whose display is switched off counts as disconnected.** A display disabled in macOS keeps
+  its audio device in Core Audio and stays the default output. FineTune matches the audio device to the
+  online screens and falls back along the priority list until the screen returns. Fails open: unknown UID
+  formats, screens never seen online, sleeping screens and short gaps change nothing.
 - **System sounds keep following the default across a dropout.**
 - **No full volume on a software-volume display after it powers back on** (#375).
 - **Other macOS users keep their sound** while FineTune runs in one session (#418).

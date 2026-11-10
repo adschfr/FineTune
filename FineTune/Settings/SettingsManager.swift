@@ -36,6 +36,9 @@ nonisolated struct AppSettings: Codable, Equatable {
 
     // Output Device Auto-Switch
     var autoSwitchToNewOutputDevices: Bool = true  // Make a newly-seen output device the default automatically
+    // Treat the output of a TV or monitor as disconnected while macOS does not list its
+    // screen (display disabled in software, cable still plugged in)
+    var disconnectOutputsOfAbsentDisplays: Bool = true
 
     // Notifications
     var showDeviceDisconnectAlerts: Bool = true
@@ -89,6 +92,7 @@ nonisolated struct AppSettings: Codable, Equatable {
         bluetoothInputProtection = try c.decodeIfPresent(Bool.self, forKey: .bluetoothInputProtection) ?? false
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
         autoSwitchToNewOutputDevices = try c.decodeIfPresent(Bool.self, forKey: .autoSwitchToNewOutputDevices) ?? true
+        disconnectOutputsOfAbsentDisplays = try c.decodeIfPresent(Bool.self, forKey: .disconnectOutputsOfAbsentDisplays) ?? true
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
