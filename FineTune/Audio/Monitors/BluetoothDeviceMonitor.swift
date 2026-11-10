@@ -212,7 +212,7 @@ final class BluetoothDeviceMonitor {
     // MARK: - Background IOBluetooth Work
 
     /// Sendable snapshot of a paired device — transfers safely across actor boundaries.
-    private struct RawPairedDevice: Sendable {
+    nonisolated struct RawPairedDevice: Sendable, Equatable {
         let mac: String
         let name: String
         let iconName: String
@@ -226,7 +226,7 @@ final class BluetoothDeviceMonitor {
             return []
         }
 
-        var result: [RawPairedDevice] = []
+        var found: [RawPairedDevice] = []
 
         for device in all {
             guard !device.isConnected() else { continue }
@@ -235,28 +235,70 @@ final class BluetoothDeviceMonitor {
             guard !mac.isEmpty else { continue }
             guard !connectingIDs.contains(mac) else { continue }
 
-            let hasA2DP = device.getServiceRecord(for: a2dpSinkUUID) != nil
-            let hasHFP = device.getServiceRecord(for: hfpUUID) != nil
-            guard hasA2DP || hasHFP else { continue }
+            // The Class of Device is stored with the pairing, so it is there for a
+            // disconnected device and costs no lookup. The cached SDP records can be missing
+            // after a restart, which used to drop headphones from the list until they had
+            // connected once. Ask for the records only when the class does not already say
+            // audio output, e.g. for a device that reports no class.
+            let minor = UInt32(device.deviceClassMinor)
+            let isOutputByClass = isAudioOutputClass(major: UInt32(device.deviceClassMajor), minor: minor)
+            guard isOutputByClass
+                || device.getServiceRecord(for: a2dpSinkUUID) != nil
+                || device.getServiceRecord(for: hfpUUID) != nil else { continue }
 
             let name = device.name ?? mac
-            result.append(RawPairedDevice(mac: mac, name: name, iconName: suggestedIconName(for: name)))
+            found.append(RawPairedDevice(
+                mac: mac,
+                name: name,
+                iconName: suggestedIconName(for: name, audioMinorClass: isOutputByClass ? minor : nil)
+            ))
         }
 
-        result.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        return result
+        return orderedUnique(found)
     }
 
-    /// Pure function — safe to call from any thread.
-    private nonisolated static func suggestedIconName(for name: String) -> String {
+    /// True when the Class of Device names audio hardware that can play sound: major class
+    /// Audio/Video, except the minor classes without a speaker.
+    nonisolated static func isAudioOutputClass(major: UInt32, minor: UInt32) -> Bool {
+        major == audioVideoMajorClass && !audioMinorClassesWithoutSpeaker.contains(minor)
+    }
+
+    /// One entry per address, sorted by name and then by address, so two devices with the
+    /// same name keep their order from one refresh to the next.
+    nonisolated static func orderedUnique(_ devices: [RawPairedDevice]) -> [RawPairedDevice] {
+        var seen = Set<String>()
+        return devices
+            .filter { seen.insert($0.mac.uppercased()).inserted }
+            .sorted { a, b in
+                switch a.name.localizedCaseInsensitiveCompare(b.name) {
+                case .orderedAscending: true
+                case .orderedDescending: false
+                case .orderedSame: a.mac.uppercased() < b.mac.uppercased()
+                }
+            }
+    }
+
+    /// Pure function — safe to call from any thread. Known product names win; otherwise the
+    /// audio minor class, when known, tells speakers from headphones.
+    nonisolated static func suggestedIconName(for name: String, audioMinorClass: UInt32? = nil) -> String {
         if name.contains("AirPods Pro") { return "airpodspro" }
         if name.contains("AirPods Max") { return "airpodsmax" }
         if name.contains("AirPods") { return "airpods.gen3" }
         if name.contains("HomePod mini") { return "homepodmini" }
         if name.contains("HomePod") { return "homepod" }
         if name.contains("Beats") { return "beats.headphones" }
-        return "headphones"
+        switch audioMinorClass {
+        case 0x05, 0x07, 0x0A: return "hifispeaker"   // loudspeaker, portable audio, HiFi
+        case 0x08: return "car"                        // car audio
+        case 0x0F: return "tv"                         // video display and loudspeaker
+        default: return "headphones"
+        }
     }
+
+    // Bluetooth Assigned Numbers, Class of Device
+    private nonisolated static let audioVideoMajorClass: UInt32 = 0x04
+    /// Microphone, VCR, video camera, camcorder, video monitor
+    private nonisolated static let audioMinorClassesWithoutSpeaker: Set<UInt32> = [0x04, 0x0B, 0x0C, 0x0D, 0x0E]
 
     // MARK: - Private Helpers
 

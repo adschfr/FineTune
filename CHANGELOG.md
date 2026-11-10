@@ -8,6 +8,10 @@ FineTune Fork versions follow YEAR.MONTH.N: the year and month of the release, t
 
 - **A TV or monitor whose screen is switched off no longer keeps the sound.** When a display is disabled in macOS while its cable stays plugged in, macOS still offers it as an audio output and keeps it as the default. FineTune now treats that output as disconnected after 3 seconds: apps move to the next device in your priority list, and they move back when the screen returns. Nothing is hidden while the screens sleep. Turn it off under Settings → Audio → **Disconnect Outputs of Switched-Off Displays** if you use a display for sound only. A display that is merely set to another input is still seen as on.
 
+### Fixed
+
+- **Paired Bluetooth headphones stay in the list after a restart.** macOS can forget what a disconnected device offers until it has connected once, and FineTune then left it out of **Paired**. FineTune now reads the device class that is stored with the pairing. Bluetooth speakers get a speaker icon instead of headphones.
+
 ### Changed
 
 - The unfinished catch-all tap was removed from the code. It was never active in a release.

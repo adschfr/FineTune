@@ -43,6 +43,9 @@ FineTune, so a test run does not create taps, request permissions or touch the i
   its audio device in Core Audio and stays the default output. FineTune matches the audio device to the
   online screens and falls back along the priority list until the screen returns. Fails open: unknown UID
   formats, screens never seen online, sleeping screens and short gaps change nothing.
+- **Paired Bluetooth outputs stay listed when their cached service records are missing**, as after a
+  restart. The Class of Device decides first, without a lookup; the records are only asked for a device
+  whose class does not say audio output. The problem was found in the 2026-11-04 follow-up to #438.
 - **System sounds keep following the default across a dropout.**
 - **No full volume on a software-volume display after it powers back on** (#375).
 - **Other macOS users keep their sound** while FineTune runs in one session (#418).
