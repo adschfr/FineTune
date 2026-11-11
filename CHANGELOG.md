@@ -2,7 +2,7 @@
 
 FineTune Fork versions follow YEAR.MONTH.N: the year and month of the release, then a running number within that month starting at 0. The current version is in [VERSION](VERSION). The first fork release was 1.9.0-fork.1, based on FineTune 1.9.0 by Ronit Singh.
 
-## Unreleased
+## 2026.11.1 (2026-11-11)
 
 ### Added
 
