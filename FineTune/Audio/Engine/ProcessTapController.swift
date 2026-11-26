@@ -778,9 +778,6 @@ final class ProcessTapController: ProcessTapControlling {
         precondition(!newDeviceUIDs.isEmpty, "Must have at least one target device")
         self.preferredTapSourceDeviceUID = preferredTapSourceDeviceUID
 
-        // Crossfade and destructive switch both expect a running primary IO proc.
-        if newDeviceUIDs != currentDeviceUIDs { try resume() }
-
         guard activated else {
             targetDeviceUIDs = newDeviceUIDs
             return
@@ -791,17 +788,40 @@ final class ProcessTapController: ProcessTapControlling {
         let startTime = CFAbsoluteTimeGetCurrent()
         logger.notice("[UPDATE] Switching \(self.app.name) to \(newDeviceUIDs, privacy: .public)\(sourceDeviceDead ? " (source dead)" : "")")
 
+        if isSuspended {
+            // The app is silent and its IO proc is stopped. Rebuild on the new device
+            // without calling resume() on the old device or AudioDeviceStart on the new
+            // one — resuming a suspended Bluetooth tap fires BluetoothHALPlugIn_StartIO
+            // and makes macOS Smart Routing reclaim AirPods from another device.
+            try performDeviceSwitch(to: newDeviceUIDs, startIO: false)
+            if let profile = autoEQProfile {
+                autoEQProcessor?.updateProfile(profile)
+            }
+            let endTime = CFAbsoluteTimeGetCurrent()
+            logger.notice("[UPDATE] === END (suspended) === Total time: \((endTime - startTime) * 1000)ms")
+            return
+        }
+
         // For now, crossfade uses the first (primary) device
         // All devices in the aggregate will be included
         let primaryDeviceUID = newDeviceUIDs[0]
 
-        if sourceDeviceDead {
-            // Source device is disconnected — no audio to crossfade from.
-            // Go straight to destructive switch with shortened settle time.
+        // When leaving a Bluetooth output (e.g. AirPods yielding to another Apple/Android
+        // device), stop the old BT aggregate immediately instead of holding it running across
+        // a multi-second dual-tap crossfade — keeping active IO on a yielding BT device causes
+        // macOS Smart Routing to reclaim ownership back to the Mac.
+        let isBluetoothSource = currentDeviceUIDs.first.flatMap { uid in
+            deviceMonitor?.device(for: uid)?.id.readTransportType()
+        }.map { $0 == .bluetooth || $0 == .bluetoothLE } ?? false
+
+        if sourceDeviceDead || isBluetoothSource {
+            if isBluetoothSource, primaryResources.aggregateDeviceID.isValid, let procID = primaryResources.deviceProcID {
+                AudioDeviceStop(primaryResources.aggregateDeviceID, procID)
+            }
             guard primaryResources.tapDescription != nil else {
                 throw CrossfadeError.noTapDescription
             }
-            try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs, sourceAlreadySilent: true)
+            try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs, sourceAlreadySilent: true, autoEQProfile: autoEQProfile)
         } else {
             crossfadeTask?.cancel()
             crossfadeTask = Task {
@@ -837,7 +857,12 @@ final class ProcessTapController: ProcessTapControlling {
         self.preferredTapSourceDeviceUID = preferredDeviceUID
         guard activated, let primaryUID = currentDeviceUIDs.first else { return }
         guard oldPreferred != preferredDeviceUID else { return }
-        try resume()
+
+        if isSuspended {
+            try performDeviceSwitch(to: currentDeviceUIDs, startIO: false)
+            logger.info("[REFRESH] Rebuilt suspended tap source for \(self.app.name) (kept suspended)")
+            return
+        }
 
         let allUIDs = currentDeviceUIDs
         logger.info("[REFRESH] Tap source changing for \(self.app.name): \(oldPreferred ?? "mixdown") → \(preferredDeviceUID ?? "mixdown")")
@@ -1327,7 +1352,7 @@ final class ProcessTapController: ProcessTapControlling {
         logger.info("[SWITCH-DESTROY] Complete")
     }
 
-    private func performDeviceSwitch(to outputUIDs: [String]) throws {
+    private func performDeviceSwitch(to outputUIDs: [String], startIO: Bool = true) throws {
         precondition(!outputUIDs.isEmpty, "Must have at least one output device")
 
         var newResources = TapResources()
@@ -1388,10 +1413,12 @@ final class ProcessTapController: ProcessTapControlling {
 
         disableHardwareInputStreams(aggregateID: newResources.aggregateDeviceID, procID: newResources.deviceProcID)
 
-        err = AudioDeviceStart(newResources.aggregateDeviceID, newResources.deviceProcID)
-        guard err == noErr else {
-            newResources.destroy()
-            throw CrossfadeError.tapCreationFailed(err)
+        if startIO {
+            err = AudioDeviceStart(newResources.aggregateDeviceID, newResources.deviceProcID)
+            guard err == noErr else {
+                newResources.destroy()
+                throw CrossfadeError.tapCreationFailed(err)
+            }
         }
 
         // Destroy old resources, adopt new

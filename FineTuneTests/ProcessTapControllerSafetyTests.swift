@@ -50,6 +50,15 @@ struct ProcessTapDescriptionTests {
         #expect(!source.contains("= .unmuted"))
     }
 
+    @Test("updateDevices and refreshTapSource rebuild suspended taps without calling resume()")
+    func suspendedDeviceSwitchSkipsResume() throws {
+        let source = try String(contentsOf: Self.controllerSourceURL, encoding: .utf8)
+
+        #expect(source.contains("performDeviceSwitch(to: newDeviceUIDs, startIO: false)"))
+        #expect(source.contains("performDeviceSwitch(to: currentDeviceUIDs, startIO: false)"))
+        #expect(!source.contains("if newDeviceUIDs != currentDeviceUIDs { try resume() }"))
+    }
+
     private static var controllerSourceURL: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

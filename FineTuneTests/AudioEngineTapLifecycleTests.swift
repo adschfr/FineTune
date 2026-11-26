@@ -82,6 +82,7 @@ private func makeFixture(
         processMonitor: processMonitor,
         deviceVolumeMonitor: deviceVolume,
         tapFactory: { app, uids, _ in try taps.make(app: app, deviceUIDs: uids) },
+        isAlive: { _ in true },
         isProcessRunning: { running.ids.contains($0) },
         currentDate: { clock.now },
         staleCleanupDebounce: staleCleanupDebounce,
@@ -361,6 +362,52 @@ struct AudioEngineTapLifecycleTests {
         fix.running.ids.insert(helperProcess)
         fix.publish([withHelper])
         #expect(tap.resumeCount == 1)
+    }
+
+    @Test("A suspended tap switched by a default-device change stays suspended until playback")
+    func suspendedTapStaysSuspendedOnDefaultDeviceChange() async throws {
+        let fix = makeFixture()
+        let app = makePlayer()
+        let tap = try startPlaying(fix, app)
+        stayIdle(fix, app, for: 10)
+        #expect(tap.isSuspended)
+        #expect(tap.resumeCount == 0)
+
+        // Default output moves from TV to Speakers (e.g. AirPods yielded to another device)
+        fix.deviceVolume.defaultDeviceID = AudioDeviceID(43)
+        fix.deviceVolume.defaultDeviceUID = fix.speakersUID
+        fix.deviceVolume.onDefaultDeviceChanged?(fix.speakersUID)
+
+        #expect(await waitUntil { tap.currentDeviceUIDs == [fix.speakersUID] })
+        #expect(tap.isSuspended)
+        #expect(tap.resumeCount == 0)
+
+        // Once the app actually plays again, the tap resumes on the new output
+        fix.running.ids.insert(mainProcess)
+        fix.publish([app])
+        #expect(!tap.isSuspended)
+        #expect(tap.resumeCount == 1)
+    }
+
+    @Test("A recently silenced tap suspends immediately on default-device change instead of crossfading")
+    func recentlySilencedTapSuspendsOnDefaultDeviceChange() async throws {
+        let fix = makeFixture()
+        let app = makePlayer()
+        let tap = try startPlaying(fix, app)
+
+        // App paused < 10 s ago (e.g. macOS paused it when another device took AirPods),
+        // so the normal 10 s idle timer has not suspended it yet.
+        stayIdle(fix, app, for: 2)
+        #expect(!tap.isSuspended)
+
+        fix.deviceVolume.defaultDeviceID = AudioDeviceID(43)
+        fix.deviceVolume.defaultDeviceUID = fix.speakersUID
+        fix.deviceVolume.onDefaultDeviceChanged?(fix.speakersUID)
+
+        #expect(await waitUntil { tap.currentDeviceUIDs == [fix.speakersUID] })
+        #expect(tap.isSuspended)
+        #expect(tap.suspendCount == 1)
+        #expect(tap.resumeCount == 0)
     }
 
     @Test("A saved app volume and the TV volume both apply when playback starts")
