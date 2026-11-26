@@ -389,6 +389,27 @@ struct AudioEngineTapLifecycleTests {
         #expect(tap.resumeCount == 1)
     }
 
+    @Test("A recently silenced tap suspends immediately on default-device change instead of crossfading")
+    func recentlySilencedTapSuspendsOnDefaultDeviceChange() async throws {
+        let fix = makeFixture()
+        let app = makePlayer()
+        let tap = try startPlaying(fix, app)
+
+        // App paused < 10 s ago (e.g. macOS paused it when another device took AirPods),
+        // so the normal 10 s idle timer has not suspended it yet.
+        stayIdle(fix, app, for: 2)
+        #expect(!tap.isSuspended)
+
+        fix.deviceVolume.defaultDeviceID = AudioDeviceID(43)
+        fix.deviceVolume.defaultDeviceUID = fix.speakersUID
+        fix.deviceVolume.onDefaultDeviceChanged?(fix.speakersUID)
+
+        #expect(await waitUntil { tap.currentDeviceUIDs == [fix.speakersUID] })
+        #expect(tap.isSuspended)
+        #expect(tap.suspendCount == 1)
+        #expect(tap.resumeCount == 0)
+    }
+
     @Test("A saved app volume and the TV volume both apply when playback starts")
     func startupAppliesSavedVolumeAndTVGain() throws {
         let fix = makeFixture()

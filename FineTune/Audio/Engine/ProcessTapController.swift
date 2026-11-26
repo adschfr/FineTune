@@ -806,13 +806,22 @@ final class ProcessTapController: ProcessTapControlling {
         // All devices in the aggregate will be included
         let primaryDeviceUID = newDeviceUIDs[0]
 
-        if sourceDeviceDead {
-            // Source device is disconnected — no audio to crossfade from.
-            // Go straight to destructive switch with shortened settle time.
+        // When leaving a Bluetooth output (e.g. AirPods yielding to another Apple/Android
+        // device), stop the old BT aggregate immediately instead of holding it running across
+        // a multi-second dual-tap crossfade — keeping active IO on a yielding BT device causes
+        // macOS Smart Routing to reclaim ownership back to the Mac.
+        let isBluetoothSource = currentDeviceUIDs.first.flatMap { uid in
+            deviceMonitor?.device(for: uid)?.id.readTransportType()
+        }.map { $0 == .bluetooth || $0 == .bluetoothLE } ?? false
+
+        if sourceDeviceDead || isBluetoothSource {
+            if isBluetoothSource, primaryResources.aggregateDeviceID.isValid, let procID = primaryResources.deviceProcID {
+                AudioDeviceStop(primaryResources.aggregateDeviceID, procID)
+            }
             guard primaryResources.tapDescription != nil else {
                 throw CrossfadeError.noTapDescription
             }
-            try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs, sourceAlreadySilent: true)
+            try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs, sourceAlreadySilent: true, autoEQProfile: autoEQProfile)
         } else {
             crossfadeTask?.cancel()
             crossfadeTask = Task {

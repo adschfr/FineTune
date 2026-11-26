@@ -1577,6 +1577,9 @@ final class AudioEngine {
                   let targetUID = appDeviceRouting[pid],
                   tap.currentDeviceUIDs != [targetUID] else { continue }
             let app = tap.app
+            if !tap.isSuspended && !app.processObjectIDs.isEmpty && !app.processObjectIDs.contains(where: isProcessRunning) {
+                tap.suspend()
+            }
             do {
                 let profile = autoEQProfileForActivation(deviceUID: targetUID)
                 let preferredTapSourceUID = preferredTapSourceDeviceUID(for: app, outputUIDs: [targetUID], isFollowsDefault: true)
